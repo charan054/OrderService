@@ -10,4 +10,9 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleProductException(ProductException e) {
         return ResponseEntity.badRequest().body(e.getMessage());
     }
+
+    @ExceptionHandler(PaymentException.class)
+    public ResponseEntity<String> handlePaymentException(PaymentException e) {
+        return ResponseEntity.status(e.getStatus()).body(e.getMessage());
+    }
 }

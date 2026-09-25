@@ -1,6 +1,8 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,9 +13,13 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -38,6 +44,9 @@ class OrderControllerSecurityTest {
 
     @MockitoBean
     private ProductClient productClient;
+
+    @MockitoBean
+    private PhonepeClient phonepeClient;
 
     private static final String NEW_ORDER = """
             {"customerName":"Buyer","customerPhno":9876543210,"orderItems":[{"productId":1,"productQuantity":1}]}
@@ -74,10 +83,23 @@ class OrderControllerSecurityTest {
         widget.setProductPrice(9.99);
         widget.setProductStock(10);
         when(productClient.getProductById(anyInt())).thenReturn(widget);
+        when(phonepeClient.makePayment(anyString(), any())).thenReturn(
+                new PaymentResponse(1L, "Payment", "DEBIT", 9876543210L, null,
+                        new BigDecimal("9.99"), "COMPLETED", Instant.now(), "Order payment"));
 
         mockMvc.perform(post("/cart/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ORDER)
-                        .header("X-Service-Key", VALID_KEY))
+                        .header("X-Service-Key", VALID_KEY)
+                        .header("Authorization", "Bearer buyer-token"))
                 .andExpect(status().isOk());
+    }
+
+    // The X-Service-Key proves a trusted caller; the buyer's own token proves who's paying. Having one without
+    // the other must not be enough to place a (charged) order.
+    @Test
+    void addOrderWithValidKeyButNoBuyerTokenIsRejected() throws Exception {
+        mockMvc.perform(post("/cart/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ORDER)
+                        .header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

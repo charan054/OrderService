@@ -15,9 +15,14 @@ import java.util.List;
 public class OrderController {
     @Autowired
     private OrderService orderService;
+    // Authorization must be the buyer's OWN PhonepayService session token ("Bearer <token>") - that is who gets
+    // charged. Idempotency-Key is optional: send the same value on a retry of the same checkout attempt (e.g.
+    // after a lost response) to avoid paying twice; a different value, or none, is always a brand new payment.
     @PostMapping("/add")
-    public Cart addOrder(@RequestBody Cart cart){
-        return orderService.order(cart);
+    public Cart addOrder(@RequestBody Cart cart,
+                         @RequestHeader("Authorization") String authorization,
+                         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
+        return orderService.order(cart, authorization, idempotencyKey);
     }
     @GetMapping("/display")
     public List<Product> findAll(){

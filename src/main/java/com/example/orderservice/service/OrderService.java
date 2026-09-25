@@ -1,17 +1,24 @@
 package com.example.orderservice.service;
 
+import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.OrderItem;
+import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
+import feign.FeignException;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.List;
 
 @Service
@@ -22,9 +29,11 @@ public class OrderService {
     private OrderItemRepository orderItemRepository;
     @Autowired
     ProductClient productClient;
+    @Autowired
+    PhonepeClient phonepeClient;
     @Value("${internal.service.api-key}")
     private String serviceApiKey;
-    public Cart order(Cart cart)
+    public Cart order(Cart cart, String authorization, String idempotencyKey)
     {
         long phno=cart.getCustomerPhno();
         String x=""+phno;
@@ -48,6 +57,9 @@ public class OrderService {
             }
             price=price+(orderItem.getProductQuantity()*pro.getProductPrice());
         }
+        // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the payment
+        // (insufficient funds, expired session, locked account, bank down, ...) nothing here should exist either.
+        charge(authorization, price, idempotencyKey);
         cart.setTotalPrice(price);
         Cart saved=orderRepository.save(cart);
         for(OrderItem orderItem : saved.getOrderItems())
@@ -56,6 +68,16 @@ public class OrderService {
             productClient.updateProductStock(serviceApiKey, orderItem.getProductId(),-orderItem.getProductQuantity());
         }
         return orderRepository.save(saved);
+    }
+
+    private void charge(String authorization, double price, String idempotencyKey) {
+        BigDecimal amount = BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP);
+        try {
+            phonepeClient.makePayment(authorization, new PaymentRequest(amount, "Order payment", idempotencyKey));
+        } catch (FeignException e) {
+            HttpStatus status = HttpStatus.resolve(e.status());
+            throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
+        }
     }
     public List<Cart>  findAll()
     {
