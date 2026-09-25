@@ -12,10 +12,13 @@ import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
+import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
 import feign.FeignException;
 import jakarta.transaction.Transactional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -27,6 +30,8 @@ import java.util.List;
 
 @Service
 public class OrderService {
+    private static final Logger log = LoggerFactory.getLogger(OrderService.class);
+
     @Autowired
     private CartRepository orderRepository;
     @Autowired
@@ -35,6 +40,8 @@ public class OrderService {
     ProductClient productClient;
     @Autowired
     PhonepeClient phonepeClient;
+    @Autowired
+    private OrderKafkaProducer orderKafkaProducer;
     @Value("${internal.service.api-key}")
     private String serviceApiKey;
     public Cart order(Cart cart, String authorization, String idempotencyKey)
@@ -73,7 +80,12 @@ public class OrderService {
             orderItem.setOrderId(saved.getOrderId());
             productClient.updateProductStock(serviceApiKey, orderItem.getProductId(),-orderItem.getProductQuantity());
         }
-        return orderRepository.save(saved);
+        Cart result = orderRepository.save(saved);
+        sendNotification("Order placed successfully. OrderId: " + result.getOrderId()
+                + " Customer: " + mask(result.getCustomerPhno())
+                + " Items: " + result.getOrderItems().size()
+                + " Total: " + result.getTotalPrice());
+        return result;
     }
 
     // Cancels an order that hasn't already been cancelled: refunds the buyer's own payment in full, and only on
@@ -95,7 +107,29 @@ public class OrderService {
             productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
         }
         cart.setStatus(OrderStatus.CANCELLED);
-        return orderRepository.save(cart);
+        Cart result = orderRepository.save(cart);
+        sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
+                + " Customer: " + mask(result.getCustomerPhno())
+                + " Refunded: " + result.getTotalPrice());
+        return result;
+    }
+
+    // Kafka is told only AFTER the save() above returns - neither order() nor cancel() wraps its DB writes in a
+    // surrounding @Transactional, so by that point the write has already committed (each repository.save() is
+    // its own auto-committed transaction). A broken notification channel must never turn a completed order/
+    // cancellation into an error, so failures here are logged and swallowed, not propagated.
+    private void sendNotification(String message) {
+        try {
+            orderKafkaProducer.sendMessage(message);
+        } catch (RuntimeException e) {
+            log.error("Kafka notification failed: {}", e.getMessage());
+        }
+    }
+
+    // keep phone numbers out of the Kafka topic and its logs
+    private static String mask(long phno) {
+        String s = String.valueOf(phno);
+        return "XXXXXX" + s.substring(Math.max(0, s.length() - 4));
     }
 
     private static final String COMPLETED = "COMPLETED";

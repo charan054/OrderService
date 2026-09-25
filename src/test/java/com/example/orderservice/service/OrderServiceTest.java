@@ -12,6 +12,7 @@ import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
+import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import feign.FeignException;
@@ -20,6 +21,7 @@ import feign.Response;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -37,10 +39,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -58,6 +65,8 @@ class OrderServiceTest {
     private ProductClient productClient;
     @Mock
     private PhonepeClient phonepeClient;
+    @Mock
+    private OrderKafkaProducer orderKafkaProducer;
 
     @InjectMocks
     private OrderService service;
@@ -130,6 +139,7 @@ class OrderServiceTest {
         Cart cart = cart(12345, item(1, 1));
         assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
         verify(orderRepository, never()).save(any());
+        verifyNoInteractions(orderKafkaProducer);
     }
 
     @Test
@@ -190,6 +200,36 @@ class OrderServiceTest {
         verify(productClient).updateProductStock(SERVICE_KEY, 1, -2);
         verify(productClient).updateProductStock(SERVICE_KEY, 2, -1);
         verify(orderRepository, times(2)).save(any());
+        verify(orderKafkaProducer).sendMessage(contains("Order placed successfully"));
+    }
+
+    @Test
+    void orderNotificationMasksThePhoneNumber() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        service.order(cart, AUTH, null);
+
+        ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
+        verify(orderKafkaProducer).sendMessage(message.capture());
+        assertTrue(message.getValue().contains("XXXXXX3210"));
+        assertFalse(message.getValue().contains(String.valueOf(CUSTOMER)));
+    }
+
+    // A broken notification channel must never turn a completed order into an error.
+    @Test
+    void orderKafkaFailureDoesNotFailTheOrder() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        doThrow(new RuntimeException("kafka down")).when(orderKafkaProducer).sendMessage(any());
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        Cart result = service.order(cart, AUTH, null);
+
+        assertEquals(OrderStatus.PLACED, result.getStatus());
     }
 
     // Regression: an Idempotency-Key retry can hand back an existing transaction whose status is
@@ -261,6 +301,7 @@ class OrderServiceTest {
         verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
         verify(orderRepository, never()).save(any());
         assertEquals(OrderStatus.PLACED, cart.getStatus());
+        verifyNoInteractions(orderKafkaProducer);
     }
 
     @Test
@@ -277,6 +318,21 @@ class OrderServiceTest {
         verify(productClient).updateProductStock(SERVICE_KEY, 1, 2);
         verify(productClient).updateProductStock(SERVICE_KEY, 2, 1);
         verify(orderRepository).save(cart);
+        verify(orderKafkaProducer).sendMessage(contains("Order cancelled successfully"));
+    }
+
+    // A broken notification channel must never turn a completed cancellation into an error.
+    @Test
+    void cancelKafkaFailureDoesNotFailTheCancellation() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 2));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        doThrow(new RuntimeException("kafka down")).when(orderKafkaProducer).sendMessage(any());
+
+        Cart result = service.cancel(42L, AUTH, null);
+
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
     }
 
     // Same regression as order(): an Idempotency-Key retry can hand back a not-actually-completed refund with
@@ -293,6 +349,7 @@ class OrderServiceTest {
         verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
         verify(orderRepository, never()).save(any());
         assertEquals(OrderStatus.PLACED, cart.getStatus());
+        verifyNoInteractions(orderKafkaProducer);
     }
 
     // ---------- ordersOfPhno ----------
