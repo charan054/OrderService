@@ -4,6 +4,7 @@ import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.kafka.OrderKafkaProducer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,7 +30,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Browsing the catalog and looking up one's own orders by phone are public; placing/removing an order and
  * listing EVERY customer's orders need the right X-Service-Key. Real SecurityFilterChain, real (in-memory)
- * database - only ProductClient (the Feign call to the real ProductService) is stubbed out.
+ * database - ProductClient (the Feign call to the real ProductService) and OrderKafkaProducer are stubbed out
+ * (the latter only to keep the test fast: a real KafkaTemplate blocks for up to max.block.ms trying to reach a
+ * broker that isn't running here - see OrderServiceTest for the actual notification behavior coverage).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -47,6 +50,9 @@ class OrderControllerSecurityTest {
 
     @MockitoBean
     private PhonepeClient phonepeClient;
+
+    @MockitoBean
+    private OrderKafkaProducer orderKafkaProducer;
 
     private static final String NEW_ORDER = """
             {"customerName":"Buyer","customerPhno":9876543210,"orderItems":[{"productId":1,"productQuantity":1}]}
