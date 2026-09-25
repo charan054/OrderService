@@ -3,9 +3,13 @@ package com.example.orderservice.service;
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.PaymentRequest;
+import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.OrderItem;
+import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.repository.OrderItemRepository;
@@ -59,8 +63,10 @@ public class OrderService {
         }
         // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the payment
         // (insufficient funds, expired session, locked account, bank down, ...) nothing here should exist either.
-        charge(authorization, price, idempotencyKey);
+        PaymentResponse payment = charge(authorization, price, idempotencyKey);
         cart.setTotalPrice(price);
+        cart.setStatus(OrderStatus.PLACED);
+        cart.setPaymentTransactionId(payment.transactionId());
         Cart saved=orderRepository.save(cart);
         for(OrderItem orderItem : saved.getOrderItems())
         {
@@ -70,13 +76,63 @@ public class OrderService {
         return orderRepository.save(saved);
     }
 
-    private void charge(String authorization, double price, String idempotencyKey) {
+    // Cancels an order that hasn't already been cancelled: refunds the buyer's own payment in full, and only on
+    // a successful refund restores stock and marks the order CANCELLED - a declined/failed refund leaves the
+    // order exactly as it was, the same fail-safe shape order() already uses for placing one.
+    public Cart cancel(long orderId, String authorization, String idempotencyKey) {
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() == OrderStatus.CANCELLED) {
+            throw new ProductException("This order is already cancelled");
+        }
+        if (cart.getPaymentTransactionId() == null) {
+            throw new ProductException("This order cannot be cancelled");
+        }
+
+        refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
+
+        for (OrderItem orderItem : cart.getOrderItems()) {
+            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
+        }
+        cart.setStatus(OrderStatus.CANCELLED);
+        return orderRepository.save(cart);
+    }
+
+    private static final String COMPLETED = "COMPLETED";
+
+    private PaymentResponse charge(String authorization, double price, String idempotencyKey) {
         BigDecimal amount = BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP);
+        PaymentResponse payment;
         try {
-            phonepeClient.makePayment(authorization, new PaymentRequest(amount, "Order payment", idempotencyKey));
+            payment = phonepeClient.makePayment(authorization, new PaymentRequest(amount, "Order payment", idempotencyKey));
         } catch (FeignException e) {
             HttpStatus status = HttpStatus.resolve(e.status());
             throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
+        }
+        // A fresh payment attempt only ever returns here once truly COMPLETED (anything else throws on
+        // PhonepayService's side). But a retry that reuses an Idempotency-Key returns whatever status that
+        // earlier attempt ended up with - including NEEDS_RECONCILIATION - with no exception at all, so a
+        // 200 response alone is not proof the money actually moved; the status field has to be checked too.
+        if (!COMPLETED.equals(payment.status())) {
+            throw new PaymentException(HttpStatus.BAD_GATEWAY,
+                    "Payment status is " + payment.status() + ", not completed. Reference: " + payment.transactionId());
+        }
+        return payment;
+    }
+
+    private void refund(String authorization, long paymentTransactionId, String idempotencyKey) {
+        PaymentResponse refund;
+        try {
+            refund = phonepeClient.refund(authorization, paymentTransactionId, new RefundRequest(idempotencyKey));
+        } catch (FeignException e) {
+            HttpStatus status = HttpStatus.resolve(e.status());
+            throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
+        }
+        // Same reasoning as charge(): an Idempotency-Key retry can hand back a NEEDS_RECONCILIATION refund
+        // without ever throwing, so stock must not be restored until the status itself confirms completion.
+        if (!COMPLETED.equals(refund.status())) {
+            throw new PaymentException(HttpStatus.BAD_GATEWAY,
+                    "Refund status is " + refund.status() + ", not completed. Reference: " + refund.transactionId());
         }
     }
     public List<Cart>  findAll()

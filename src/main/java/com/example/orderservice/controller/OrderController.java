@@ -24,6 +24,14 @@ public class OrderController {
                          @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
         return orderService.order(cart, authorization, idempotencyKey);
     }
+    // Authorization must be the buyer's OWN PhonepayService session token - PhonepayService only refunds a
+    // payment back to the person who made it, so this can never cancel (and refund) someone else's order.
+    @PostMapping("/{orderId}/cancel")
+    public Cart cancelOrder(@PathVariable long orderId,
+                            @RequestHeader("Authorization") String authorization,
+                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
+        return orderService.cancel(orderId, authorization, idempotencyKey);
+    }
     @GetMapping("/display")
     public List<Product> findAll(){
         return orderService.getProducts();

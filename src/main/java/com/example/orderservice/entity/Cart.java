@@ -13,7 +13,8 @@ import java.util.List;
         "customerName",
         "customerPhno",
         "orderItems",
-        "totalPrice"
+        "totalPrice",
+        "status"
 })
 public class Cart {
     @Id
@@ -25,5 +26,10 @@ public class Cart {
     @JoinColumn(name="order_items_orderId")
     private List<OrderItem> orderItems;
     private double totalPrice;
+    @Enumerated(EnumType.STRING)
+    private OrderStatus status = OrderStatus.PLACED;
+    // The PhonepayService transaction that paid for this order (see OrderService.order()); needed to refund it
+    // on cancellation. Null for orders placed before this field existed.
+    private Long paymentTransactionId;
 
 }
