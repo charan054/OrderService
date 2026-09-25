@@ -3,9 +3,13 @@ package com.example.orderservice.service;
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.PaymentRequest;
+import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.OrderItem;
+import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.repository.CartRepository;
@@ -23,9 +27,11 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -98,8 +104,8 @@ class OrderServiceTest {
 
     // ---------- order() ----------
 
-    private FeignException paymentDeclined(int status, String message) {
-        Request request = Request.create(Request.HttpMethod.POST, "/phonepe/makepayment",
+    private FeignException declinedBy(String methodKey, int status, String message) {
+        Request request = Request.create(Request.HttpMethod.POST, "/phonepe/" + methodKey,
                 Map.of(), null, StandardCharsets.UTF_8, null);
         Response response = Response.builder()
                 .status(status)
@@ -107,7 +113,16 @@ class OrderServiceTest {
                 .request(request)
                 .body(message, StandardCharsets.UTF_8)
                 .build();
-        return FeignException.errorStatus("PhonepeClient#makePayment", response);
+        return FeignException.errorStatus(methodKey, response);
+    }
+
+    private PaymentResponse paymentResponse(long transactionId) {
+        return paymentResponse(transactionId, "COMPLETED");
+    }
+
+    private PaymentResponse paymentResponse(long transactionId, String status) {
+        return new PaymentResponse(transactionId, "Payment", "DEBIT", CUSTOMER, null,
+                new BigDecimal("1045.00"), status, Instant.parse("2026-09-25T10:00:00Z"), "Order payment");
     }
 
     @Test
@@ -144,7 +159,7 @@ class OrderServiceTest {
     void orderThrowsWhenPaymentIsDeclinedAndTouchesNoStockOrOrder() {
         when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
         when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class)))
-                .thenThrow(paymentDeclined(400, "Insufficient Funds"));
+                .thenThrow(declinedBy("makepayment", 400, "Insufficient Funds"));
         Cart cart = cart(CUSTOMER, item(1, 1));
 
         PaymentException ex = assertThrows(PaymentException.class, () -> service.order(cart, AUTH, null));
@@ -159,12 +174,15 @@ class OrderServiceTest {
         stubCartSaveAssignsAnId();
         when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
         when(productClient.getProductById(2)).thenReturn(product(2, 45.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
         Cart cart = cart(CUSTOMER, item(1, 2), item(2, 1));
 
         Cart result = service.order(cart, AUTH, "checkout-123");
 
         assertEquals(1045.0, result.getTotalPrice());
         assertEquals(42L, result.getOrderId());
+        assertEquals(OrderStatus.PLACED, result.getStatus());
+        assertEquals(100000L, result.getPaymentTransactionId());
         for (OrderItem oi : result.getOrderItems()) {
             assertEquals(42L, oi.getOrderId());
         }
@@ -172,6 +190,109 @@ class OrderServiceTest {
         verify(productClient).updateProductStock(SERVICE_KEY, 1, -2);
         verify(productClient).updateProductStock(SERVICE_KEY, 2, -1);
         verify(orderRepository, times(2)).save(any());
+    }
+
+    // Regression: an Idempotency-Key retry can hand back an existing transaction whose status is
+    // NEEDS_RECONCILIATION (or anything but COMPLETED) with no exception at all - a 200 response alone must
+    // never be treated as proof the payment actually went through.
+    @Test
+    void orderRejectsAPaymentThatIsNotActuallyCompleted() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class)))
+                .thenReturn(paymentResponse(100000, "NEEDS_RECONCILIATION"));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        assertThrows(PaymentException.class, () -> service.order(cart, AUTH, null));
+
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        verify(orderRepository, never()).save(any());
+    }
+
+    // ---------- cancel() ----------
+
+    private Cart placedOrder(long orderId, long paymentTransactionId, OrderItem... items) {
+        Cart cart = cart(CUSTOMER, items);
+        cart.setOrderId(orderId);
+        cart.setStatus(OrderStatus.PLACED);
+        cart.setPaymentTransactionId(paymentTransactionId);
+        return cart;
+    }
+
+    @Test
+    void cancelThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.empty());
+
+        assertThrows(OrderNotFoundException.class, () -> service.cancel(42L, AUTH, null));
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void cancelThrowsWhenTheOrderIsAlreadyCancelled() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setStatus(OrderStatus.CANCELLED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.cancel(42L, AUTH, null));
+        verify(phonepeClient, never()).refund(any(), anyInt(), any());
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void cancelThrowsForAnOrderWithNoStoredPayment() {
+        Cart cart = placedOrder(42L, 0, item(1, 1));
+        cart.setPaymentTransactionId(null);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.cancel(42L, AUTH, null));
+        verify(phonepeClient, never()).refund(any(), anyInt(), any());
+    }
+
+    // A declined/failed refund must leave the order exactly as it was - same fail-safe shape as a declined
+    // payment leaving no order behind in order().
+    @Test
+    void cancelThrowsWhenTheRefundIsDeclinedAndTouchesNoStockOrOrder() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 2));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class)))
+                .thenThrow(declinedBy("refund", 502, "We could not confirm your refund with the bank."));
+
+        assertThrows(PaymentException.class, () -> service.cancel(42L, AUTH, null));
+
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        verify(orderRepository, never()).save(any());
+        assertEquals(OrderStatus.PLACED, cart.getStatus());
+    }
+
+    @Test
+    void cancelRefundsRestoresStockForEveryItemAndMarksTheOrderCancelled() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 2), item(2, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), eq(new RefundRequest("cancel-1"))))
+                .thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.cancel(42L, AUTH, "cancel-1");
+
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 2);
+        verify(productClient).updateProductStock(SERVICE_KEY, 2, 1);
+        verify(orderRepository).save(cart);
+    }
+
+    // Same regression as order(): an Idempotency-Key retry can hand back a not-actually-completed refund with
+    // no exception, and that must not be enough to restore stock or mark the order cancelled.
+    @Test
+    void cancelRejectsARefundThatIsNotActuallyCompleted() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 2));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class)))
+                .thenReturn(paymentResponse(100001, "NEEDS_RECONCILIATION"));
+
+        assertThrows(PaymentException.class, () -> service.cancel(42L, AUTH, null));
+
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        verify(orderRepository, never()).save(any());
+        assertEquals(OrderStatus.PLACED, cart.getStatus());
     }
 
     // ---------- ordersOfPhno ----------
