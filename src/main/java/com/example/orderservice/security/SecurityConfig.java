@@ -35,6 +35,10 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
+                        // The static dashboard itself - not an order action, just the HTML/JS shell. The
+                        // mutating buttons on it still hit the X-Service-Key-guarded endpoints above like any
+                        // other caller, so this only unblocks loading the page, not bypassing anything.
+                        .requestMatchers(HttpMethod.GET, "/cart.html").permitAll()
                         // A controller-level failure (e.g. a missing required header) triggers an internal
                         // dispatch to /error; ServiceKeyAuthenticationFilter doesn't re-run on that dispatch
                         // (OncePerRequestFilter skips ERROR dispatches by default), so without this the real
