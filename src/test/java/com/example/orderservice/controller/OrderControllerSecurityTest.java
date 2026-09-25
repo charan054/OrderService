@@ -103,6 +103,24 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void cancelOrderWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/42/cancel")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void cancelOrderWithValidKeyButNoBuyerTokenIsRejected() throws Exception {
+        mockMvc.perform(post("/cart/42/cancel").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void cancelOrderOfAnUnknownOrderIdReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/cancel").header("X-Service-Key", VALID_KEY)
+                        .header("Authorization", "Bearer buyer-token"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void deleteProductWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(delete("/cart/deleteproduct").param("phno", "9876543210").param("productId", "1"))
                 .andExpect(status().isUnauthorized());
