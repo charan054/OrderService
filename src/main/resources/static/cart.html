@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cart Order Service Dashboard</title>
+
+    <style>
+        :root {
+          --primary: #6d28d9;
+          --primary-dark: #4c1d95;
+          --blue: #2563eb;
+          --green: #16a34a;
+          --orange: #f97316;
+          --red: #dc2626;
+          --dark: #0f172a;
+          --muted: #64748b;
+          --border: #e2e8f0;
+          --bg: #f8fafc;
+          --white: #ffffff;
+          --shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+        }
+
+        * {
+          box-sizing: border-box;
+          margin: 0;
+          padding: 0;
+          font-family: Inter, Segoe UI, Arial, sans-serif;
+        }
+
+        body {
+          min-height: 100vh;
+          background: linear-gradient(135deg, #111827, #312e81, #6d28d9);
+          color: var(--dark);
+        }
+
+        .hero {
+          padding: 40px 20px 72px;
+          text-align: center;
+          color: white;
+        }
+
+        .badge-main {
+          display: inline-block;
+          padding: 10px 16px;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.14);
+          border: 1px solid rgba(255, 255, 255, 0.24);
+          font-weight: 900;
+          margin-bottom: 18px;
+        }
+
+        .hero h1 {
+          font-size: 44px;
+          font-weight: 950;
+          letter-spacing: -1px;
+          margin-bottom: 12px;
+        }
+
+        .hero p {
+          color: #ede9fe;
+          font-size: 18px;
+        }
+
+        .container {
+          width: min(1200px, calc(100% - 40px));
+          margin: -44px auto 50px;
+        }
+
+        .grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 22px;
+          margin-bottom: 24px;
+        }
+
+        .card {
+          background: white;
+          border: 1px solid var(--border);
+          border-radius: 26px;
+          padding: 24px;
+          box-shadow: var(--shadow);
+          transition: 0.25s ease;
+        }
+
+        .card:hover {
+          transform: translateY(-4px);
+        }
+
+        .wide {
+          grid-column: span 3;
+        }
+
+        .card-header {
+          display: flex;
+          align-items: center;
+          gap: 13px;
+          margin-bottom: 12px;
+        }
+
+        .icon {
+          width: 46px;
+          height: 46px;
+          border-radius: 16px;
+          display: grid;
+          place-items: center;
+          font-size: 22px;
+          background: #f3e8ff;
+          color: var(--primary);
+        }
+
+        .title-wrap {
+          flex: 1;
+        }
+
+        .title-wrap h2 {
+          font-size: 21px;
+          margin-bottom: 4px;
+        }
+
+        .method {
+          display: inline-block;
+          font-size: 12px;
+          font-weight: 950;
+          padding: 6px 10px;
+          border-radius: 999px;
+          color: var(--primary);
+          background: #f3e8ff;
+        }
+
+        .card p {
+          color: var(--muted);
+          line-height: 1.55;
+          font-size: 15px;
+          margin-bottom: 18px;
+        }
+
+        input {
+          width: 100%;
+          border: 1px solid #cbd5e1;
+          border-radius: 15px;
+          padding: 14px 15px;
+          font-size: 15px;
+          margin-bottom: 13px;
+          outline: none;
+          background: #fbfdff;
+          transition: 0.2s ease;
+        }
+
+        input:focus {
+          border-color: var(--primary);
+          box-shadow: 0 0 0 4px rgba(109, 40, 217, 0.13);
+          background: white;
+        }
+
+        button {
+          width: 100%;
+          border: none;
+          border-radius: 15px;
+          padding: 14px 18px;
+          cursor: pointer;
+          color: white;
+          font-weight: 950;
+          font-size: 15px;
+          background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+          box-shadow: 0 12px 24px rgba(109, 40, 217, 0.25);
+          transition: 0.2s ease;
+        }
+
+        button:hover {
+          transform: translateY(-2px);
+        }
+
+        button.blue {
+          background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+          box-shadow: 0 12px 24px rgba(37, 99, 235, 0.24);
+        }
+
+        button.green {
+          background: linear-gradient(135deg, #22c55e, #15803d);
+          box-shadow: 0 12px 24px rgba(34, 197, 94, 0.24);
+        }
+
+        button.red {
+          background: linear-gradient(135deg, #ef4444, #b91c1c);
+          box-shadow: 0 12px 24px rgba(220, 38, 38, 0.24);
+        }
+
+        .products-section {
+          background: white;
+          border-radius: 26px;
+          box-shadow: var(--shadow);
+          border: 1px solid var(--border);
+          overflow: hidden;
+          margin-bottom: 24px;
+        }
+
+        .section-header {
+          padding: 22px 24px;
+          border-bottom: 1px solid var(--border);
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 16px;
+        }
+
+        .section-header h2 {
+          font-size: 22px;
+          color: var(--primary-dark);
+        }
+
+        .section-header p {
+          color: var(--muted);
+          margin-top: 5px;
+          font-size: 14px;
+        }
+
+        .small-btn {
+          width: auto;
+          padding: 12px 16px;
+          white-space: nowrap;
+        }
+
+        .table-wrap {
+          overflow-x: auto;
+        }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+          min-width: 850px;
+        }
+
+        th {
+          background: #f5f3ff;
+          color: var(--primary-dark);
+          padding: 14px 16px;
+          font-size: 14px;
+          text-align: left;
+          border-bottom: 1px solid var(--border);
+          white-space: nowrap;
+        }
+
+        td {
+          padding: 14px 16px;
+          border-bottom: 1px solid #edf2f7;
+          font-size: 15px;
+          font-weight: 750;
+          vertical-align: middle;
+        }
+
+        tr:hover td {
+          background: #faf7ff;
+        }
+
+        .qty-input {
+          max-width: 110px;
+          margin: 0;
+          padding: 10px 12px;
+          border-radius: 12px;
+        }
+
+        .cart-summary {
+          margin-top: 12px;
+          color: var(--muted);
+          font-weight: 800;
+          padding: 0 24px 22px;
+        }
+
+        .status-panel {
+          background: white;
+          border-radius: 22px;
+          padding: 18px 22px;
+          box-shadow: var(--shadow);
+          border-left: 6px solid var(--primary);
+          font-weight: 850;
+          color: var(--muted);
+        }
+
+        .success { color: var(--green); }
+        .error { color: var(--red); }
+
+        @media (max-width: 1050px) {
+          .grid { grid-template-columns: repeat(2, 1fr); }
+          .wide { grid-column: span 2; }
+        }
+
+        @media (max-width: 720px) {
+          .grid { grid-template-columns: 1fr; }
+          .wide { grid-column: span 1; }
+          .hero h1 { font-size: 32px; }
+          .container { width: min(100% - 24px, 1200px); }
+          .section-header { flex-direction: column; align-items: flex-start; }
+          .small-btn { width: 100%; }
+        }
+    </style>
+</head>
+<body>
+<header class="hero">
+    <div class="badge-main">🛒 Cart Order Service</div>
+    <h1>Cart Management Dashboard</h1>
+    <p>Display products first, select items, add to cart, view orders and remove products.</p>
+</header>
+
+<main class="container">
+    <section class="products-section">
+        <div class="section-header">
+            <div>
+                <h2>Available Products</h2>
+                <p>Click “Load Products”, enter customer phone number, select quantity, then add product to cart.</p>
+            </div>
+            <button class="small-btn blue" onclick="loadProducts()">Load Products</button>
+        </div>
+
+        <div style="padding: 20px 24px 0;">
+            <input type="number" id="customerPhno" placeholder="Enter customer phone number before adding product to cart" />
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                <tr>
+                    <th>S.No</th>
+                    <th>Product ID</th>
+                    <th>Product Name</th>
+                    <th>Category</th>
+                    <th>Price</th>
+                    <th>Available Stock</th>
+                    <th>Quantity</th>
+                    <th>Action</th>
+                </tr>
+                </thead>
+                <tbody id="productTableBody">
+                <tr>
+                    <td colspan="8" style="text-align:center; color:#64748b; padding:26px;">No products loaded yet.</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+        <div id="cartSummary" class="cart-summary">Selected items: 0</div>
+    </section>
+
+    <section class="grid">
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">✅</div>
+                <div class="title-wrap">
+                    <h2>Place Cart Order</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Submit selected cart items to <b>/cart/add</b>. Result opens in a separate tab.</p>
+            <button class="green" onclick="placeOrder()">Place Order</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">📦</div>
+                <div class="title-wrap">
+                    <h2>All Cart Orders</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>View all cart orders from database.</p>
+            <button onclick="getAllOrders()">View All Orders</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">📞</div>
+                <div class="title-wrap">
+                    <h2>Orders By Phone</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Search cart orders using customer phone number.</p>
+            <input type="number" id="searchPhno" placeholder="Enter customer phone number" />
+            <button onclick="getOrdersByPhno()">Search Orders</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">🗑️</div>
+                <div class="title-wrap">
+                    <h2>Delete Product From Cart</h2>
+                    <span class="method">DELETE</span>
+                </div>
+            </div>
+            <p>Remove a product from customer cart/order using phone number and product ID.</p>
+            <input type="number" id="deletePhno" placeholder="Customer phone number" />
+            <input type="number" id="deleteProductId" placeholder="Product ID" />
+            <button class="red" onclick="deleteProductFromCart()">Delete Product</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">🧹</div>
+                <div class="title-wrap">
+                    <h2>Clear Selection</h2>
+                    <span class="method">UI</span>
+                </div>
+            </div>
+            <p>Clear selected cart items before placing order.</p>
+            <button class="blue" onclick="clearSelection()">Clear Selected Items</button>
+        </div>
+    </section>
+
+    <div id="status" class="status-panel">Ready. Load products first, then add items to cart.</div>
+</main>
+
+<script>
+    const BASE_URL = "http://localhost:8083/cart";
+    let products = [];
+    let selectedItems = [];
+
+    async function apiCall(url, options = {}) {
+      try {
+        showStatus("Processing request...", "");
+        const response = await fetch(url, options);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || `HTTP Error: ${response.status}`);
+        }
+
+        const text = await response.text();
+        if (!text) return null;
+        return JSON.parse(text);
+      } catch (error) {
+        showStatus("Request failed: " + error.message, "error");
+        openResultTab("Request Failed", { error: error.message });
+        throw error;
+      }
+    }
+
+    function showStatus(message, className) {
+      const status = document.getElementById("status");
+      status.className = "status-panel " + (className || "");
+      status.textContent = message;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function formatLabel(key) {
+      return key
+        .replace(/([A-Z])/g, " $1")
+        .replace(/_/g, " ")
+        .replace(/^./, ch => ch.toUpperCase());
+    }
+
+    function valueHtml(value) {
+      if (value === null || value === undefined || value === "") return "-";
+      if (Array.isArray(value)) return `${value.length} item(s)`;
+      if (typeof value === "object") return escapeHtml(JSON.stringify(value));
+      return escapeHtml(value);
+    }
+
+    function getProductId(product) {
+      return product.productId ?? product.id ?? product.product_id;
+    }
+
+    function getProductName(product) {
+      return product.productName ?? product.name ?? product.product_name ?? "-";
+    }
+
+    function getProductPrice(product) {
+      return product.productPrice ?? product.price ?? product.product_price ?? 0;
+    }
+
+    function getProductStock(product) {
+      return product.productStock ?? product.stock ?? product.product_stock ?? 0;
+    }
+
+    function getProductCategory(product) {
+      return product.productCategory ?? product.category ?? product.product_category ?? "-";
+    }
+
+    function renderProductsTable() {
+      const tbody = document.getElementById("productTableBody");
+
+      if (!products || products.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="8" style="text-align:center; color:#64748b; padding:26px;">No products found.</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = products.map((product, index) => {
+        const productId = getProductId(product);
+        return `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${escapeHtml(productId)}</td>
+            <td>${escapeHtml(getProductName(product))}</td>
+            <td>${escapeHtml(getProductCategory(product))}</td>
+            <td>${escapeHtml(getProductPrice(product))}</td>
+            <td>${escapeHtml(getProductStock(product))}</td>
+            <td><input class="qty-input" type="number" id="qty_${productId}" min="1" placeholder="Qty" /></td>
+            <td><button class="small-btn green" onclick="addItemToSelection('${productId}')">Add</button></td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function addItemToSelection(productId) {
+      const phno = document.getElementById("customerPhno").value;
+      const qty = document.getElementById(`qty_${productId}`).value;
+
+      if (!phno) return showStatus("Please enter customer phone number first.", "error");
+      if (!qty || Number(qty) <= 0) return showStatus("Please enter valid quantity.", "error");
+
+      const product = products.find(p => String(getProductId(p)) === String(productId));
+      if (!product) return showStatus("Product not found in loaded products.", "error");
+
+      const existing = selectedItems.find(item => String(item.productId) === String(productId));
+
+      if (existing) {
+        existing.productQuantity = Number(existing.productQuantity) + Number(qty);
+      } else {
+        selectedItems.push({
+          productId: Number(productId),
+          productQuantity: Number(qty)
+        });
+      }
+
+      updateCartSummary();
+      showStatus(`${getProductName(product)} added to cart selection.`, "success");
+    }
+
+    function updateCartSummary() {
+      document.getElementById("cartSummary").textContent = `Selected items: ${selectedItems.length}`;
+    }
+
+    function clearSelection() {
+      selectedItems = [];
+      updateCartSummary();
+      showStatus("Selected cart items cleared.", "success");
+    }
+
+    async function loadProducts() {
+      const data = await apiCall(`${BASE_URL}/display`);
+      products = Array.isArray(data) ? data : [data];
+      renderProductsTable();
+      showStatus("Products loaded successfully. Now select quantity and add items to cart.", "success");
+    }
+
+    async function placeOrder() {
+      const phno = document.getElementById("customerPhno").value;
+
+      if (!phno) return showStatus("Please enter customer phone number.", "error");
+      if (selectedItems.length === 0) return showStatus("Please add at least one product to cart.", "error");
+
+      const cart = {
+        customerPhno: Number(phno),
+        orderItems: selectedItems
+      };
+
+      const data = await apiCall(`${BASE_URL}/add`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(cart)
+      });
+
+      showStatus("Cart order placed successfully. Result opened in new tab.", "success");
+      openResultTab("Cart Order Created", data);
+      selectedItems = [];
+      updateCartSummary();
+      loadProducts();
+    }
+
+    async function getAllOrders() {
+      const data = await apiCall(`${BASE_URL}/all`);
+      showStatus("All cart orders loaded successfully. Result opened in new tab.", "success");
+      openResultTab("All Cart Orders", data);
+    }
+
+    async function getOrdersByPhno() {
+      const phno = document.getElementById("searchPhno").value;
+      if (!phno) return showStatus("Please enter customer phone number.", "error");
+
+      const data = await apiCall(`${BASE_URL}/byphno?phno=${encodeURIComponent(phno)}`);
+      showStatus("Orders by phone number loaded successfully. Result opened in new tab.", "success");
+      openResultTab("Orders By Phone Number", data);
+    }
+
+    async function deleteProductFromCart() {
+      const phno = document.getElementById("deletePhno").value;
+      const productId = document.getElementById("deleteProductId").value;
+
+      if (!phno || !productId) return showStatus("Please enter phone number and product ID.", "error");
+
+      const data = await apiCall(`${BASE_URL}/deleteproduct?phno=${encodeURIComponent(phno)}&productId=${encodeURIComponent(productId)}`, {
+        method: "DELETE"
+      });
+
+      showStatus("Product deleted from cart successfully. Result opened in new tab.", "success");
+      openResultTab("Delete Product From Cart", data);
+    }
+
+    function flattenRows(data) {
+      const rows = data === null || data === undefined
+        ? [{ message: "Operation completed successfully" }]
+        : Array.isArray(data)
+          ? data
+          : [data];
+
+      const flatRows = [];
+
+      rows.forEach((row, index) => {
+        if (row && Array.isArray(row.orderItems)) {
+          row.orderItems.forEach((item, itemIndex) => {
+            flatRows.push({
+              cartNo: index + 1,
+              itemNo: itemIndex + 1,
+              cartId: row.cartId ?? row.id ?? "-",
+              customerPhno: row.customerPhno ?? row.customer_phno ?? "-",
+              totalPrice: row.totalPrice ?? row.total_price ?? "-",
+              productId: item.productId ?? "-",
+              productQuantity: item.productQuantity ?? "-",
+              productPrice: item.productPrice ?? "-"
+            });
+          });
+        } else {
+          flatRows.push(row || {});
+        }
+      });
+
+      return flatRows;
+    }
+
+    function openResultTab(title, data) {
+      const resultTab = window.open("about:blank", "_blank");
+
+      if (!resultTab) {
+        alert("New tab blocked. Please allow popups/tabs for this page.");
+        return;
+      }
+
+      const rows = flattenRows(data);
+      let tableHtml = "";
+
+      if (rows.length === 0) {
+        tableHtml = `<div class="empty">No records found.</div>`;
+      } else {
+        const columns = [...new Set(rows.flatMap(row => Object.keys(row || {})))];
+        const thead = columns.map(col => `<th>${escapeHtml(formatLabel(col))}</th>`).join("");
+        const tbody = rows.map((row, index) => {
+          const cells = columns.map(col => `<td>${valueHtml(row[col])}</td>`).join("");
+          return `<tr><td class="serial">${index + 1}</td>${cells}</tr>`;
+        }).join("");
+
+        tableHtml = `
+          <div class="table-card">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>S.No</th>
+                    ${thead}
+                  </tr>
+                </thead>
+                <tbody>${tbody}</tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }
+
+      resultTab.document.open();
+      resultTab.document.write(`
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>${escapeHtml(title)}</title>
+          <style>
+            * {
+              box-sizing: border-box;
+              margin: 0;
+              padding: 0;
+              font-family: Inter, Segoe UI, Arial, sans-serif;
+            }
+
+            body {
+              min-height: 100vh;
+              background: #f8fafc;
+              color: #0f172a;
+            }
+
+            .header {
+              background: linear-gradient(135deg, #111827, #312e81, #6d28d9);
+              color: white;
+              padding: 38px 28px 60px;
+              text-align: center;
+            }
+
+            .header h1 {
+              font-size: 38px;
+              margin-bottom: 10px;
+              letter-spacing: -0.7px;
+            }
+
+            .header p {
+              color: #ede9fe;
+              font-size: 17px;
+            }
+
+            .summary {
+              width: min(1180px, calc(100% - 32px));
+              margin: -30px auto 24px;
+              background: white;
+              border-radius: 24px;
+              padding: 22px 24px;
+              box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              gap: 16px;
+            }
+
+            .summary h2 {
+              font-size: 23px;
+              color: #4c1d95;
+            }
+
+            .count {
+              background: #f3e8ff;
+              color: #6d28d9;
+              padding: 10px 15px;
+              border-radius: 999px;
+              font-weight: 950;
+              white-space: nowrap;
+            }
+
+            .content {
+              width: min(1180px, calc(100% - 32px));
+              margin: 0 auto 38px;
+            }
+
+            .table-card, .empty {
+              background: white;
+              border: 1px solid #e2e8f0;
+              border-radius: 24px;
+              box-shadow: 0 16px 35px rgba(15, 23, 42, 0.08);
+              overflow: hidden;
+            }
+
+            .empty {
+              padding: 30px;
+              font-weight: 900;
+              color: #64748b;
+            }
+
+            .table-wrap {
+              overflow-x: auto;
+            }
+
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              min-width: 850px;
+            }
+
+            th {
+              background: #f5f3ff;
+              color: #4c1d95;
+              padding: 15px 16px;
+              font-size: 14px;
+              text-align: left;
+              border-bottom: 1px solid #ddd6fe;
+              white-space: nowrap;
+            }
+
+            td {
+              padding: 15px 16px;
+              border-bottom: 1px solid #edf2f7;
+              font-size: 15px;
+              color: #0f172a;
+              font-weight: 750;
+              vertical-align: top;
+            }
+
+            tr:hover td {
+              background: #faf7ff;
+            }
+
+            .serial {
+              color: #6d28d9;
+              font-weight: 950;
+            }
+
+            .actions {
+              width: min(1180px, calc(100% - 32px));
+              margin: 0 auto 35px;
+              display: flex;
+              gap: 12px;
+            }
+
+            button {
+              border: none;
+              border-radius: 14px;
+              padding: 13px 18px;
+              font-weight: 950;
+              cursor: pointer;
+              color: white;
+              background: #6d28d9;
+            }
+
+            button.close {
+              background: #0f172a;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>${escapeHtml(title)}</h1>
+            <p>Cart Order Service API Result</p>
+          </div>
+
+          <div class="summary">
+            <h2>Result Table</h2>
+            <div class="count">${rows.length} record(s)</div>
+          </div>
+
+          <main class="content">
+            ${tableHtml}
+          </main>
+
+          <div class="actions">
+            <button onclick="window.print()">Print Result</button>
+            <button class="close" onclick="window.close()">Close Tab</button>
+          </div>
+        </body>
+        </html>
+      `);
+      resultTab.document.close();
+    }
+</script>
+</body>
+</html>
