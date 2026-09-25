@@ -5,6 +5,7 @@ import com.example.orderservice.entity.OrderItem;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 
@@ -16,7 +17,8 @@ public interface ProductClient {
     List<Product> findAll();
     @GetMapping("/product/byId")
     Product getProductById(@RequestParam int id);
+    // ProductService requires X-Service-Key on every catalog-changing call (see its SecurityConfig).
     @PutMapping("/product/updateStock")
-    public Product updateProductStock(@RequestParam Integer id,@RequestParam Integer stock);
+    public Product updateProductStock(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam Integer id, @RequestParam Integer stock);
 
 }

@@ -9,6 +9,7 @@ import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
 import jakarta.transaction.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -21,6 +22,8 @@ public class OrderService {
     private OrderItemRepository orderItemRepository;
     @Autowired
     ProductClient productClient;
+    @Value("${internal.service.api-key}")
+    private String serviceApiKey;
     public Cart order(Cart cart)
     {
         long phno=cart.getCustomerPhno();
@@ -50,7 +53,7 @@ public class OrderService {
         for(OrderItem orderItem : saved.getOrderItems())
         {
             orderItem.setOrderId(saved.getOrderId());
-            productClient.updateProductStock(orderItem.getProductId(),-orderItem.getProductQuantity());
+            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(),-orderItem.getProductQuantity());
         }
         return orderRepository.save(saved);
     }
@@ -91,7 +94,7 @@ public class OrderService {
                     long t=orderItems.get(i).getId();
                     Product pro=productClient.getProductById(orderItems.get(i).getProductId());
                     price=price-(orderItems.get(i).getProductQuantity()*pro.getProductPrice());
-                    productClient.updateProductStock(orderItems.get(i).getProductId(),+orderItems.get(i).getProductQuantity());
+                    productClient.updateProductStock(serviceApiKey, orderItems.get(i).getProductId(),+orderItems.get(i).getProductQuantity());
                     orderItems.remove(i);
                     orderItemRepository.deleteById(t);
                     i--;
