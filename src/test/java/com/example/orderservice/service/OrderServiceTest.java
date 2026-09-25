@@ -1,12 +1,18 @@
 package com.example.orderservice.service;
 
+import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.OrderItem;
+import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.OrderItemRepository;
+import feign.FeignException;
+import feign.Request;
+import feign.Response;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,13 +21,17 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -31,6 +41,7 @@ import static org.mockito.Mockito.when;
 class OrderServiceTest {
 
     private static final String SERVICE_KEY = "test-service-key";
+    private static final String AUTH = "Bearer buyer-token";
     private static final long CUSTOMER = 9876543210L;
 
     @Mock
@@ -39,6 +50,8 @@ class OrderServiceTest {
     private OrderItemRepository orderItemRepository;
     @Mock
     private ProductClient productClient;
+    @Mock
+    private PhonepeClient phonepeClient;
 
     @InjectMocks
     private OrderService service;
@@ -85,10 +98,22 @@ class OrderServiceTest {
 
     // ---------- order() ----------
 
+    private FeignException paymentDeclined(int status, String message) {
+        Request request = Request.create(Request.HttpMethod.POST, "/phonepe/makepayment",
+                Map.of(), null, StandardCharsets.UTF_8, null);
+        Response response = Response.builder()
+                .status(status)
+                .reason("declined")
+                .request(request)
+                .body(message, StandardCharsets.UTF_8)
+                .build();
+        return FeignException.errorStatus("PhonepeClient#makePayment", response);
+    }
+
     @Test
     void orderRejectsAnInvalidPhoneNumber() {
         Cart cart = cart(12345, item(1, 1));
-        assertThrows(ProductException.class, () -> service.order(cart));
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
         verify(orderRepository, never()).save(any());
     }
 
@@ -96,7 +121,7 @@ class OrderServiceTest {
     void orderThrowsWhenAProductDoesNotExist() {
         when(productClient.getProductById(1)).thenReturn(null);
         Cart cart = cart(CUSTOMER, item(1, 1));
-        assertThrows(ProductException.class, () -> service.order(cart));
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
         verify(orderRepository, never()).save(any());
     }
 
@@ -107,26 +132,43 @@ class OrderServiceTest {
         when(productClient.getProductById(2)).thenReturn(product(2, 10.0, 1));
         Cart cart = cart(CUSTOMER, item(1, 1), item(2, 99));
 
-        assertThrows(ProductException.class, () -> service.order(cart));
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
 
         verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
         verify(orderRepository, never()).save(any());
     }
 
+    // A declined payment (insufficient funds, expired session, ...) must leave no order and no stock touched -
+    // the whole point of charging BEFORE saving the cart or decrementing stock.
     @Test
-    void orderComputesTotalPriceSetsRealOrderIdAndDecrementsStockForEveryItem() {
+    void orderThrowsWhenPaymentIsDeclinedAndTouchesNoStockOrOrder() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class)))
+                .thenThrow(paymentDeclined(400, "Insufficient Funds"));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        PaymentException ex = assertThrows(PaymentException.class, () -> service.order(cart, AUTH, null));
+
+        assertEquals("Insufficient Funds", ex.getMessage());
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void orderChargesTheBuyersOwnTokenForTheComputedTotalBeforeSavingOrDecrementingStock() {
         stubCartSaveAssignsAnId();
         when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
         when(productClient.getProductById(2)).thenReturn(product(2, 45.0, 10));
         Cart cart = cart(CUSTOMER, item(1, 2), item(2, 1));
 
-        Cart result = service.order(cart);
+        Cart result = service.order(cart, AUTH, "checkout-123");
 
         assertEquals(1045.0, result.getTotalPrice());
         assertEquals(42L, result.getOrderId());
         for (OrderItem oi : result.getOrderItems()) {
             assertEquals(42L, oi.getOrderId());
         }
+        verify(phonepeClient).makePayment(AUTH, new PaymentRequest(new BigDecimal("1045.00"), "Order payment", "checkout-123"));
         verify(productClient).updateProductStock(SERVICE_KEY, 1, -2);
         verify(productClient).updateProductStock(SERVICE_KEY, 2, -1);
         verify(orderRepository, times(2)).save(any());
