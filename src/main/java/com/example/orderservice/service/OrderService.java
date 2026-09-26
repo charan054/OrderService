@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
@@ -48,7 +49,10 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 @Service
 public class OrderService {
@@ -569,6 +573,54 @@ public class OrderService {
     public List<Product> getProducts()
     {
         return productClient.findAll();
+    }
+
+    private static final int DEFAULT_FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 5;
+    private static final int MAX_FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 20;
+
+    // Ranks other products by how many times they've actually appeared in the same order as productId - unlike
+    // ProductService's same-category "related products" (which has no purchase history to draw on, only a
+    // category guess), this is a real signal since OrderService owns the order data. CANCELLED orders are
+    // excluded (never an actually-kept purchase); RETURNED ones still count (the pairing was genuinely bought
+    // together, even if later sent back). A product that's since been removed from the catalog is skipped
+    // rather than blowing up the whole list, same reasoning getPriceDropAlerts() already applies.
+    public List<FrequentlyBoughtTogether> getFrequentlyBoughtTogether(int productId, Integer limit) {
+        int effectiveLimit = (limit == null || limit <= 0)
+                ? DEFAULT_FREQUENTLY_BOUGHT_TOGETHER_LIMIT
+                : Math.min(limit, MAX_FREQUENTLY_BOUGHT_TOGETHER_LIMIT);
+
+        Map<Integer, Integer> coOccurrence = new HashMap<>();
+        for (Cart cart : orderRepository.findAll()) {
+            if (cart.getStatus() == OrderStatus.CANCELLED) {
+                continue;
+            }
+            List<OrderItem> items = cart.getOrderItems();
+            if (items == null || items.stream().noneMatch(item -> item.getProductId() == productId)) {
+                continue;
+            }
+            for (OrderItem item : items) {
+                if (item.getProductId() == productId) {
+                    continue;
+                }
+                coOccurrence.merge(item.getProductId(), 1, Integer::sum);
+            }
+        }
+
+        return coOccurrence.entrySet().stream()
+                .sorted(Map.Entry.<Integer, Integer>comparingByValue().reversed())
+                .limit(effectiveLimit)
+                .map(entry -> {
+                    Product product;
+                    try {
+                        product = productClient.getProductById(entry.getKey());
+                    } catch (FeignException e) {
+                        return null;
+                    }
+                    return product == null ? null
+                            : new FrequentlyBoughtTogether(product.getProductId(), product.getProductName(), entry.getValue());
+                })
+                .filter(Objects::nonNull)
+                .toList();
     }
     @Transactional
     public List<Cart> deleteProduct(long phno, long productId) {

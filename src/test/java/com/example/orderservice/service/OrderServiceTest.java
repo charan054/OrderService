@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
@@ -65,6 +66,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -1322,6 +1324,69 @@ class OrderServiceTest {
     void getCouponsDelegatesToTheCouponRepository() {
         when(couponRepository.findAll()).thenReturn(List.of(coupon("SAVE10", 10, true)));
         assertEquals(1, service.getCoupons().size());
+    }
+
+    // ---------- getFrequentlyBoughtTogether ----------
+
+    @Test
+    void getFrequentlyBoughtTogetherRanksOtherProductsByCoOccurrenceCount() {
+        Cart cartA = cart(CUSTOMER, item(1, 1), item(2, 1));
+        Cart cartB = cart(CUSTOMER, item(1, 1), item(2, 1));
+        Cart cartC = cart(CUSTOMER, item(1, 1), item(3, 1));
+        when(orderRepository.findAll()).thenReturn(List.of(cartA, cartB, cartC));
+        when(productClient.getProductById(2)).thenReturn(product(2, 20.0, 5));
+        when(productClient.getProductById(3)).thenReturn(product(3, 30.0, 5));
+
+        List<FrequentlyBoughtTogether> result = service.getFrequentlyBoughtTogether(1, null);
+
+        assertEquals(2, result.size());
+        assertEquals(2, result.get(0).productId());
+        assertEquals(2, result.get(0).timesBoughtTogether());
+        assertEquals(3, result.get(1).productId());
+        assertEquals(1, result.get(1).timesBoughtTogether());
+    }
+
+    @Test
+    void getFrequentlyBoughtTogetherExcludesCancelledOrders() {
+        Cart cancelled = cart(CUSTOMER, item(1, 1), item(2, 1));
+        cancelled.setStatus(OrderStatus.CANCELLED);
+        when(orderRepository.findAll()).thenReturn(List.of(cancelled));
+
+        assertTrue(service.getFrequentlyBoughtTogether(1, null).isEmpty());
+        verifyNoInteractions(productClient);
+    }
+
+    @Test
+    void getFrequentlyBoughtTogetherIgnoresOrdersThatDontContainTheQueriedProduct() {
+        Cart cart = cart(CUSTOMER, item(2, 1), item(3, 1));
+        when(orderRepository.findAll()).thenReturn(List.of(cart));
+
+        assertTrue(service.getFrequentlyBoughtTogether(1, null).isEmpty());
+    }
+
+    @Test
+    void getFrequentlyBoughtTogetherDefaultsToFiveAndCapsAtTwenty() {
+        List<Cart> carts = new ArrayList<>();
+        for (int productId = 2; productId <= 30; productId++) {
+            carts.add(cart(CUSTOMER, item(1, 1), item(productId, 1)));
+            lenient().when(productClient.getProductById(productId)).thenReturn(product(productId, 10.0, 5));
+        }
+        when(orderRepository.findAll()).thenReturn(carts);
+
+        assertEquals(5, service.getFrequentlyBoughtTogether(1, null).size());
+        assertEquals(5, service.getFrequentlyBoughtTogether(1, 5).size());
+        assertEquals(20, service.getFrequentlyBoughtTogether(1, 1000).size());
+    }
+
+    // A product that's since been removed from the catalog must not blow up the whole list - it's simply
+    // skipped, same reasoning getPriceDropAlerts() already applies.
+    @Test
+    void getFrequentlyBoughtTogetherSkipsAProductWhoseLookupFails() {
+        Cart cart = cart(CUSTOMER, item(1, 1), item(2, 1));
+        when(orderRepository.findAll()).thenReturn(List.of(cart));
+        when(productClient.getProductById(2)).thenThrow(declinedBy("byId", 404, "Product not found"));
+
+        assertTrue(service.getFrequentlyBoughtTogether(1, null).isEmpty());
     }
 
     // ---------- shipping addresses ----------
