@@ -345,6 +345,10 @@
                 <div id="cartLines"><p style="color:var(--muted); font-size:14px;">Your cart is empty.</p></div>
                 <div class="total-row"><span>Total</span><span id="cartTotal">₹0</span></div>
 
+                <input type="text" id="couponCode" placeholder="Coupon code (optional)" />
+                <input type="number" id="pointsRedeemed" min="0" placeholder="Loyalty points to redeem (optional)" />
+                <p id="loyaltyHint" style="font-size:12px; color:var(--muted); margin:-6px 0 12px;"></p>
+
                 <div id="payOptions">
                     <label class="pay-option selected" id="payPhonepeOption">
                         <input type="radio" name="payMethod" value="PHONEPE" checked onchange="onPaymentMethodChange()" />
@@ -459,6 +463,18 @@
       showAccountInfo();
       loadProducts();
       loadWishlist();
+      loadLoyaltyBalance();
+    }
+
+    async function loadLoyaltyBalance() {
+      const response = await fetch(`${BASE_URL}/loyalty/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const hint = document.getElementById("loyaltyHint");
+      if (!response.ok) {
+        hint.textContent = "";
+        return;
+      }
+      const account = await response.json();
+      hint.textContent = `You have ${account.pointsBalance} loyalty points (1 point = ₹1).`;
     }
 
     async function loadProducts() {
@@ -670,10 +686,15 @@
         }
       }
 
+      const couponCode = document.getElementById("couponCode").value.trim();
+      const pointsRedeemed = document.getElementById("pointsRedeemed").value.trim();
+
       const cartPayload = {
         customerPhno: Number(customerPhno),
         orderItems: cart.map(item => ({ productId: item.productId, productQuantity: item.quantity })),
-        paymentMethod: method
+        paymentMethod: method,
+        couponCode: couponCode || null,
+        pointsRedeemed: pointsRedeemed ? Number(pointsRedeemed) : null
       };
 
       const query = method === "PHONEPE"
@@ -700,11 +721,14 @@
         cart = [];
         renderCart();
         document.getElementById("payerPin").value = "";
+        document.getElementById("couponCode").value = "";
+        document.getElementById("pointsRedeemed").value = "";
         setCheckoutStatus(
           `Order #${order.orderId} placed${method === "CASH" ? " - pay on delivery." : ", paid via PhonePe."}`,
           "success"
         );
         loadProducts();
+        loadLoyaltyBalance();
       } catch (error) {
         setCheckoutStatus("");
         setCheckoutError(error.message);
