@@ -17,4 +17,8 @@ public class Wishlist {
     private Long id;
     private long customerPhno;
     private int productId;
+    // Snapshot of the product's price at the moment it was wishlisted - compared against its current price by
+    // OrderService.getPriceDropAlerts() to detect a drop. Null for a wishlist entry saved before this field
+    // existed; such an entry is simply skipped by the price-drop check rather than treated as a false drop.
+    private Double priceWhenAdded;
 }

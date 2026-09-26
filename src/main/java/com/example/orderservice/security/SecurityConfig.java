@@ -34,9 +34,9 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno").permitAll()
-                        // Same self-service trust level as /cart/byphno above - looking up your own wishlist by
-                        // your own phone number.
-                        .requestMatchers(HttpMethod.GET, "/wishlist/byphno").permitAll()
+                        // Same self-service trust level as /cart/byphno above - looking up your own wishlist (and
+                        // its price-drop alerts) by your own phone number.
+                        .requestMatchers(HttpMethod.GET, "/wishlist/byphno", "/wishlist/pricedrops").permitAll()
                         // The tracking timeline is just a per-transition history of the same status field
                         // /cart/byphno already returns for every order - no additional exposure.
                         .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()

@@ -6,6 +6,7 @@ import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.RefundRequest;
+import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.CouponRedemption;
@@ -686,6 +687,18 @@ class OrderServiceTest {
         verify(wishlistRepository).save(any(Wishlist.class));
     }
 
+    // The snapshot getPriceDropAlerts() later compares the current price against.
+    @Test
+    void addToWishlistSnapshotsTheProductsCurrentPrice() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 499.0, 10));
+        when(wishlistRepository.findByCustomerPhnoAndProductId(CUSTOMER, 1)).thenReturn(Optional.empty());
+        when(wishlistRepository.save(any(Wishlist.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Wishlist result = service.addToWishlist(CUSTOMER, 1);
+
+        assertEquals(499.0, result.getPriceWhenAdded());
+    }
+
     // Idempotent: adding an already-wishlisted product returns the existing row instead of creating a duplicate.
     @Test
     void addToWishlistReturnsTheExistingEntryWithoutDuplicating() {
@@ -714,6 +727,66 @@ class OrderServiceTest {
         w.setProductId(1);
         when(wishlistRepository.findByCustomerPhno(CUSTOMER)).thenReturn(List.of(w));
         assertEquals(1, service.getWishlist(CUSTOMER).size());
+    }
+
+    // ---------- getPriceDropAlerts() ----------
+
+    private Wishlist wishlistItem(int productId, Double priceWhenAdded) {
+        Wishlist w = new Wishlist();
+        w.setCustomerPhno(CUSTOMER);
+        w.setProductId(productId);
+        w.setPriceWhenAdded(priceWhenAdded);
+        return w;
+    }
+
+    @Test
+    void getPriceDropAlertsRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.getPriceDropAlerts(12345));
+        verifyNoInteractions(wishlistRepository);
+    }
+
+    @Test
+    void getPriceDropAlertsReturnsOnlyItemsWhoseCurrentPriceIsLower() {
+        when(wishlistRepository.findByCustomerPhno(CUSTOMER))
+                .thenReturn(List.of(wishlistItem(1, 500.0), wishlistItem(2, 200.0)));
+        when(productClient.getProductById(1)).thenReturn(product(1, 450.0, 10));
+        when(productClient.getProductById(2)).thenReturn(product(2, 200.0, 10));
+
+        List<WishlistPriceAlert> alerts = service.getPriceDropAlerts(CUSTOMER);
+
+        assertEquals(1, alerts.size());
+        assertEquals(1, alerts.get(0).productId());
+        assertEquals(500.0, alerts.get(0).priceWhenAdded());
+        assertEquals(450.0, alerts.get(0).currentPrice());
+        assertEquals(50.0, alerts.get(0).priceDrop());
+    }
+
+    @Test
+    void getPriceDropAlertsSkipsAnItemWithNoStoredSnapshot() {
+        when(wishlistRepository.findByCustomerPhno(CUSTOMER)).thenReturn(List.of(wishlistItem(1, null)));
+
+        List<WishlistPriceAlert> alerts = service.getPriceDropAlerts(CUSTOMER);
+
+        assertTrue(alerts.isEmpty());
+        verifyNoInteractions(productClient);
+    }
+
+    @Test
+    void getPriceDropAlertsSkipsAnItemWhosePriceRoseOrStayedTheSame() {
+        when(wishlistRepository.findByCustomerPhno(CUSTOMER)).thenReturn(List.of(wishlistItem(1, 500.0)));
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+
+        assertTrue(service.getPriceDropAlerts(CUSTOMER).isEmpty());
+    }
+
+    // A product that's since been removed from the catalog must not blow up the whole list - it's simply
+    // skipped, same reasoning addToWishlist already applies to a Feign failure.
+    @Test
+    void getPriceDropAlertsSkipsAnItemWhoseProductLookupFails() {
+        when(wishlistRepository.findByCustomerPhno(CUSTOMER)).thenReturn(List.of(wishlistItem(1, 500.0)));
+        when(productClient.getProductById(1)).thenThrow(declinedBy("byId", 404, "Product not found"));
+
+        assertTrue(service.getPriceDropAlerts(CUSTOMER).isEmpty());
     }
 
     @Test

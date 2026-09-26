@@ -82,6 +82,11 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void lookingUpOwnPriceDropAlertsByPhoneIsPublic() throws Exception {
+        mockMvc.perform(get("/wishlist/pricedrops").param("phno", "9876543210")).andExpect(status().isOk());
+    }
+
+    @Test
     void addToWishlistWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(post("/wishlist/add").param("phno", "9876543210").param("productId", "1"))
                 .andExpect(status().isUnauthorized());

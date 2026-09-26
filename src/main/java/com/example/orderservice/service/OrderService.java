@@ -6,6 +6,7 @@ import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.RefundRequest;
+import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.CouponRedemption;
@@ -45,6 +46,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -617,6 +619,9 @@ public class OrderService {
                     Wishlist wishlist = new Wishlist();
                     wishlist.setCustomerPhno(phno);
                     wishlist.setProductId(productId);
+                    // Snapshot the price at add time - getPriceDropAlerts() compares it against the product's
+                    // current price to detect a drop.
+                    wishlist.setPriceWhenAdded(product.getProductPrice());
                     return wishlistRepository.save(wishlist);
                 });
     }
@@ -624,6 +629,34 @@ public class OrderService {
     public List<Wishlist> getWishlist(long phno) {
         validatePhno(phno);
         return wishlistRepository.findByCustomerPhno(phno);
+    }
+
+    // Computed on demand rather than pushed anywhere - this system has no scheduler and no email/SMS provider
+    // (same caveat NotificationLog already carries), so "alert" here means "ask and find out right now", not a
+    // proactive notification. Re-fetches each product's CURRENT price fresh on every call, so it's always
+    // accurate even though nothing is persisted between calls. An entry with no priceWhenAdded (wishlisted
+    // before this field existed) or whose product Feign lookup fails is skipped rather than reported.
+    public List<WishlistPriceAlert> getPriceDropAlerts(long phno) {
+        validatePhno(phno);
+        List<WishlistPriceAlert> alerts = new ArrayList<>();
+        for (Wishlist item : wishlistRepository.findByCustomerPhno(phno)) {
+            if (item.getPriceWhenAdded() == null) {
+                continue;
+            }
+            Product product;
+            try {
+                product = productClient.getProductById(item.getProductId());
+            } catch (FeignException e) {
+                continue;
+            }
+            if (product == null || product.getProductPrice() >= item.getPriceWhenAdded()) {
+                continue;
+            }
+            double drop = item.getPriceWhenAdded() - product.getProductPrice();
+            alerts.add(new WishlistPriceAlert(product.getProductId(), product.getProductName(),
+                    item.getPriceWhenAdded(), product.getProductPrice(), drop));
+        }
+        return alerts;
     }
 
     @Transactional
