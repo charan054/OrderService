@@ -685,6 +685,19 @@ public class OrderService {
         return productClient.findAll();
     }
 
+    // MAX_SEARCH_RESULTS caps the single page requested from ProductService's own paginated /product/search -
+    // this storefront's catalog is small enough that a single generously-sized page is simpler than exposing
+    // pagination end-to-end through OrderService too.
+    private static final int MAX_SEARCH_RESULTS = 200;
+
+    public List<Product> searchProducts(String name, String category) {
+        return productClient.search(blankToNull(name), blankToNull(category), MAX_SEARCH_RESULTS).content();
+    }
+
+    private static String blankToNull(String value) {
+        return (value == null || value.isBlank()) ? null : value;
+    }
+
     private static final int DEFAULT_FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 5;
     private static final int MAX_FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 20;
 

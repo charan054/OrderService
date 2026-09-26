@@ -187,6 +187,10 @@
 
         .wishlist-btn.active { color: var(--red); }
 
+        .search-row { display: flex; gap: 10px; margin-bottom: 14px; }
+        .search-row input { margin-bottom: 0; flex: 2; }
+        .search-row select { margin-bottom: 0; flex: 1; }
+
         .grid-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
         .grid-tabs button {
           width: auto;
@@ -300,6 +304,12 @@
     <section id="shopSection" class="hidden">
         <div class="layout">
             <div>
+                <div class="search-row">
+                    <input type="text" id="searchName" placeholder="Search products" oninput="onSearchChange()" />
+                    <select id="searchCategory" onchange="onSearchChange()">
+                        <option value="">All categories</option>
+                    </select>
+                </div>
                 <div class="grid-tabs">
                     <button class="active" id="tabAll" onclick="showTab('all')">All products</button>
                     <button id="tabWishlist" onclick="showTab('wishlist')">Wishlist (<span id="wishlistCount">0</span>)</button>
@@ -344,6 +354,8 @@
     let wishlistProductIds = new Set();
     let priceDropsByProductId = new Map();
     let activeTab = "all";
+    let allCategories = [];
+    let searchDebounceTimer = null;
 
     function showAccountInfo() {
       document.getElementById("accountInfo").innerHTML = customerPhno
@@ -384,9 +396,33 @@
     }
 
     async function loadProducts() {
-      const response = await fetch(`${BASE_URL}/cart/display`);
+      const name = document.getElementById("searchName").value.trim();
+      const category = document.getElementById("searchCategory").value;
+      const query = new URLSearchParams();
+      if (name) query.set("name", name);
+      if (category) query.set("category", category);
+
+      const response = await fetch(`${BASE_URL}/cart/search?${query.toString()}`);
       products = response.ok ? await response.json() : [];
       renderProducts();
+
+      if (!name && !category) {
+        refreshCategoryOptions();
+      }
+    }
+
+    function refreshCategoryOptions() {
+      allCategories = [...new Set(products.map(p => p.productCategory).filter(Boolean))].sort();
+      const select = document.getElementById("searchCategory");
+      const current = select.value;
+      select.innerHTML = `<option value="">All categories</option>` +
+        allCategories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+      select.value = current;
+    }
+
+    function onSearchChange() {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(loadProducts, 250);
     }
 
     async function loadWishlist() {

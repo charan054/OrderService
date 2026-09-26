@@ -9,6 +9,7 @@ import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
@@ -1469,6 +1470,30 @@ class OrderServiceTest {
     void getProductsDelegatesToTheProductClient() {
         when(productClient.findAll()).thenReturn(List.of(product(1, 9.99, 10)));
         assertEquals(1, service.getProducts().size());
+    }
+
+    // ---------- searchProducts ----------
+
+    @Test
+    void searchProductsDelegatesToTheProductClient() {
+        when(productClient.search("mug", "home", 200))
+                .thenReturn(new ProductSearchResult(List.of(product(1, 9.99, 10))));
+
+        List<Product> result = service.searchProducts("mug", "home");
+
+        assertEquals(1, result.size());
+    }
+
+    // Blank/empty search fields are normalized to null before reaching ProductService, so an empty text box
+    // means "no filter" rather than a literal empty-string match.
+    @Test
+    void searchProductsTreatsBlankFiltersAsNoFilter() {
+        when(productClient.search(null, null, 200))
+                .thenReturn(new ProductSearchResult(List.of(product(1, 9.99, 10))));
+
+        List<Product> result = service.searchProducts("  ", "");
+
+        assertEquals(1, result.size());
     }
 
     @Test

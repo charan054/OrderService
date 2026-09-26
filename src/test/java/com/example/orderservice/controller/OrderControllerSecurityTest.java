@@ -4,6 +4,7 @@ import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.kafka.OrderKafkaProducer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -76,6 +77,12 @@ class OrderControllerSecurityTest {
     @Test
     void frequentlyBoughtTogetherIsPublic() throws Exception {
         mockMvc.perform(get("/cart/frequentlyboughttogether").param("productId", "1")).andExpect(status().isOk());
+    }
+
+    @Test
+    void searchIsPublic() throws Exception {
+        when(productClient.search(any(), any(), anyInt())).thenReturn(new ProductSearchResult(List.of()));
+        mockMvc.perform(get("/cart/search").param("name", "mug")).andExpect(status().isOk());
     }
 
     @Test

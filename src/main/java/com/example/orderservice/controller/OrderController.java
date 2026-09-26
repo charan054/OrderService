@@ -96,6 +96,13 @@ public class OrderController {
     public List<Product> findAll(){
         return orderService.getProducts();
     }
+    // Same public catalog-browsing trust level as /cart/display above - the storefront's search box/category
+    // filter, proxied to ProductService's own public /product/search (see ProductClient.search).
+    @GetMapping("/search")
+    public List<Product> search(@RequestParam(required = false) String name,
+                                 @RequestParam(required = false) String category){
+        return orderService.searchProducts(name, category);
+    }
     // Public, same catalog-browsing trust level as /cart/display - a ranked list, not any one customer's data.
     @GetMapping("/frequentlyboughttogether")
     public List<FrequentlyBoughtTogether> getFrequentlyBoughtTogether(@RequestParam int productId,
