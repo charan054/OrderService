@@ -34,6 +34,9 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno").permitAll()
+                        // Same self-service trust level as /cart/byphno above - looking up your own wishlist by
+                        // your own phone number.
+                        .requestMatchers(HttpMethod.GET, "/wishlist/byphno").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         // The static dashboard itself - not an order action, just the HTML/JS shell. The
                         // mutating buttons on it still hit the X-Service-Key-guarded endpoints above like any

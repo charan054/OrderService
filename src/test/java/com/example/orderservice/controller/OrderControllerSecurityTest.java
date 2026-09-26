@@ -77,6 +77,36 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void lookingUpOwnWishlistByPhoneIsPublic() throws Exception {
+        mockMvc.perform(get("/wishlist/byphno").param("phno", "9876543210")).andExpect(status().isOk());
+    }
+
+    @Test
+    void addToWishlistWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/wishlist/add").param("phno", "9876543210").param("productId", "1"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void addToWishlistWithValidKeySucceeds() throws Exception {
+        Product widget = new Product();
+        widget.setProductId(1);
+        widget.setProductPrice(9.99);
+        widget.setProductStock(10);
+        when(productClient.getProductById(1)).thenReturn(widget);
+
+        mockMvc.perform(post("/wishlist/add").param("phno", "9876543210").param("productId", "1")
+                        .header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void removeFromWishlistWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(delete("/wishlist/remove").param("phno", "9876543210").param("productId", "1"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void addOrderWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(post("/cart/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ORDER))
                 .andExpect(status().isUnauthorized());
