@@ -50,6 +50,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -1510,6 +1511,86 @@ class OrderServiceTest {
     void getLoyaltyAccountReturnsTheExistingBalance() {
         when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(loyaltyAccount(CUSTOMER, 30)));
         assertEquals(30, service.getLoyaltyAccount(CUSTOMER).getPointsBalance());
+    }
+
+    // ---------- loyalty points expiry ----------
+
+    @Test
+    void getLoyaltyAccountExpiresABalanceWithNoRecentActivity() {
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 100);
+        account.setLastActivityAt(Instant.now().minus(400, ChronoUnit.DAYS));
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        LoyaltyAccount result = service.getLoyaltyAccount(CUSTOMER);
+
+        assertEquals(0, result.getPointsBalance());
+        verify(loyaltyAccountRepository).save(account);
+        ArgumentCaptor<LoyaltyTransaction> captor = ArgumentCaptor.forClass(LoyaltyTransaction.class);
+        verify(loyaltyTransactionRepository).save(captor.capture());
+        assertEquals(-100, captor.getValue().getPoints());
+        assertEquals(LoyaltyTransactionType.EXPIRED, captor.getValue().getType());
+    }
+
+    @Test
+    void getLoyaltyAccountDoesNotExpireABalanceWithRecentActivity() {
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 100);
+        account.setLastActivityAt(Instant.now().minus(10, ChronoUnit.DAYS));
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        assertEquals(100, service.getLoyaltyAccount(CUSTOMER).getPointsBalance());
+        verify(loyaltyAccountRepository, never()).save(any());
+    }
+
+    @Test
+    void getLoyaltyAccountDoesNotExpireAnAccountThatHasNeverHadActivity() {
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 100);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        assertEquals(100, service.getLoyaltyAccount(CUSTOMER).getPointsBalance());
+        verifyNoInteractions(loyaltyTransactionRepository);
+    }
+
+    @Test
+    void getLoyaltyAccountDoesNotExpireAnAlreadyZeroBalance() {
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 0);
+        account.setLastActivityAt(Instant.now().minus(400, ChronoUnit.DAYS));
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        service.getLoyaltyAccount(CUSTOMER);
+
+        verify(loyaltyAccountRepository, never()).save(any());
+        verifyNoInteractions(loyaltyTransactionRepository);
+    }
+
+    // Expiry is applied before the balance check, so redeeming against a stale (now-expired) balance fails the
+    // same way redeeming against an insufficient balance always has.
+    @Test
+    void orderRejectsRedemptionAgainstAnExpiredBalance() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 100);
+        account.setLastActivityAt(Instant.now().minus(400, ChronoUnit.DAYS));
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPointsRedeemed(50);
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void earnLoyaltyPointsRefreshesLastActivityAt() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setStatus(OrderStatus.SHIPPED);
+        cart.setTotalPrice(100.0);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 0);
+        account.setLastActivityAt(Instant.now().minus(400, ChronoUnit.DAYS));
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        service.deliver(42L);
+
+        assertTrue(account.getLastActivityAt().isAfter(Instant.now().minus(1, ChronoUnit.MINUTES)));
     }
 
     @Test

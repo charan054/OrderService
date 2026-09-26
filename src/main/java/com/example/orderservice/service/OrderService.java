@@ -258,9 +258,7 @@ public class OrderService {
         if (requested < 0) {
             throw new ProductException("Points redeemed cannot be negative");
         }
-        int balance = loyaltyAccountRepository.findById(cart.getCustomerPhno())
-                .map(LoyaltyAccount::getPointsBalance)
-                .orElse(0);
+        int balance = loadLoyaltyAccount(cart.getCustomerPhno()).getPointsBalance();
         if (requested > balance) {
             throw new ProductException("You only have " + balance + " loyalty points available");
         }
@@ -278,9 +276,9 @@ public class OrderService {
         if (pointsRedeemed == null || pointsRedeemed == 0) {
             return;
         }
-        LoyaltyAccount account = loyaltyAccountRepository.findById(customerPhno)
-                .orElseGet(() -> newLoyaltyAccount(customerPhno));
+        LoyaltyAccount account = loadLoyaltyAccount(customerPhno);
         account.setPointsBalance(account.getPointsBalance() - pointsRedeemed);
+        account.setLastActivityAt(Instant.now());
         loyaltyAccountRepository.save(account);
         recordLoyaltyTransaction(customerPhno, orderId, -pointsRedeemed, LoyaltyTransactionType.REDEEMED, null);
     }
@@ -298,12 +296,12 @@ public class OrderService {
         if (baseEarned <= 0) {
             return;
         }
-        LoyaltyAccount account = loyaltyAccountRepository.findById(cart.getCustomerPhno())
-                .orElseGet(() -> newLoyaltyAccount(cart.getCustomerPhno()));
+        LoyaltyAccount account = loadLoyaltyAccount(cart.getCustomerPhno());
         LoyaltyTier tier = LoyaltyTier.forLifetimePoints(account.getLifetimePointsEarned());
         int earned = (int) (baseEarned * tier.getEarnMultiplier());
         account.setPointsBalance(account.getPointsBalance() + earned);
         account.setLifetimePointsEarned(account.getLifetimePointsEarned() + earned);
+        account.setLastActivityAt(Instant.now());
         loyaltyAccountRepository.save(account);
         recordLoyaltyTransaction(cart.getCustomerPhno(), cart.getOrderId(), earned, LoyaltyTransactionType.EARNED, null);
     }
@@ -322,14 +320,14 @@ public class OrderService {
             return;
         }
         int earned = earnedTx.getPoints();
-        LoyaltyAccount account = loyaltyAccountRepository.findById(cart.getCustomerPhno())
-                .orElseGet(() -> newLoyaltyAccount(cart.getCustomerPhno()));
+        LoyaltyAccount account = loadLoyaltyAccount(cart.getCustomerPhno());
         int clawedBack = Math.min(earned, account.getPointsBalance());
         if (clawedBack <= 0) {
             return;
         }
         account.setPointsBalance(account.getPointsBalance() - clawedBack);
         account.setLifetimePointsEarned(Math.max(0, account.getLifetimePointsEarned() - clawedBack));
+        account.setLastActivityAt(Instant.now());
         loyaltyAccountRepository.save(account);
         recordLoyaltyTransaction(cart.getCustomerPhno(), cart.getOrderId(), -clawedBack, LoyaltyTransactionType.ADJUSTED,
                 "Points earned on order #" + cart.getOrderId() + " reversed after return");
@@ -340,6 +338,41 @@ public class OrderService {
         account.setCustomerPhno(customerPhno);
         account.setPointsBalance(0);
         return account;
+    }
+
+    // ~12 months - Instant has no calendar-month arithmetic (ChronoUnit.MONTHS isn't a supported unit for it,
+    // unlike LocalDate), so this is expressed in days instead.
+    private static final int POINTS_EXPIRY_DAYS = 365;
+
+    // The single entry point every loyalty method should load an account through - applies expiry BEFORE
+    // handing back the balance, so a stale balance is never read, redeemed against, or added to without first
+    // being zeroed. This system has no scheduler (see getPriceDropAlerts()'s same caveat), so expiry isn't a
+    // background sweep - it's checked lazily, the moment anything next touches the account.
+    private LoyaltyAccount loadLoyaltyAccount(long customerPhno) {
+        LoyaltyAccount account = loyaltyAccountRepository.findById(customerPhno)
+                .orElseGet(() -> newLoyaltyAccount(customerPhno));
+        applyPointsExpiry(account);
+        return account;
+    }
+
+    // A balance with no activity in POINTS_EXPIRY_DAYS expires entirely - not a background job (see
+    // loadLoyaltyAccount()), so this only ever fires the next time the account is read or touched. Expiring
+    // itself is not "activity" and must not reset lastActivityAt, or a balance sitting at zero would just get
+    // silently re-armed forever; the balance being zero already after expiry naturally prevents this method
+    // from re-firing on the same stale timestamp. lifetimePointsEarned (and therefore tier) is untouched -
+    // expiry is about the spendable balance only, not a customer's earned history.
+    private void applyPointsExpiry(LoyaltyAccount account) {
+        if (account.getPointsBalance() <= 0 || account.getLastActivityAt() == null) {
+            return;
+        }
+        if (Instant.now().isBefore(account.getLastActivityAt().plus(POINTS_EXPIRY_DAYS, ChronoUnit.DAYS))) {
+            return;
+        }
+        int expired = account.getPointsBalance();
+        account.setPointsBalance(0);
+        loyaltyAccountRepository.save(account);
+        recordLoyaltyTransaction(account.getCustomerPhno(), null, -expired, LoyaltyTransactionType.EXPIRED,
+                "Points expired after " + POINTS_EXPIRY_DAYS + " days of no account activity");
     }
 
     private void recordLoyaltyTransaction(long customerPhno, Long orderId, int points, LoyaltyTransactionType type, String reason) {
@@ -355,7 +388,7 @@ public class OrderService {
 
     public LoyaltyAccount getLoyaltyAccount(long phno) {
         validatePhno(phno);
-        return loyaltyAccountRepository.findById(phno).orElseGet(() -> newLoyaltyAccount(phno));
+        return loadLoyaltyAccount(phno);
     }
 
     public List<LoyaltyTransaction> getLoyaltyHistory(long phno) {
@@ -370,12 +403,13 @@ public class OrderService {
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A reason is required for a manual points adjustment");
         }
-        LoyaltyAccount account = loyaltyAccountRepository.findById(phno).orElseGet(() -> newLoyaltyAccount(phno));
+        LoyaltyAccount account = loadLoyaltyAccount(phno);
         int newBalance = account.getPointsBalance() + points;
         if (newBalance < 0) {
             throw new ProductException("Adjustment would leave a negative points balance");
         }
         account.setPointsBalance(newBalance);
+        account.setLastActivityAt(Instant.now());
         LoyaltyAccount saved = loyaltyAccountRepository.save(account);
         recordLoyaltyTransaction(phno, null, points, LoyaltyTransactionType.ADJUSTED, reason);
         return saved;
