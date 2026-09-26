@@ -145,6 +145,9 @@ public class OrderService {
         cart.setDiscountAmount(discount);
         cart.setStatus(OrderStatus.PLACED);
         cart.setPaymentTransactionId(payment != null ? payment.transactionId() : null);
+        // A PHONEPE order is paid the instant its charge above succeeds; a CASH order isn't paid yet - see
+        // markPaid().
+        cart.setPaid(payment != null);
         Cart saved=orderRepository.save(cart);
         for(OrderItem orderItem : saved.getOrderItems())
         {
@@ -534,6 +537,28 @@ public class OrderService {
         recordTracking(result.getOrderId(), OrderStatus.DELIVERED);
         earnLoyaltyPoints(result);
         sendNotification("Order delivered. OrderId: " + result.getOrderId());
+        return result;
+    }
+
+    // Records that a CASH order's money has actually been collected (e.g. the courier handed it to the customer
+    // at the door) - deliberately a separate, explicit ops action rather than something deliver() sets
+    // automatically, since a delivery and a successful cash collection aren't the same event (a courier can
+    // deliver without collecting, or collect after a short delay) - this system has no scheduler or payment
+    // provider to reconcile that gap automatically, so an admin/ops caller records it once it's actually true. A
+    // PHONEPE order is already paid the moment its charge succeeds (see order()), so marking it "paid" again
+    // makes no sense and is rejected instead of silently accepted.
+    public Cart markPaid(long orderId) {
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
+            throw new ProductException("Only a cash-on-delivery order can be marked paid this way");
+        }
+        if (cart.isPaid()) {
+            throw new ProductException("This order is already marked paid");
+        }
+        cart.setPaid(true);
+        Cart result = orderRepository.save(cart);
+        sendNotification("Order marked paid (cash collected). OrderId: " + result.getOrderId());
         return result;
     }
 

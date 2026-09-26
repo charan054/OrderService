@@ -246,6 +246,17 @@ class OrderControllerSecurityTest {
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    void markPaidWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/42/markpaid")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void markPaidOfAnUnknownOrderIdReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/markpaid").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isNotFound());
+    }
+
     private static final String NEW_COUPON = """
             {"code":"save10","discountPercent":10,"active":true}
             """;

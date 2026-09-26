@@ -19,6 +19,7 @@ import java.util.List;
         "totalPrice",
         "shippingAddressId",
         "paymentMethod",
+        "paid",
         "status"
 })
 public class Cart {
@@ -50,6 +51,10 @@ public class Cart {
     @Enumerated(EnumType.STRING)
     @Column(columnDefinition = "VARCHAR(20)")
     private PaymentMethod paymentMethod = PaymentMethod.PHONEPE;
+    // Set true by order() the moment a PHONEPE charge succeeds (money already moved); a CASH order starts false
+    // and stays that way until OrderService.markPaid() records the cash actually being collected at delivery -
+    // see that method for why this isn't just inferred from status==DELIVERED.
+    private boolean paid;
     // columnDefinition pins this to a plain VARCHAR: Hibernate 7's default MySQL mapping for a STRING enum is a
     // native ENUM(...) column sized to whatever constants existed when the table was first created, so a later
     // OrderStatus addition (e.g. SHIPPED/DELIVERED) fails at runtime with "Data truncated for column 'status'"

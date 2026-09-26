@@ -74,6 +74,12 @@ public class OrderController {
     public Cart deliverOrder(@PathVariable long orderId){
         return orderService.deliver(orderId);
     }
+    // Ops action: records that a cash-on-delivery order's payment was actually collected. Same X-Service-Key
+    // trust level as ship/deliver above - see OrderService.markPaid() for why this isn't automatic.
+    @PostMapping("/{orderId}/markpaid")
+    public Cart markPaid(@PathVariable long orderId){
+        return orderService.markPaid(orderId);
+    }
     // Public, same self-service trust level as GET /cart/byphno - the timeline is just a history of the same
     // status field that /cart/byphno already exposes, one row per transition instead of a single current value.
     @GetMapping("/{orderId}/tracking")

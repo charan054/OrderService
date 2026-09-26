@@ -252,6 +252,7 @@ class OrderServiceTest {
         assertEquals(42L, result.getOrderId());
         assertEquals(OrderStatus.PLACED, result.getStatus());
         assertEquals(100000L, result.getPaymentTransactionId());
+        assertTrue(result.isPaid());
         for (OrderItem oi : result.getOrderItems()) {
             assertEquals(42L, oi.getOrderId());
         }
@@ -281,6 +282,7 @@ class OrderServiceTest {
 
         assertEquals(PaymentMethod.CASH, result.getPaymentMethod());
         assertNull(result.getPaymentTransactionId());
+        assertFalse(result.isPaid());
         assertEquals(500.0, result.getTotalPrice());
         verifyNoInteractions(phonepeClient);
         verify(orderKafkaProducer).sendMessage(contains("Order placed successfully"));
@@ -1137,6 +1139,52 @@ class OrderServiceTest {
         ArgumentCaptor<LoyaltyTransaction> captor = ArgumentCaptor.forClass(LoyaltyTransaction.class);
         verify(loyaltyTransactionRepository).save(captor.capture());
         assertEquals(62, captor.getValue().getPoints());
+    }
+
+    // ---------- markPaid() ----------
+
+    @Test
+    void markPaidThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.empty());
+        assertThrows(OrderNotFoundException.class, () -> service.markPaid(42L));
+    }
+
+    @Test
+    void markPaidThrowsForAPhonepeOrder() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.PHONEPE);
+        cart.setPaid(true);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.markPaid(42L));
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void markPaidThrowsWhenAlreadyPaid() {
+        Cart cart = placedOrder(42L, 0, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setPaymentTransactionId(null);
+        cart.setPaid(true);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.markPaid(42L));
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void markPaidMarksAnUnpaidCashOrderAsPaid() {
+        Cart cart = placedOrder(42L, 0, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setPaymentTransactionId(null);
+        cart.setPaid(false);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.markPaid(42L);
+
+        assertTrue(result.isPaid());
+        verify(orderKafkaProducer).sendMessage(contains("Order marked paid"));
     }
 
     // ---------- getTracking() ----------
