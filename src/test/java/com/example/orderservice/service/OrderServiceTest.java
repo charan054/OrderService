@@ -8,6 +8,7 @@ import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
+import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.ShippingAddress;
@@ -19,6 +20,7 @@ import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.CouponRepository;
+import com.example.orderservice.repository.NotificationLogRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.ShippingAddressRepository;
 import com.example.orderservice.repository.TrackingEventRepository;
@@ -78,6 +80,8 @@ class OrderServiceTest {
     private TrackingEventRepository trackingEventRepository;
     @Mock
     private ShippingAddressRepository shippingAddressRepository;
+    @Mock
+    private NotificationLogRepository notificationLogRepository;
     @Mock
     private ProductClient productClient;
     @Mock
@@ -682,6 +686,28 @@ class OrderServiceTest {
         List<TrackingEvent> result = service.getTracking(42L);
 
         assertEquals(List.of(placed, shipped), result);
+    }
+
+    // ---------- getNotifications() ----------
+
+    @Test
+    void getNotificationsThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.existsById(42L)).thenReturn(false);
+        assertThrows(OrderNotFoundException.class, () -> service.getNotifications(42L));
+        verifyNoInteractions(notificationLogRepository);
+    }
+
+    @Test
+    void getNotificationsReturnsTheOrdersDispatchedNotifications() {
+        when(orderRepository.existsById(42L)).thenReturn(true);
+        NotificationLog shipped = new NotificationLog();
+        shipped.setOrderId(42L);
+        shipped.setEventType(OrderStatus.SHIPPED);
+        when(notificationLogRepository.findByOrderIdOrderBySentAtAsc(42L)).thenReturn(List.of(shipped));
+
+        List<NotificationLog> result = service.getNotifications(42L);
+
+        assertEquals(List.of(shipped), result);
     }
 
     // Regression: cancellation must stop being available once an order has moved past PLACED, not just once

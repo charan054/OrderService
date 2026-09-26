@@ -40,6 +40,9 @@ public class SecurityConfig {
                         // The tracking timeline is just a per-transition history of the same status field
                         // /cart/byphno already returns for every order - no additional exposure.
                         .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()
+                        // The notification audit trail is derived from the same status field as tracking above -
+                        // same public trust level.
+                        .requestMatchers(HttpMethod.GET, "/cart/*/notifications").permitAll()
                         // Same self-service trust level as /cart/byphno above - looking up your own saved
                         // addresses by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/addresses/byphno").permitAll()
