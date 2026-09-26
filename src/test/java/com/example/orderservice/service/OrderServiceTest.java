@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
@@ -1573,5 +1574,45 @@ class OrderServiceTest {
         assertEquals(1000, result.getPointsBalance());
         assertEquals(100, result.getLifetimePointsEarned());
         assertEquals(LoyaltyTier.BRONZE, result.getTier());
+    }
+
+    // ---------- getCustomerProfile ----------
+
+    @Test
+    void getCustomerProfileRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.getCustomerProfile(555));
+    }
+
+    @Test
+    void getCustomerProfileRollsUpEveryFigure() {
+        when(orderRepository.findBycustomerPhno(CUSTOMER)).thenReturn(List.of(cart(CUSTOMER), cart(CUSTOMER)));
+        when(wishlistRepository.findByCustomerPhno(CUSTOMER)).thenReturn(List.of(new Wishlist()));
+        when(productClient.getReviewCount(CUSTOMER)).thenReturn(4L);
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 60);
+        account.setLifetimePointsEarned(600);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        CustomerProfile result = service.getCustomerProfile(CUSTOMER);
+
+        assertEquals(CUSTOMER, result.customerPhno());
+        assertEquals(2, result.totalOrders());
+        assertEquals(1, result.wishlistCount());
+        assertEquals(4L, result.reviewCount());
+        assertEquals(60, result.loyaltyPointsBalance());
+        assertEquals(600, result.lifetimePointsEarned());
+        assertEquals(LoyaltyTier.SILVER, result.loyaltyTier());
+    }
+
+    // ProductService being unreachable must not fail the whole profile - the review count just degrades to 0,
+    // same "skip, don't blow up" reasoning as getPriceDropAlerts()/getFrequentlyBoughtTogether().
+    @Test
+    void getCustomerProfileDegradesReviewCountToZeroWhenProductServiceIsUnreachable() {
+        when(orderRepository.findBycustomerPhno(CUSTOMER)).thenReturn(List.of());
+        when(wishlistRepository.findByCustomerPhno(CUSTOMER)).thenReturn(List.of());
+        when(productClient.getReviewCount(CUSTOMER)).thenThrow(declinedBy("count", 503, "unreachable"));
+
+        CustomerProfile result = service.getCustomerProfile(CUSTOMER);
+
+        assertEquals(0, result.reviewCount());
     }
 }

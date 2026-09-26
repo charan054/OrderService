@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
@@ -766,5 +767,24 @@ public class OrderService {
             throw new OrderNotFoundException("Address not found");
         }
         shippingAddressRepository.deleteById(addressId);
+    }
+
+    // A read-only rollup, not a new source of truth - each figure is fetched from wherever it's already owned
+    // (Cart/Wishlist/LoyaltyAccount here, reviews via Feign to ProductService) rather than duplicated into a
+    // new table. If ProductService can't be reached, the review count degrades to 0 rather than failing the
+    // whole profile - same "skip, don't blow up" reasoning as getPriceDropAlerts()/getFrequentlyBoughtTogether().
+    public CustomerProfile getCustomerProfile(long phno) {
+        validatePhno(phno);
+        int totalOrders = orderRepository.findBycustomerPhno(phno).size();
+        int wishlistCount = wishlistRepository.findByCustomerPhno(phno).size();
+        long reviewCount;
+        try {
+            reviewCount = productClient.getReviewCount(phno);
+        } catch (FeignException e) {
+            reviewCount = 0;
+        }
+        LoyaltyAccount loyaltyAccount = getLoyaltyAccount(phno);
+        return new CustomerProfile(phno, totalOrders, wishlistCount, reviewCount,
+                loyaltyAccount.getTier(), loyaltyAccount.getPointsBalance(), loyaltyAccount.getLifetimePointsEarned());
     }
 }
