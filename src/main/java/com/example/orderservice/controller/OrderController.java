@@ -2,6 +2,7 @@ package com.example.orderservice.controller;
 
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.entity.Cart;
+import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.service.OrderService;
 import jakarta.transaction.Transactional;
@@ -57,6 +58,12 @@ public class OrderController {
     @GetMapping("/{orderId}/tracking")
     public List<TrackingEvent> getTracking(@PathVariable long orderId){
         return orderService.getTracking(orderId);
+    }
+    // Same public trust level as tracking above - the audit trail of customer notifications OrderKafkaConsumer
+    // has dispatched for this order so far.
+    @GetMapping("/{orderId}/notifications")
+    public List<NotificationLog> getNotifications(@PathVariable long orderId){
+        return orderService.getNotifications(orderId);
     }
     @GetMapping("/display")
     public List<Product> findAll(){

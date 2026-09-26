@@ -9,6 +9,7 @@ import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.OrderItem;
+import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.ShippingAddress;
 import com.example.orderservice.entity.TrackingEvent;
@@ -20,6 +21,7 @@ import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.repository.NotificationLogRepository;
 import com.example.orderservice.repository.ShippingAddressRepository;
 import com.example.orderservice.repository.TrackingEventRepository;
 import com.example.orderservice.repository.WishlistRepository;
@@ -54,6 +56,8 @@ public class OrderService {
     private TrackingEventRepository trackingEventRepository;
     @Autowired
     private ShippingAddressRepository shippingAddressRepository;
+    @Autowired
+    private NotificationLogRepository notificationLogRepository;
     @Autowired
     ProductClient productClient;
     @Autowired
@@ -280,6 +284,15 @@ public class OrderService {
             throw new OrderNotFoundException("Order not found");
         }
         return trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId);
+    }
+
+    // The audit trail OrderKafkaConsumer writes to for SHIPPED/DELIVERED events - see NotificationLog for why
+    // this is "dispatched" rather than actually emailed/texted anywhere yet.
+    public List<NotificationLog> getNotifications(long orderId) {
+        if (!orderRepository.existsById(orderId)) {
+            throw new OrderNotFoundException("Order not found");
+        }
+        return notificationLogRepository.findByOrderIdOrderBySentAtAsc(orderId);
     }
 
     // Kafka is told only AFTER the save() above returns - neither order() nor cancel() wraps its DB writes in a

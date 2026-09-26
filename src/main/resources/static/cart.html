@@ -513,6 +513,19 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">🔔</div>
+                <div class="title-wrap">
+                    <h2>View Notifications</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>View the customer notifications dispatched for an order (Shipped/Delivered). Public - no Service Key required.</p>
+            <input type="number" id="notificationsOrderId" placeholder="Order ID" />
+            <button onclick="viewNotifications()">View Notifications</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">🗑️</div>
                 <div class="title-wrap">
                     <h2>Delete Product From Cart</h2>
@@ -1017,6 +1030,16 @@
 
       showStatus("Order returned successfully. Result opened in new tab.", "success");
       openResultTab("Return Order", data);
+    }
+
+    async function viewNotifications() {
+      const orderId = document.getElementById("notificationsOrderId").value;
+      if (!orderId) return showStatus("Please enter an order ID.", "error");
+
+      const data = await apiCall(`${BASE_URL}/${encodeURIComponent(orderId)}/notifications`);
+
+      showStatus("Notifications loaded. Result opened in new tab.", "success");
+      openResultTab("View Notifications", data);
     }
 
     function flattenRows(data) {

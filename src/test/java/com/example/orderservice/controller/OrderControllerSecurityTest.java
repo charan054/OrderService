@@ -274,4 +274,9 @@ class OrderControllerSecurityTest {
                         .header("Authorization", "Bearer buyer-token"))
                 .andExpect(status().isNotFound());
     }
+
+    @Test
+    void notificationsOfAnUnknownOrderIsPublicButReturns404() throws Exception {
+        mockMvc.perform(get("/cart/42/notifications")).andExpect(status().isNotFound());
+    }
 }
