@@ -10,6 +10,8 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.ShippingAddress;
+import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.Wishlist;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
@@ -18,6 +20,8 @@ import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.repository.ShippingAddressRepository;
+import com.example.orderservice.repository.TrackingEventRepository;
 import com.example.orderservice.repository.WishlistRepository;
 import feign.FeignException;
 import jakarta.transaction.Transactional;
@@ -30,6 +34,8 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 @Service
@@ -44,6 +50,10 @@ public class OrderService {
     private CouponRepository couponRepository;
     @Autowired
     private WishlistRepository wishlistRepository;
+    @Autowired
+    private TrackingEventRepository trackingEventRepository;
+    @Autowired
+    private ShippingAddressRepository shippingAddressRepository;
     @Autowired
     ProductClient productClient;
     @Autowired
@@ -75,6 +85,9 @@ public class OrderService {
         // code must fail before anything - including a payment - has happened.
         double discount = resolveDiscount(cart, price);
         double finalPrice = price - discount;
+        // Same fail-fast reasoning as stock/coupon above: an address that doesn't exist, or belongs to someone
+        // else's phone number, must reject the order before any payment is attempted.
+        validateShippingAddress(cart);
         // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the payment
         // (insufficient funds, expired session, locked account, bank down, ...) nothing here should exist either.
         PaymentResponse payment = charge(authorization, finalPrice, idempotencyKey);
@@ -89,6 +102,7 @@ public class OrderService {
             productClient.updateProductStock(serviceApiKey, orderItem.getProductId(),-orderItem.getProductQuantity());
         }
         Cart result = orderRepository.save(saved);
+        recordTracking(result.getOrderId(), OrderStatus.PLACED);
         sendNotification("Order placed successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Items: " + result.getOrderItems().size()
@@ -119,8 +133,51 @@ public class OrderService {
         }
         cart.setStatus(OrderStatus.CANCELLED);
         Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
         sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
+                + " Refunded: " + result.getTotalPrice());
+        return result;
+    }
+
+    // Returns can only happen AFTER delivery, unlike cancel() which only works on a still-PLACED order - the two
+    // are mutually exclusive by status, never overlapping windows. Otherwise the same fail-safe refund-then-
+    // restore-stock shape as cancel(): a declined refund leaves the order exactly DELIVERED, nothing rolled back.
+    public Cart returnOrder(long orderId, String authorization, String idempotencyKey, String reason) {
+        if (reason == null || reason.isBlank()) {
+            throw new ProductException("A return reason is required");
+        }
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() != OrderStatus.DELIVERED) {
+            throw new ProductException("Only a delivered order can be returned");
+        }
+        if (cart.getPaymentTransactionId() == null) {
+            throw new ProductException("This order cannot be returned");
+        }
+
+        List<TrackingEvent> deliveredEvents = trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId);
+        Instant deliveredAt = deliveredEvents.stream()
+                .filter(e -> e.getStatus() == OrderStatus.DELIVERED)
+                .map(TrackingEvent::getTimestamp)
+                .reduce((first, second) -> second) // latest DELIVERED event, in case of any anomaly
+                .orElse(null);
+        if (deliveredAt != null && deliveredAt.isBefore(Instant.now().minus(RETURN_WINDOW_DAYS, ChronoUnit.DAYS))) {
+            throw new ProductException("Return window of " + RETURN_WINDOW_DAYS + " days has expired");
+        }
+
+        refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
+
+        for (OrderItem orderItem : cart.getOrderItems()) {
+            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
+        }
+        cart.setStatus(OrderStatus.RETURNED);
+        cart.setReturnReason(reason);
+        Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.RETURNED);
+        sendNotification("Order returned successfully. OrderId: " + result.getOrderId()
+                + " Customer: " + mask(result.getCustomerPhno())
+                + " Reason: " + reason
                 + " Refunded: " + result.getTotalPrice());
         return result;
     }
@@ -142,6 +199,21 @@ public class OrderService {
         }
         cart.setCouponCode(normalized);
         return price * coupon.getDiscountPercent() / 100.0;
+    }
+
+    // No address on the cart is fine - it's optional. One that IS set must actually exist and belong to the
+    // customer placing the order; otherwise a typo'd or someone-else's address id would silently ship to the
+    // wrong place with no error at all.
+    private void validateShippingAddress(Cart cart) {
+        Long addressId = cart.getShippingAddressId();
+        if (addressId == null) {
+            return;
+        }
+        ShippingAddress address = shippingAddressRepository.findById(addressId)
+                .orElseThrow(() -> new OrderNotFoundException("Address not found"));
+        if (address.getCustomerPhno() != cart.getCustomerPhno()) {
+            throw new OrderNotFoundException("Address not found");
+        }
     }
 
     public Coupon saveCoupon(Coupon coupon) {
@@ -170,6 +242,7 @@ public class OrderService {
         }
         cart.setStatus(OrderStatus.SHIPPED);
         Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.SHIPPED);
         sendNotification("Order shipped. OrderId: " + result.getOrderId());
         return result;
     }
@@ -182,8 +255,31 @@ public class OrderService {
         }
         cart.setStatus(OrderStatus.DELIVERED);
         Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.DELIVERED);
         sendNotification("Order delivered. OrderId: " + result.getOrderId());
         return result;
+    }
+
+    // Appends one row to the order's tracking timeline. Called only after the Cart's own status has already been
+    // saved, same ordering as sendNotification() below - a broken write here must never look like the status
+    // change itself failed, so it's logged and swallowed rather than propagated.
+    private void recordTracking(long orderId, OrderStatus status) {
+        try {
+            TrackingEvent event = new TrackingEvent();
+            event.setOrderId(orderId);
+            event.setStatus(status);
+            event.setTimestamp(Instant.now());
+            trackingEventRepository.save(event);
+        } catch (RuntimeException e) {
+            log.error("Failed to record tracking event for order {}: {}", orderId, e.getMessage());
+        }
+    }
+
+    public List<TrackingEvent> getTracking(long orderId) {
+        if (!orderRepository.existsById(orderId)) {
+            throw new OrderNotFoundException("Order not found");
+        }
+        return trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId);
     }
 
     // Kafka is told only AFTER the save() above returns - neither order() nor cancel() wraps its DB writes in a
@@ -205,6 +301,7 @@ public class OrderService {
     }
 
     private static final String COMPLETED = "COMPLETED";
+    private static final int RETURN_WINDOW_DAYS = 7;
 
     private PaymentResponse charge(String authorization, double price, String idempotencyKey) {
         BigDecimal amount = BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP);
@@ -329,5 +426,43 @@ public class OrderService {
     public void removeFromWishlist(long phno, int productId) {
         validatePhno(phno);
         wishlistRepository.deleteByCustomerPhnoAndProductId(phno, productId);
+    }
+
+    // At most one default address per customer: making this one the default silently un-defaults whichever one
+    // previously held it, rather than requiring the caller to unset the old one themselves first.
+    public ShippingAddress saveAddress(ShippingAddress address) {
+        validatePhno(address.getCustomerPhno());
+        if (address.getLine1() == null || address.getLine1().isBlank()
+                || address.getCity() == null || address.getCity().isBlank()
+                || address.getState() == null || address.getState().isBlank()
+                || address.getPincode() == null || address.getPincode().isBlank()) {
+            throw new ProductException("Address line 1, city, state and pincode are required");
+        }
+        if (address.isDefault()) {
+            List<ShippingAddress> existingDefaults = shippingAddressRepository
+                    .findByCustomerPhnoAndIsDefaultTrue(address.getCustomerPhno());
+            for (ShippingAddress existing : existingDefaults) {
+                existing.setDefault(false);
+                shippingAddressRepository.save(existing);
+            }
+        }
+        return shippingAddressRepository.save(address);
+    }
+
+    public List<ShippingAddress> getAddresses(long phno) {
+        validatePhno(phno);
+        return shippingAddressRepository.findByCustomerPhno(phno);
+    }
+
+    // Ownership-checked the same way validateShippingAddress() checks it at checkout: a phone number can only
+    // ever remove its own saved addresses, never one it merely guessed the id of.
+    public void deleteAddress(long phno, long addressId) {
+        validatePhno(phno);
+        ShippingAddress address = shippingAddressRepository.findById(addressId)
+                .orElseThrow(() -> new OrderNotFoundException("Address not found"));
+        if (address.getCustomerPhno() != phno) {
+            throw new OrderNotFoundException("Address not found");
+        }
+        shippingAddressRepository.deleteById(addressId);
     }
 }

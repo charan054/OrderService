@@ -10,6 +10,8 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.ShippingAddress;
+import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.Wishlist;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
@@ -18,6 +20,8 @@ import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
+import com.example.orderservice.repository.ShippingAddressRepository;
+import com.example.orderservice.repository.TrackingEventRepository;
 import com.example.orderservice.repository.WishlistRepository;
 import feign.FeignException;
 import feign.Request;
@@ -43,6 +47,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.contains;
@@ -69,6 +74,10 @@ class OrderServiceTest {
     private CouponRepository couponRepository;
     @Mock
     private WishlistRepository wishlistRepository;
+    @Mock
+    private TrackingEventRepository trackingEventRepository;
+    @Mock
+    private ShippingAddressRepository shippingAddressRepository;
     @Mock
     private ProductClient productClient;
     @Mock
@@ -217,6 +226,10 @@ class OrderServiceTest {
         verify(productClient).updateProductStock(SERVICE_KEY, 2, -1);
         verify(orderRepository, times(2)).save(any());
         verify(orderKafkaProducer).sendMessage(contains("Order placed successfully"));
+        ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertEquals(OrderStatus.PLACED, captor.getValue().getStatus());
+        assertEquals(42L, captor.getValue().getOrderId());
     }
 
     @Test
@@ -322,6 +335,47 @@ class OrderServiceTest {
         assertEquals(500.0, result.getTotalPrice());
         assertEquals(0.0, result.getDiscountAmount());
         verifyNoInteractions(couponRepository);
+    }
+
+    @Test
+    void orderThrowsForAnUnknownShippingAddressAndTouchesNoPaymentOrStock() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(shippingAddressRepository.findById(99L)).thenReturn(Optional.empty());
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setShippingAddressId(99L);
+
+        assertThrows(OrderNotFoundException.class, () -> service.order(cart, AUTH, null));
+
+        verifyNoInteractions(phonepeClient);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void orderThrowsWhenTheShippingAddressBelongsToAnotherCustomer() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        ShippingAddress address = new ShippingAddress();
+        address.setId(99L);
+        address.setCustomerPhno(1111111111L);
+        when(shippingAddressRepository.findById(99L)).thenReturn(Optional.of(address));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setShippingAddressId(99L);
+
+        assertThrows(OrderNotFoundException.class, () -> service.order(cart, AUTH, null));
+
+        verifyNoInteractions(phonepeClient);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void orderWithNoShippingAddressIdTouchesNoAddressLookup() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        service.order(cart, AUTH, null);
+
+        verifyNoInteractions(shippingAddressRepository);
     }
 
     @Test
@@ -501,6 +555,10 @@ class OrderServiceTest {
         verify(productClient).updateProductStock(SERVICE_KEY, 2, 1);
         verify(orderRepository).save(cart);
         verify(orderKafkaProducer).sendMessage(contains("Order cancelled successfully"));
+        ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertEquals(OrderStatus.CANCELLED, captor.getValue().getStatus());
+        assertEquals(42L, captor.getValue().getOrderId());
     }
 
     // A broken notification channel must never turn a completed cancellation into an error.
@@ -562,6 +620,10 @@ class OrderServiceTest {
 
         assertEquals(OrderStatus.SHIPPED, result.getStatus());
         verify(orderKafkaProducer).sendMessage(contains("Order shipped"));
+        ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertEquals(OrderStatus.SHIPPED, captor.getValue().getStatus());
+        assertEquals(42L, captor.getValue().getOrderId());
     }
 
     @Test
@@ -590,6 +652,36 @@ class OrderServiceTest {
 
         assertEquals(OrderStatus.DELIVERED, result.getStatus());
         verify(orderKafkaProducer).sendMessage(contains("Order delivered"));
+        ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertEquals(OrderStatus.DELIVERED, captor.getValue().getStatus());
+        assertEquals(42L, captor.getValue().getOrderId());
+    }
+
+    // ---------- getTracking() ----------
+
+    @Test
+    void getTrackingThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.existsById(42L)).thenReturn(false);
+        assertThrows(OrderNotFoundException.class, () -> service.getTracking(42L));
+        verifyNoInteractions(trackingEventRepository);
+    }
+
+    @Test
+    void getTrackingReturnsTheOrdersTimelineOldestFirst() {
+        when(orderRepository.existsById(42L)).thenReturn(true);
+        TrackingEvent placed = new TrackingEvent();
+        placed.setOrderId(42L);
+        placed.setStatus(OrderStatus.PLACED);
+        TrackingEvent shipped = new TrackingEvent();
+        shipped.setOrderId(42L);
+        shipped.setStatus(OrderStatus.SHIPPED);
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L))
+                .thenReturn(List.of(placed, shipped));
+
+        List<TrackingEvent> result = service.getTracking(42L);
+
+        assertEquals(List.of(placed, shipped), result);
     }
 
     // Regression: cancellation must stop being available once an order has moved past PLACED, not just once
@@ -602,6 +694,112 @@ class OrderServiceTest {
 
         assertThrows(ProductException.class, () -> service.cancel(42L, AUTH, null));
         verify(phonepeClient, never()).refund(any(), anyInt(), any());
+    }
+
+    // ---------- returnOrder() ----------
+
+    private Cart deliveredOrder(long orderId, long paymentTransactionId, OrderItem... items) {
+        Cart cart = placedOrder(orderId, paymentTransactionId, items);
+        cart.setStatus(OrderStatus.DELIVERED);
+        return cart;
+    }
+
+    @Test
+    void returnOrderRejectsABlankReason() {
+        assertThrows(ProductException.class, () -> service.returnOrder(42L, AUTH, null, " "));
+        verifyNoInteractions(orderRepository);
+    }
+
+    @Test
+    void returnOrderThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.empty());
+        assertThrows(OrderNotFoundException.class, () -> service.returnOrder(42L, AUTH, null, "damaged"));
+    }
+
+    @Test
+    void returnOrderThrowsWhenTheOrderIsNotDelivered() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.returnOrder(42L, AUTH, null, "damaged"));
+        verify(phonepeClient, never()).refund(any(), anyInt(), any());
+    }
+
+    @Test
+    void returnOrderThrowsForAnOrderWithNoStoredPayment() {
+        Cart cart = deliveredOrder(42L, 0, item(1, 1));
+        cart.setPaymentTransactionId(null);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.returnOrder(42L, AUTH, null, "damaged"));
+        verify(phonepeClient, never()).refund(any(), anyInt(), any());
+    }
+
+    @Test
+    void returnOrderThrowsWhenTheReturnWindowHasExpired() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        TrackingEvent delivered = new TrackingEvent();
+        delivered.setOrderId(42L);
+        delivered.setStatus(OrderStatus.DELIVERED);
+        delivered.setTimestamp(Instant.now().minus(8, java.time.temporal.ChronoUnit.DAYS));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of(delivered));
+
+        assertThrows(ProductException.class, () -> service.returnOrder(42L, AUTH, null, "damaged"));
+        verify(phonepeClient, never()).refund(any(), anyInt(), any());
+    }
+
+    @Test
+    void returnOrderWithNoDeliveredTrackingEventSkipsTheWindowCheck() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.returnOrder(42L, AUTH, null, "damaged");
+
+        assertEquals(OrderStatus.RETURNED, result.getStatus());
+    }
+
+    @Test
+    void returnOrderRefundsRestoresStockAndMarksTheOrderReturned() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 2), item(2, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        TrackingEvent delivered = new TrackingEvent();
+        delivered.setOrderId(42L);
+        delivered.setStatus(OrderStatus.DELIVERED);
+        delivered.setTimestamp(Instant.now().minus(1, java.time.temporal.ChronoUnit.DAYS));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of(delivered));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), eq(new RefundRequest("return-1"))))
+                .thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.returnOrder(42L, AUTH, "return-1", "damaged in transit");
+
+        assertEquals(OrderStatus.RETURNED, result.getStatus());
+        assertEquals("damaged in transit", result.getReturnReason());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 2);
+        verify(productClient).updateProductStock(SERVICE_KEY, 2, 1);
+        verify(orderKafkaProducer).sendMessage(contains("Order returned successfully"));
+        ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertEquals(OrderStatus.RETURNED, captor.getValue().getStatus());
+    }
+
+    @Test
+    void returnOrderThrowsWhenTheRefundIsDeclinedAndTouchesNoStockOrOrder() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 2));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class)))
+                .thenThrow(declinedBy("refund", 502, "We could not confirm your refund with the bank."));
+
+        assertThrows(PaymentException.class, () -> service.returnOrder(42L, AUTH, null, "damaged"));
+
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        verify(orderRepository, never()).save(any());
+        assertEquals(OrderStatus.DELIVERED, cart.getStatus());
     }
 
     // ---------- ordersOfPhno ----------
@@ -655,5 +853,102 @@ class OrderServiceTest {
     void getCouponsDelegatesToTheCouponRepository() {
         when(couponRepository.findAll()).thenReturn(List.of(coupon("SAVE10", 10, true)));
         assertEquals(1, service.getCoupons().size());
+    }
+
+    // ---------- shipping addresses ----------
+
+    private ShippingAddress address(long phno, boolean isDefault) {
+        ShippingAddress a = new ShippingAddress();
+        a.setCustomerPhno(phno);
+        a.setLine1("221B Baker Street");
+        a.setCity("London");
+        a.setState("Greater London");
+        a.setPincode("110001");
+        a.setDefault(isDefault);
+        return a;
+    }
+
+    @Test
+    void saveAddressRejectsAnInvalidPhoneNumber() {
+        ShippingAddress a = address(555, false);
+        assertThrows(ProductException.class, () -> service.saveAddress(a));
+        verify(shippingAddressRepository, never()).save(any());
+    }
+
+    @Test
+    void saveAddressRejectsAMissingRequiredField() {
+        ShippingAddress a = address(CUSTOMER, false);
+        a.setCity(" ");
+        assertThrows(ProductException.class, () -> service.saveAddress(a));
+        verify(shippingAddressRepository, never()).save(any());
+    }
+
+    @Test
+    void saveAddressSavesANonDefaultAddressWithoutTouchingExistingDefaults() {
+        ShippingAddress a = address(CUSTOMER, false);
+        when(shippingAddressRepository.save(a)).thenReturn(a);
+
+        service.saveAddress(a);
+
+        verify(shippingAddressRepository, never()).findByCustomerPhnoAndIsDefaultTrue(anyLong());
+        verify(shippingAddressRepository).save(a);
+    }
+
+    // Making a new address the default must un-default whichever address previously held it - a customer can
+    // never end up with two defaults at once.
+    @Test
+    void saveAddressUnsetsThePreviousDefaultWhenSavingANewDefault() {
+        ShippingAddress oldDefault = address(CUSTOMER, true);
+        oldDefault.setId(1L);
+        when(shippingAddressRepository.findByCustomerPhnoAndIsDefaultTrue(CUSTOMER)).thenReturn(List.of(oldDefault));
+        when(shippingAddressRepository.save(oldDefault)).thenReturn(oldDefault);
+        ShippingAddress newDefault = address(CUSTOMER, true);
+        newDefault.setId(2L);
+        when(shippingAddressRepository.save(newDefault)).thenReturn(newDefault);
+
+        service.saveAddress(newDefault);
+
+        assertFalse(oldDefault.isDefault());
+        verify(shippingAddressRepository).save(oldDefault);
+        verify(shippingAddressRepository).save(newDefault);
+    }
+
+    @Test
+    void getAddressesRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.getAddresses(555));
+    }
+
+    @Test
+    void getAddressesDelegatesToTheRepository() {
+        when(shippingAddressRepository.findByCustomerPhno(CUSTOMER)).thenReturn(List.of(address(CUSTOMER, false)));
+        assertEquals(1, service.getAddresses(CUSTOMER).size());
+    }
+
+    @Test
+    void deleteAddressThrowsWhenTheAddressDoesNotExist() {
+        when(shippingAddressRepository.findById(99L)).thenReturn(Optional.empty());
+        assertThrows(OrderNotFoundException.class, () -> service.deleteAddress(CUSTOMER, 99L));
+        verify(shippingAddressRepository, never()).deleteById(any());
+    }
+
+    @Test
+    void deleteAddressThrowsWhenTheAddressBelongsToAnotherCustomer() {
+        ShippingAddress a = address(1111111111L, false);
+        a.setId(99L);
+        when(shippingAddressRepository.findById(99L)).thenReturn(Optional.of(a));
+
+        assertThrows(OrderNotFoundException.class, () -> service.deleteAddress(CUSTOMER, 99L));
+        verify(shippingAddressRepository, never()).deleteById(any());
+    }
+
+    @Test
+    void deleteAddressRemovesTheOwnersOwnAddress() {
+        ShippingAddress a = address(CUSTOMER, false);
+        a.setId(99L);
+        when(shippingAddressRepository.findById(99L)).thenReturn(Optional.of(a));
+
+        service.deleteAddress(CUSTOMER, 99L);
+
+        verify(shippingAddressRepository).deleteById(99L);
     }
 }
