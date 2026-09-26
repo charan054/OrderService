@@ -10,6 +10,7 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.ShippingAddress;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.Wishlist;
 import com.example.orderservice.exception.OrderNotFoundException;
@@ -19,6 +20,7 @@ import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.repository.ShippingAddressRepository;
 import com.example.orderservice.repository.TrackingEventRepository;
 import com.example.orderservice.repository.WishlistRepository;
 import feign.FeignException;
@@ -50,6 +52,8 @@ public class OrderService {
     @Autowired
     private TrackingEventRepository trackingEventRepository;
     @Autowired
+    private ShippingAddressRepository shippingAddressRepository;
+    @Autowired
     ProductClient productClient;
     @Autowired
     PhonepeClient phonepeClient;
@@ -80,6 +84,9 @@ public class OrderService {
         // code must fail before anything - including a payment - has happened.
         double discount = resolveDiscount(cart, price);
         double finalPrice = price - discount;
+        // Same fail-fast reasoning as stock/coupon above: an address that doesn't exist, or belongs to someone
+        // else's phone number, must reject the order before any payment is attempted.
+        validateShippingAddress(cart);
         // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the payment
         // (insufficient funds, expired session, locked account, bank down, ...) nothing here should exist either.
         PaymentResponse payment = charge(authorization, finalPrice, idempotencyKey);
@@ -149,6 +156,21 @@ public class OrderService {
         }
         cart.setCouponCode(normalized);
         return price * coupon.getDiscountPercent() / 100.0;
+    }
+
+    // No address on the cart is fine - it's optional. One that IS set must actually exist and belong to the
+    // customer placing the order; otherwise a typo'd or someone-else's address id would silently ship to the
+    // wrong place with no error at all.
+    private void validateShippingAddress(Cart cart) {
+        Long addressId = cart.getShippingAddressId();
+        if (addressId == null) {
+            return;
+        }
+        ShippingAddress address = shippingAddressRepository.findById(addressId)
+                .orElseThrow(() -> new OrderNotFoundException("Address not found"));
+        if (address.getCustomerPhno() != cart.getCustomerPhno()) {
+            throw new OrderNotFoundException("Address not found");
+        }
     }
 
     public Coupon saveCoupon(Coupon coupon) {
@@ -360,5 +382,43 @@ public class OrderService {
     public void removeFromWishlist(long phno, int productId) {
         validatePhno(phno);
         wishlistRepository.deleteByCustomerPhnoAndProductId(phno, productId);
+    }
+
+    // At most one default address per customer: making this one the default silently un-defaults whichever one
+    // previously held it, rather than requiring the caller to unset the old one themselves first.
+    public ShippingAddress saveAddress(ShippingAddress address) {
+        validatePhno(address.getCustomerPhno());
+        if (address.getLine1() == null || address.getLine1().isBlank()
+                || address.getCity() == null || address.getCity().isBlank()
+                || address.getState() == null || address.getState().isBlank()
+                || address.getPincode() == null || address.getPincode().isBlank()) {
+            throw new ProductException("Address line 1, city, state and pincode are required");
+        }
+        if (address.isDefault()) {
+            List<ShippingAddress> existingDefaults = shippingAddressRepository
+                    .findByCustomerPhnoAndIsDefaultTrue(address.getCustomerPhno());
+            for (ShippingAddress existing : existingDefaults) {
+                existing.setDefault(false);
+                shippingAddressRepository.save(existing);
+            }
+        }
+        return shippingAddressRepository.save(address);
+    }
+
+    public List<ShippingAddress> getAddresses(long phno) {
+        validatePhno(phno);
+        return shippingAddressRepository.findByCustomerPhno(phno);
+    }
+
+    // Ownership-checked the same way validateShippingAddress() checks it at checkout: a phone number can only
+    // ever remove its own saved addresses, never one it merely guessed the id of.
+    public void deleteAddress(long phno, long addressId) {
+        validatePhno(phno);
+        ShippingAddress address = shippingAddressRepository.findById(addressId)
+                .orElseThrow(() -> new OrderNotFoundException("Address not found"));
+        if (address.getCustomerPhno() != phno) {
+            throw new OrderNotFoundException("Address not found");
+        }
+        shippingAddressRepository.deleteById(addressId);
     }
 }

@@ -40,6 +40,9 @@ public class SecurityConfig {
                         // The tracking timeline is just a per-transition history of the same status field
                         // /cart/byphno already returns for every order - no additional exposure.
                         .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()
+                        // Same self-service trust level as /cart/byphno above - looking up your own saved
+                        // addresses by your own phone number.
+                        .requestMatchers(HttpMethod.GET, "/addresses/byphno").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         // The static dashboard itself - not an order action, just the HTML/JS shell. The
                         // mutating buttons on it still hit the X-Service-Key-guarded endpoints above like any

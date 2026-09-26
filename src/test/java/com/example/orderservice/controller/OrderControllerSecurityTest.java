@@ -227,4 +227,32 @@ class OrderControllerSecurityTest {
     void trackingOfAnUnknownOrderIsPublicButReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/tracking")).andExpect(status().isNotFound());
     }
+
+    private static final String NEW_ADDRESS = """
+            {"customerPhno":9876543210,"line1":"221B Baker Street","city":"London","state":"Greater London","pincode":"110001"}
+            """;
+
+    @Test
+    void lookingUpOwnAddressesByPhoneIsPublic() throws Exception {
+        mockMvc.perform(get("/addresses/byphno").param("phno", "9876543210")).andExpect(status().isOk());
+    }
+
+    @Test
+    void addAddressWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/addresses/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ADDRESS))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void addAddressWithValidKeySucceeds() throws Exception {
+        mockMvc.perform(post("/addresses/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ADDRESS)
+                        .header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void removeAddressWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(delete("/addresses/remove").param("phno", "9876543210").param("addressId", "1"))
+                .andExpect(status().isUnauthorized());
+    }
 }

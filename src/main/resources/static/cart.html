@@ -366,6 +366,7 @@
             </div>
             <p>Submit selected cart items to <b>/cart/add</b>. Result opens in a separate tab.</p>
             <input type="text" id="couponCode" placeholder="Coupon code (optional)" />
+            <input type="number" id="orderShippingAddressId" placeholder="Shipping address ID (optional)" />
             <button class="green" onclick="placeOrder()">Place Order</button>
         </div>
 
@@ -381,6 +382,55 @@
             <input type="text" id="newCouponCode" placeholder="Coupon code, e.g. SAVE10" />
             <input type="number" id="newCouponDiscount" placeholder="Discount percent (1-100)" />
             <button class="blue" onclick="addCoupon()">Add Coupon</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">📍</div>
+                <div class="title-wrap">
+                    <h2>Add Shipping Address</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Save a delivery address for a customer. Requires the Service Key above.</p>
+            <input type="number" id="addrPhno" placeholder="Customer phone number" />
+            <input type="text" id="addrLabel" placeholder="Label, e.g. Home (optional)" />
+            <input type="text" id="addrLine1" placeholder="Address line 1" />
+            <input type="text" id="addrLine2" placeholder="Address line 2 (optional)" />
+            <input type="text" id="addrCity" placeholder="City" />
+            <input type="text" id="addrState" placeholder="State" />
+            <input type="text" id="addrPincode" placeholder="Pincode" />
+            <label style="display:flex; align-items:center; gap:8px; margin:8px 0;">
+                <input type="checkbox" id="addrIsDefault" style="width:auto;" /> Make default
+            </label>
+            <button class="blue" onclick="addAddress()">Add Address</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">📖</div>
+                <div class="title-wrap">
+                    <h2>View Addresses</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>List a customer's saved addresses. Public - no Service Key required.</p>
+            <input type="number" id="viewAddrPhno" placeholder="Customer phone number" />
+            <button onclick="viewAddresses()">View Addresses</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">❌</div>
+                <div class="title-wrap">
+                    <h2>Remove Address</h2>
+                    <span class="method">DELETE</span>
+                </div>
+            </div>
+            <p>Delete a saved address. Requires the Service Key above.</p>
+            <input type="number" id="removeAddrPhno" placeholder="Customer phone number" />
+            <input type="number" id="removeAddrId" placeholder="Address ID" />
+            <button class="red" onclick="removeAddress()">Remove Address</button>
         </div>
 
         <div class="card">
@@ -700,11 +750,13 @@
       if (!authorization) return;
 
       const couponCode = document.getElementById("couponCode").value.trim();
+      const shippingAddressId = document.getElementById("orderShippingAddressId").value;
 
       const cart = {
         customerPhno: Number(phno),
         orderItems: selectedItems,
-        couponCode: couponCode || null
+        couponCode: couponCode || null,
+        shippingAddressId: shippingAddressId ? Number(shippingAddressId) : null
       };
 
       const data = await apiCall(`${BASE_URL}/add`, {
@@ -825,6 +877,68 @@
 
       showStatus("Coupon saved successfully. Result opened in new tab.", "success");
       openResultTab("Add Coupon", data);
+    }
+
+    async function addAddress() {
+      const phno = document.getElementById("addrPhno").value;
+      const line1 = document.getElementById("addrLine1").value.trim();
+      const city = document.getElementById("addrCity").value.trim();
+      const state = document.getElementById("addrState").value.trim();
+      const pincode = document.getElementById("addrPincode").value.trim();
+
+      if (!phno || !line1 || !city || !state || !pincode) {
+        return showStatus("Phone, address line 1, city, state and pincode are required.", "error");
+      }
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`http://localhost:8083/addresses/add`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Service-Key": serviceKey
+        },
+        body: JSON.stringify({
+          customerPhno: Number(phno),
+          label: document.getElementById("addrLabel").value.trim() || null,
+          line1,
+          line2: document.getElementById("addrLine2").value.trim() || null,
+          city,
+          state,
+          pincode,
+          isDefault: document.getElementById("addrIsDefault").checked
+        })
+      });
+
+      showStatus("Address saved successfully. Result opened in new tab.", "success");
+      openResultTab("Add Address", data);
+    }
+
+    async function viewAddresses() {
+      const phno = document.getElementById("viewAddrPhno").value;
+      if (!phno) return showStatus("Please enter a customer phone number.", "error");
+
+      const data = await apiCall(`http://localhost:8083/addresses/byphno?phno=${encodeURIComponent(phno)}`);
+
+      showStatus("Addresses loaded. Result opened in new tab.", "success");
+      openResultTab("View Addresses", data);
+    }
+
+    async function removeAddress() {
+      const phno = document.getElementById("removeAddrPhno").value;
+      const addressId = document.getElementById("removeAddrId").value;
+      if (!phno || !addressId) return showStatus("Please enter a phone number and address ID.", "error");
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      await apiCall(`http://localhost:8083/addresses/remove?phno=${encodeURIComponent(phno)}&addressId=${encodeURIComponent(addressId)}`, {
+        method: "DELETE",
+        headers: { "X-Service-Key": serviceKey }
+      });
+
+      showStatus("Address removed successfully.", "success");
     }
 
     async function shipOrder() {

@@ -16,6 +16,7 @@ import java.util.List;
         "couponCode",
         "discountAmount",
         "totalPrice",
+        "shippingAddressId",
         "status"
 })
 public class Cart {
@@ -33,6 +34,10 @@ public class Cart {
     private String couponCode;
     private double discountAmount;
     private double totalPrice;
+    // Set by the caller at checkout (optional); order() validates it belongs to the same customerPhno before
+    // saving it as a record of which saved address the order shipped to. Purely informational once saved - like
+    // couponCode, re-editing this field after the fact has no effect on anything.
+    private Long shippingAddressId;
     // columnDefinition pins this to a plain VARCHAR: Hibernate 7's default MySQL mapping for a STRING enum is a
     // native ENUM(...) column sized to whatever constants existed when the table was first created, so a later
     // OrderStatus addition (e.g. SHIPPED/DELIVERED) fails at runtime with "Data truncated for column 'status'"
