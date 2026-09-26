@@ -597,6 +597,19 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">🪪</div>
+                <div class="title-wrap">
+                    <h2>Customer Profile</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>A one-lookup rollup: total orders, wishlist size, review count, loyalty tier/points. Public - no Service Key required.</p>
+            <input type="number" id="profilePhno" placeholder="Customer phone number" />
+            <button onclick="viewCustomerProfile()">View Profile</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">🤝</div>
                 <div class="title-wrap">
                     <h2>Frequently Bought Together</h2>
@@ -943,6 +956,16 @@
 
       showStatus("Removed from wishlist successfully. Result opened in new tab.", "success");
       openResultTab("Remove From Wishlist", data);
+    }
+
+    async function viewCustomerProfile() {
+      const phno = document.getElementById("profilePhno").value;
+      if (!phno) return showStatus("Please enter customer phone number.", "error");
+
+      const data = await apiCall(`http://localhost:8083/customer/profile?phno=${encodeURIComponent(phno)}`);
+
+      showStatus("Customer profile loaded. Result opened in new tab.", "success");
+      openResultTab("Customer Profile", data);
     }
 
     async function viewFrequentlyBoughtTogether() {

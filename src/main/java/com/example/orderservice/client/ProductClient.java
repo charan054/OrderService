@@ -21,4 +21,9 @@ public interface ProductClient {
     @PutMapping("/product/updateStock")
     public Product updateProductStock(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam Integer id, @RequestParam Integer stock);
 
+    // Public on ProductService's side - used by getCustomerProfile() to roll a review count into OrderService's
+    // own cross-service customer summary.
+    @GetMapping("/product/reviews/count")
+    long getReviewCount(@RequestParam long phno);
+
 }

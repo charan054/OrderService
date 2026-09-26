@@ -67,6 +67,12 @@ class OrderControllerSecurityTest {
     // Regression: the static dashboard was 401ing before Spring Security's static-resource handler ever got to
     // serve it, because nothing explicitly permitted it.
     @Test
+    void customerProfileIsPublic() throws Exception {
+        when(productClient.getReviewCount(9876543210L)).thenReturn(0L);
+        mockMvc.perform(get("/customer/profile").param("phno", "9876543210")).andExpect(status().isOk());
+    }
+
+    @Test
     void frequentlyBoughtTogetherIsPublic() throws Exception {
         mockMvc.perform(get("/cart/frequentlyboughttogether").param("productId", "1")).andExpect(status().isOk());
     }
