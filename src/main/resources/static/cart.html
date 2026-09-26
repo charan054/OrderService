@@ -312,7 +312,7 @@
                     <span class="method">REQUIRED</span>
                 </div>
             </div>
-            <p>Place Order, All Orders, Ship Order, Deliver Order, Add Coupon and Delete Product require the same <code>X-Service-Key</code> value as this service's <code>.env</code>. Place Order also requires the buyer's own PhonepayService session token, sent exactly as PhonepayService expects it (e.g. <code>Bearer &lt;token&gt;</code>) - that is who gets charged. Both are remembered in this browser only.</p>
+            <p>Place Order, All Orders, Ship Order, Deliver Order, Add Coupon, Add To Wishlist, Remove From Wishlist and Delete Product require the same <code>X-Service-Key</code> value as this service's <code>.env</code>. Place Order also requires the buyer's own PhonepayService session token, sent exactly as PhonepayService expects it (e.g. <code>Bearer &lt;token&gt;</code>) - that is who gets charged. Both are remembered in this browser only.</p>
             <input type="text" id="serviceKey" placeholder="X-Service-Key value" />
             <input type="text" id="buyerAuthorization" placeholder="Authorization header value, e.g. Bearer &lt;token&gt;" />
         </div>
@@ -458,6 +458,47 @@
             </div>
             <p>Clear selected cart items before placing order.</p>
             <button class="blue" onclick="clearSelection()">Clear Selected Items</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">❤️</div>
+                <div class="title-wrap">
+                    <h2>Add To Wishlist</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Save a product to a customer's wishlist. Requires the Service Key above.</p>
+            <input type="number" id="wishlistAddPhno" placeholder="Customer phone number" />
+            <input type="number" id="wishlistAddProductId" placeholder="Product ID" />
+            <button class="green" onclick="addToWishlist()">Add To Wishlist</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">📜</div>
+                <div class="title-wrap">
+                    <h2>View Wishlist</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>View a customer's wishlist by phone number.</p>
+            <input type="number" id="wishlistViewPhno" placeholder="Customer phone number" />
+            <button onclick="viewWishlist()">View Wishlist</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">💔</div>
+                <div class="title-wrap">
+                    <h2>Remove From Wishlist</h2>
+                    <span class="method">DELETE</span>
+                </div>
+            </div>
+            <p>Remove a product from a customer's wishlist. Requires the Service Key above.</p>
+            <input type="number" id="wishlistRemovePhno" placeholder="Customer phone number" />
+            <input type="number" id="wishlistRemoveProductId" placeholder="Product ID" />
+            <button class="red" onclick="removeFromWishlist()">Remove From Wishlist</button>
         </div>
     </section>
 
@@ -706,6 +747,49 @@
 
       showStatus("Product deleted from cart successfully. Result opened in new tab.", "success");
       openResultTab("Delete Product From Cart", data);
+    }
+
+    async function addToWishlist() {
+      const phno = document.getElementById("wishlistAddPhno").value;
+      const productId = document.getElementById("wishlistAddProductId").value;
+      if (!phno || !productId) return showStatus("Please enter phone number and product ID.", "error");
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`http://localhost:8083/wishlist/add?phno=${encodeURIComponent(phno)}&productId=${encodeURIComponent(productId)}`, {
+        method: "POST",
+        headers: { "X-Service-Key": serviceKey }
+      });
+
+      showStatus("Added to wishlist successfully. Result opened in new tab.", "success");
+      openResultTab("Add To Wishlist", data);
+    }
+
+    async function viewWishlist() {
+      const phno = document.getElementById("wishlistViewPhno").value;
+      if (!phno) return showStatus("Please enter customer phone number.", "error");
+
+      const data = await apiCall(`http://localhost:8083/wishlist/byphno?phno=${encodeURIComponent(phno)}`);
+      showStatus("Wishlist loaded successfully. Result opened in new tab.", "success");
+      openResultTab("Wishlist", data);
+    }
+
+    async function removeFromWishlist() {
+      const phno = document.getElementById("wishlistRemovePhno").value;
+      const productId = document.getElementById("wishlistRemoveProductId").value;
+      if (!phno || !productId) return showStatus("Please enter phone number and product ID.", "error");
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`http://localhost:8083/wishlist/remove?phno=${encodeURIComponent(phno)}&productId=${encodeURIComponent(productId)}`, {
+        method: "DELETE",
+        headers: { "X-Service-Key": serviceKey }
+      });
+
+      showStatus("Removed from wishlist successfully. Result opened in new tab.", "success");
+      openResultTab("Remove From Wishlist", data);
     }
 
     async function addCoupon() {

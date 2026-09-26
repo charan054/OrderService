@@ -10,6 +10,7 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.Wishlist;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
@@ -17,6 +18,7 @@ import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.repository.WishlistRepository;
 import feign.FeignException;
 import jakarta.transaction.Transactional;
 import org.slf4j.Logger;
@@ -41,6 +43,8 @@ public class OrderService {
     @Autowired
     private CouponRepository couponRepository;
     @Autowired
+    private WishlistRepository wishlistRepository;
+    @Autowired
     ProductClient productClient;
     @Autowired
     PhonepeClient phonepeClient;
@@ -50,12 +54,7 @@ public class OrderService {
     private String serviceApiKey;
     public Cart order(Cart cart, String authorization, String idempotencyKey)
     {
-        long phno=cart.getCustomerPhno();
-        String x=""+phno;
-        if(x.length()!=10||!x.matches("^[6-9].*"))
-        {
-            throw new ProductException("Invalid mobile number");
-        }
+        validatePhno(cart.getCustomerPhno());
         // Validate every item and compute the price WITHOUT touching stock yet, so a later item failing
         // (not found, insufficient stock) can never leave an earlier item's stock decremented with no order to show for it.
         double price=0;
@@ -248,11 +247,7 @@ public class OrderService {
     }
     public List<Cart> ordersOfPhno(long phno)
     {
-        String x=""+phno;
-        if(x.length()!=10||!x.matches("^[6-9].*"))
-        {
-            throw new ProductException("Invalid mobile number");
-        }
+        validatePhno(phno);
         return orderRepository.findBycustomerPhno(phno);
     }
     public List<Product> getProducts()
@@ -261,11 +256,7 @@ public class OrderService {
     }
     @Transactional
     public List<Cart> deleteProduct(long phno, long productId) {
-        String x=""+phno;
-        if(x.length()!=10||!x.matches("^[6-9].*"))
-        {
-            throw new ProductException("Invalid mobile number");
-        }
+        validatePhno(phno);
 
         List<Cart> carts = orderRepository.findBycustomerPhno(phno);
 
@@ -291,5 +282,52 @@ public class OrderService {
         }
 
         return carts;
+    }
+
+    // Shared by every endpoint that identifies a customer by phone number alone (order, ordersOfPhno,
+    // deleteProduct, and the wishlist methods below) - this system has no login, so a valid Indian mobile number
+    // is the only identity check there is.
+    private void validatePhno(long phno) {
+        String x = "" + phno;
+        if (x.length() != 10 || !x.matches("^[6-9].*")) {
+            throw new ProductException("Invalid mobile number");
+        }
+    }
+
+    // Idempotent by design: adding a product that's already on the wishlist returns the existing entry rather
+    // than erroring or creating a duplicate row - the caller just wants it on the list, not to know whether it
+    // was already there.
+    public Wishlist addToWishlist(long phno, int productId) {
+        validatePhno(phno);
+        // ProductService's real /product/byId throws (never returns null) for a missing id, unlike what a
+        // mocked ProductClient in a unit test might suggest - any Feign failure here means the product doesn't
+        // exist as far as this caller is concerned.
+        Product product;
+        try {
+            product = productClient.getProductById(productId);
+        } catch (FeignException e) {
+            throw new ProductException("Product not found");
+        }
+        if (product == null) {
+            throw new ProductException("Product not found");
+        }
+        return wishlistRepository.findByCustomerPhnoAndProductId(phno, productId)
+                .orElseGet(() -> {
+                    Wishlist wishlist = new Wishlist();
+                    wishlist.setCustomerPhno(phno);
+                    wishlist.setProductId(productId);
+                    return wishlistRepository.save(wishlist);
+                });
+    }
+
+    public List<Wishlist> getWishlist(long phno) {
+        validatePhno(phno);
+        return wishlistRepository.findByCustomerPhno(phno);
+    }
+
+    @Transactional
+    public void removeFromWishlist(long phno, int productId) {
+        validatePhno(phno);
+        wishlistRepository.deleteByCustomerPhnoAndProductId(phno, productId);
     }
 }
