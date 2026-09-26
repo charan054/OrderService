@@ -13,6 +13,8 @@ import java.util.List;
         "customerName",
         "customerPhno",
         "orderItems",
+        "couponCode",
+        "discountAmount",
         "totalPrice",
         "status"
 })
@@ -25,6 +27,11 @@ public class Cart {
     @OneToMany(cascade = CascadeType.ALL)
     @JoinColumn(name="order_items_orderId")
     private List<OrderItem> orderItems;
+    // Set by the caller at checkout (optional); order() validates it against the Coupon table and turns it into
+    // discountAmount before charging. Kept on the saved order purely as a record of what was applied - re-editing
+    // this field after the fact has no effect on anything.
+    private String couponCode;
+    private double discountAmount;
     private double totalPrice;
     // columnDefinition pins this to a plain VARCHAR: Hibernate 7's default MySQL mapping for a STRING enum is a
     // native ENUM(...) column sized to whatever constants existed when the table was first created, so a later

@@ -7,6 +7,7 @@ import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.entity.Cart;
+import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.exception.OrderNotFoundException;
@@ -14,6 +15,7 @@ import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import feign.FeignException;
 import feign.Request;
@@ -62,6 +64,8 @@ class OrderServiceTest {
     @Mock
     private OrderItemRepository orderItemRepository;
     @Mock
+    private CouponRepository couponRepository;
+    @Mock
     private ProductClient productClient;
     @Mock
     private PhonepeClient phonepeClient;
@@ -108,6 +112,14 @@ class OrderServiceTest {
         c.setCustomerName("Buyer");
         c.setCustomerPhno(phno);
         c.setOrderItems(new ArrayList<>(List.of(items)));
+        return c;
+    }
+
+    private Coupon coupon(String code, double discountPercent, boolean active) {
+        Coupon c = new Coupon();
+        c.setCode(code);
+        c.setDiscountPercent(discountPercent);
+        c.setActive(active);
         return c;
     }
 
@@ -246,6 +258,89 @@ class OrderServiceTest {
 
         verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
         verify(orderRepository, never()).save(any());
+    }
+
+    // ---------- coupons ----------
+
+    @Test
+    void orderAppliesAValidCouponBeforeChargingAndSavingTheDiscountedTotal() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(couponRepository.findById("SAVE10")).thenReturn(Optional.of(coupon("SAVE10", 10, true)));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setCouponCode("save10");
+
+        Cart result = service.order(cart, AUTH, null);
+
+        assertEquals(450.0, result.getTotalPrice());
+        assertEquals(50.0, result.getDiscountAmount());
+        assertEquals("SAVE10", result.getCouponCode());
+        verify(phonepeClient).makePayment(eq(AUTH), eq(new PaymentRequest(new BigDecimal("450.00"), "Order payment", null)));
+    }
+
+    @Test
+    void orderThrowsForAnUnknownCouponCodeAndTouchesNoPaymentOrStock() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(couponRepository.findById("BOGUS")).thenReturn(Optional.empty());
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setCouponCode("BOGUS");
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+
+        verifyNoInteractions(phonepeClient);
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void orderThrowsForADeactivatedCoupon() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(couponRepository.findById("OLD10")).thenReturn(Optional.of(coupon("OLD10", 10, false)));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setCouponCode("OLD10");
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+
+        verifyNoInteractions(phonepeClient);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void orderWithNoCouponCodeChargesFullPriceAndTouchesNoCouponLookup() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        Cart result = service.order(cart, AUTH, null);
+
+        assertEquals(500.0, result.getTotalPrice());
+        assertEquals(0.0, result.getDiscountAmount());
+        verifyNoInteractions(couponRepository);
+    }
+
+    @Test
+    void saveCouponRejectsABlankCode() {
+        assertThrows(ProductException.class, () -> service.saveCoupon(coupon(" ", 10, true)));
+        verify(couponRepository, never()).save(any());
+    }
+
+    @Test
+    void saveCouponRejectsAnOutOfRangeDiscountPercent() {
+        assertThrows(ProductException.class, () -> service.saveCoupon(coupon("BAD", 0, true)));
+        assertThrows(ProductException.class, () -> service.saveCoupon(coupon("BAD", 101, true)));
+        verify(couponRepository, never()).save(any());
+    }
+
+    @Test
+    void saveCouponNormalizesTheCodeToUppercase() {
+        Coupon input = coupon("save10", 10, true);
+        when(couponRepository.save(any(Coupon.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Coupon result = service.saveCoupon(input);
+
+        assertEquals("SAVE10", result.getCode());
     }
 
     // ---------- cancel() ----------
@@ -467,5 +562,11 @@ class OrderServiceTest {
     void getProductsDelegatesToTheProductClient() {
         when(productClient.findAll()).thenReturn(List.of(product(1, 9.99, 10)));
         assertEquals(1, service.getProducts().size());
+    }
+
+    @Test
+    void getCouponsDelegatesToTheCouponRepository() {
+        when(couponRepository.findAll()).thenReturn(List.of(coupon("SAVE10", 10, true)));
+        assertEquals(1, service.getCoupons().size());
     }
 }
