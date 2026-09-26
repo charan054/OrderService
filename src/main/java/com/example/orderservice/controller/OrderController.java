@@ -1,5 +1,6 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
@@ -68,6 +69,12 @@ public class OrderController {
     @GetMapping("/display")
     public List<Product> findAll(){
         return orderService.getProducts();
+    }
+    // Public, same catalog-browsing trust level as /cart/display - a ranked list, not any one customer's data.
+    @GetMapping("/frequentlyboughttogether")
+    public List<FrequentlyBoughtTogether> getFrequentlyBoughtTogether(@RequestParam int productId,
+                                                                       @RequestParam(required = false) Integer limit) {
+        return orderService.getFrequentlyBoughtTogether(productId, limit);
     }
     @GetMapping("/byphno")
     public List<Cart> findByPhno(long phno){

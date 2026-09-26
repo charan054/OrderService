@@ -597,6 +597,20 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">🤝</div>
+                <div class="title-wrap">
+                    <h2>Frequently Bought Together</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>See which other products have actually been ordered alongside a given product. Public - no Service Key required.</p>
+            <input type="number" id="fbtProductId" placeholder="Product ID" />
+            <input type="number" id="fbtLimit" placeholder="Limit (optional, default 5, max 20)" />
+            <button onclick="viewFrequentlyBoughtTogether()">Check Frequently Bought Together</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">📉</div>
                 <div class="title-wrap">
                     <h2>Wishlist Price Drops</h2>
@@ -929,6 +943,18 @@
 
       showStatus("Removed from wishlist successfully. Result opened in new tab.", "success");
       openResultTab("Remove From Wishlist", data);
+    }
+
+    async function viewFrequentlyBoughtTogether() {
+      const productId = document.getElementById("fbtProductId").value;
+      const limit = document.getElementById("fbtLimit").value;
+      if (!productId) return showStatus("Please enter a product ID.", "error");
+
+      const query = limit ? `productId=${encodeURIComponent(productId)}&limit=${encodeURIComponent(limit)}` : `productId=${encodeURIComponent(productId)}`;
+      const data = await apiCall(`${BASE_URL}/frequentlyboughttogether?${query}`);
+
+      showStatus("Frequently bought together loaded. Result opened in new tab.", "success");
+      openResultTab("Frequently Bought Together", data);
     }
 
     async function viewPriceDrops() {
