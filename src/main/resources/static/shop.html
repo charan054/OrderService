@@ -310,6 +310,18 @@
         <input type="tel" id="loginPhno" placeholder="10-digit phone number" />
         <div id="loginError" class="error-text hidden"></div>
         <button onclick="login()">Continue</button>
+        <button class="secondary" style="margin-top:10px;" onclick="toggleTrackOrder()">Track an order instead</button>
+    </section>
+
+    <section id="trackOrderSection" class="center-card hidden">
+        <h2>Track an order</h2>
+        <p>No login needed - enter the phone number the order was placed with and its order ID.</p>
+        <input type="tel" id="trackPhno" placeholder="10-digit phone number" />
+        <input type="number" id="trackOrderId" placeholder="Order ID" />
+        <div id="trackOrderError" class="error-text hidden"></div>
+        <button onclick="lookupOrder()">Track order</button>
+        <button class="secondary" style="margin-top:10px;" onclick="toggleTrackOrder()">Back to login</button>
+        <div id="trackOrderResult"></div>
     </section>
 
     <section id="shopSection" class="hidden">
@@ -396,6 +408,48 @@
       customerPhno = value;
       localStorage.setItem("shopCustomerPhno", value);
       enterShop();
+    }
+
+    function toggleTrackOrder() {
+      document.getElementById("loginSection").classList.toggle("hidden");
+      document.getElementById("trackOrderSection").classList.toggle("hidden");
+      document.getElementById("trackOrderError").classList.add("hidden");
+      document.getElementById("trackOrderResult").innerHTML = "";
+    }
+
+    async function lookupOrder() {
+      const phno = document.getElementById("trackPhno").value.trim();
+      const orderId = document.getElementById("trackOrderId").value.trim();
+      const errorBox = document.getElementById("trackOrderError");
+      const resultBox = document.getElementById("trackOrderResult");
+      resultBox.innerHTML = "";
+
+      if (!/^[6-9][0-9]{9}$/.test(phno) || !orderId) {
+        errorBox.textContent = "Enter a valid phone number and an order ID.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+      errorBox.classList.add("hidden");
+
+      const ordersResponse = await fetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(phno)}`);
+      const orders = ordersResponse.ok ? await ordersResponse.json() : [];
+      const order = orders.find(o => String(o.orderId) === String(orderId));
+
+      if (!order) {
+        errorBox.textContent = "No order with that ID was found for this phone number.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      const trackingResponse = await fetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/tracking`);
+      const timeline = trackingResponse.ok ? await trackingResponse.json() : [];
+
+      resultBox.innerHTML = `
+        <div class="cart-line"><span>Status</span><span>${escapeHtml(order.status)}</span></div>
+        <div class="cart-line"><span>Total</span><span>₹${order.totalPrice.toFixed(2)}</span></div>
+        <div class="cart-line"><span>Payment</span><span>${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span></div>
+        ${timeline.map(event => `<div class="cart-line"><span>${escapeHtml(event.status)}</span><span>${new Date(event.timestamp).toLocaleString()}</span></div>`).join("")}
+      `;
     }
 
     function enterShop() {
