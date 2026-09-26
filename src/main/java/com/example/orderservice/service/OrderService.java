@@ -8,6 +8,7 @@ import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
+import com.example.orderservice.entity.CouponRedemption;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderStatus;
@@ -18,6 +19,7 @@ import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.kafka.OrderKafkaProducer;
+import com.example.orderservice.repository.CouponRedemptionRepository;
 import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
@@ -50,6 +52,8 @@ public class OrderService {
     private OrderItemRepository orderItemRepository;
     @Autowired
     private CouponRepository couponRepository;
+    @Autowired
+    private CouponRedemptionRepository couponRedemptionRepository;
     @Autowired
     private WishlistRepository wishlistRepository;
     @Autowired
@@ -95,6 +99,7 @@ public class OrderService {
         // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the payment
         // (insufficient funds, expired session, locked account, bank down, ...) nothing here should exist either.
         PaymentResponse payment = charge(authorization, finalPrice, idempotencyKey);
+        recordCouponRedemption(cart.getCouponCode(), cart.getCustomerPhno());
         cart.setTotalPrice(finalPrice);
         cart.setDiscountAmount(discount);
         cart.setStatus(OrderStatus.PLACED);
@@ -201,8 +206,45 @@ public class OrderService {
         if (!coupon.isActive()) {
             throw new ProductException("Coupon is no longer active");
         }
+        if (coupon.getExpiryDate() != null && Instant.now().isAfter(coupon.getExpiryDate())) {
+            throw new ProductException("Coupon has expired");
+        }
+        if (coupon.getMaxRedemptions() != null && coupon.getRedemptionCount() >= coupon.getMaxRedemptions()) {
+            throw new ProductException("Coupon has reached its redemption limit");
+        }
+        if (coupon.getPerCustomerLimit() != null) {
+            int alreadyUsed = couponRedemptionRepository
+                    .findByCouponCodeAndCustomerPhno(normalized, cart.getCustomerPhno())
+                    .map(CouponRedemption::getCount)
+                    .orElse(0);
+            if (alreadyUsed >= coupon.getPerCustomerLimit()) {
+                throw new ProductException("You have already used this coupon the maximum number of times");
+            }
+        }
         cart.setCouponCode(normalized);
         return price * coupon.getDiscountPercent() / 100.0;
+    }
+
+    // Only called after a successful charge (see order()) - a failed/declined payment must not consume a
+    // redemption, the same reasoning stock decrements and tracking events already follow.
+    private void recordCouponRedemption(String couponCode, long customerPhno) {
+        if (couponCode == null) {
+            return;
+        }
+        couponRepository.findById(couponCode).ifPresent(coupon -> {
+            coupon.setRedemptionCount(coupon.getRedemptionCount() + 1);
+            couponRepository.save(coupon);
+        });
+        CouponRedemption redemption = couponRedemptionRepository
+                .findByCouponCodeAndCustomerPhno(couponCode, customerPhno)
+                .orElseGet(() -> {
+                    CouponRedemption r = new CouponRedemption();
+                    r.setCouponCode(couponCode);
+                    r.setCustomerPhno(customerPhno);
+                    return r;
+                });
+        redemption.setCount(redemption.getCount() + 1);
+        couponRedemptionRepository.save(redemption);
     }
 
     // No address on the cart is fine - it's optional. One that IS set must actually exist and belong to the
@@ -227,7 +269,18 @@ public class OrderService {
         if (coupon.getDiscountPercent() <= 0 || coupon.getDiscountPercent() > 100) {
             throw new ProductException("Discount percent must be between 0 and 100");
         }
-        coupon.setCode(coupon.getCode().trim().toUpperCase());
+        if (coupon.getMaxRedemptions() != null && coupon.getMaxRedemptions() <= 0) {
+            throw new ProductException("Max redemptions must be positive");
+        }
+        if (coupon.getPerCustomerLimit() != null && coupon.getPerCustomerLimit() <= 0) {
+            throw new ProductException("Per-customer limit must be positive");
+        }
+        String normalizedCode = coupon.getCode().trim().toUpperCase();
+        coupon.setCode(normalizedCode);
+        // redemptionCount is system-managed (see recordCouponRedemption) - preserve it across an update instead
+        // of silently resetting accumulated usage back to zero just because the caller's payload didn't include it.
+        couponRepository.findById(normalizedCode)
+                .ifPresent(existing -> coupon.setRedemptionCount(existing.getRedemptionCount()));
         return couponRepository.save(coupon);
     }
 

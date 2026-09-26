@@ -8,6 +8,7 @@ import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
+import com.example.orderservice.entity.CouponRedemption;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
@@ -19,6 +20,7 @@ import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.repository.CouponRedemptionRepository;
 import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.NotificationLogRepository;
 import com.example.orderservice.repository.OrderItemRepository;
@@ -74,6 +76,8 @@ class OrderServiceTest {
     private OrderItemRepository orderItemRepository;
     @Mock
     private CouponRepository couponRepository;
+    @Mock
+    private CouponRedemptionRepository couponRedemptionRepository;
     @Mock
     private WishlistRepository wishlistRepository;
     @Mock
@@ -342,6 +346,91 @@ class OrderServiceTest {
     }
 
     @Test
+    void orderThrowsForAnExpiredCoupon() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        Coupon expired = coupon("OLD10", 10, true);
+        expired.setExpiryDate(Instant.now().minusSeconds(60));
+        when(couponRepository.findById("OLD10")).thenReturn(Optional.of(expired));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setCouponCode("OLD10");
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void orderThrowsWhenTheCouponsGlobalRedemptionLimitIsReached() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        Coupon maxedOut = coupon("SAVE10", 10, true);
+        maxedOut.setMaxRedemptions(5);
+        maxedOut.setRedemptionCount(5);
+        when(couponRepository.findById("SAVE10")).thenReturn(Optional.of(maxedOut));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setCouponCode("SAVE10");
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void orderThrowsWhenTheCustomerHasAlreadyReachedThePerCustomerCouponLimit() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        Coupon oncePerCustomer = coupon("SAVE10", 10, true);
+        oncePerCustomer.setPerCustomerLimit(1);
+        when(couponRepository.findById("SAVE10")).thenReturn(Optional.of(oncePerCustomer));
+        CouponRedemption redemption = new CouponRedemption();
+        redemption.setCouponCode("SAVE10");
+        redemption.setCustomerPhno(CUSTOMER);
+        redemption.setCount(1);
+        when(couponRedemptionRepository.findByCouponCodeAndCustomerPhno("SAVE10", CUSTOMER))
+                .thenReturn(Optional.of(redemption));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setCouponCode("SAVE10");
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void orderRecordsCouponRedemptionOnlyAfterASuccessfulCharge() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        Coupon save10 = coupon("SAVE10", 10, true);
+        save10.setPerCustomerLimit(3);
+        when(couponRepository.findById("SAVE10")).thenReturn(Optional.of(save10));
+        when(couponRedemptionRepository.findByCouponCodeAndCustomerPhno("SAVE10", CUSTOMER))
+                .thenReturn(Optional.empty());
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setCouponCode("SAVE10");
+
+        service.order(cart, AUTH, null);
+
+        assertEquals(1, save10.getRedemptionCount());
+        verify(couponRepository).save(save10);
+        ArgumentCaptor<CouponRedemption> captor = ArgumentCaptor.forClass(CouponRedemption.class);
+        verify(couponRedemptionRepository).save(captor.capture());
+        assertEquals(1, captor.getValue().getCount());
+        assertEquals(CUSTOMER, captor.getValue().getCustomerPhno());
+    }
+
+    // A declined payment must not consume a redemption, same fail-safe reasoning as stock never being touched.
+    @Test
+    void orderDoesNotRecordACouponRedemptionWhenThePaymentIsDeclined() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(couponRepository.findById("SAVE10")).thenReturn(Optional.of(coupon("SAVE10", 10, true)));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class)))
+                .thenThrow(declinedBy("payment", 402, "Insufficient funds"));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setCouponCode("SAVE10");
+
+        assertThrows(PaymentException.class, () -> service.order(cart, AUTH, null));
+
+        verifyNoInteractions(couponRedemptionRepository);
+        verify(couponRepository, never()).save(any());
+    }
+
+    @Test
     void orderThrowsForAnUnknownShippingAddressAndTouchesNoPaymentOrStock() {
         when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
         when(shippingAddressRepository.findById(99L)).thenReturn(Optional.empty());
@@ -403,6 +492,37 @@ class OrderServiceTest {
         Coupon result = service.saveCoupon(input);
 
         assertEquals("SAVE10", result.getCode());
+    }
+
+    @Test
+    void saveCouponRejectsANonPositiveMaxRedemptions() {
+        Coupon input = coupon("SAVE10", 10, true);
+        input.setMaxRedemptions(0);
+        assertThrows(ProductException.class, () -> service.saveCoupon(input));
+        verify(couponRepository, never()).save(any());
+    }
+
+    @Test
+    void saveCouponRejectsANonPositivePerCustomerLimit() {
+        Coupon input = coupon("SAVE10", 10, true);
+        input.setPerCustomerLimit(0);
+        assertThrows(ProductException.class, () -> service.saveCoupon(input));
+        verify(couponRepository, never()).save(any());
+    }
+
+    // redemptionCount is system-managed (incremented only by a successful order) - an admin update to a coupon's
+    // discount or expiry must not silently reset accumulated usage back to zero.
+    @Test
+    void saveCouponPreservesTheRedemptionCountAcrossAnUpdate() {
+        Coupon existing = coupon("SAVE10", 10, true);
+        existing.setRedemptionCount(7);
+        when(couponRepository.findById("SAVE10")).thenReturn(Optional.of(existing));
+        when(couponRepository.save(any(Coupon.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Coupon update = coupon("SAVE10", 15, true);
+        Coupon result = service.saveCoupon(update);
+
+        assertEquals(7, result.getRedemptionCount());
     }
 
     // ---------- wishlist ----------
