@@ -6,6 +6,8 @@ import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
+import com.example.orderservice.dto.PhonepeLoginRequest;
+import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.WishlistPriceAlert;
@@ -19,6 +21,7 @@ import com.example.orderservice.entity.LoyaltyTransactionType;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.PaymentMethod;
 import com.example.orderservice.entity.ShippingAddress;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.Wishlist;
@@ -87,9 +90,20 @@ public class OrderService {
     private OrderKafkaProducer orderKafkaProducer;
     @Value("${internal.service.api-key}")
     private String serviceApiKey;
-    public Cart order(Cart cart, String authorization, String idempotencyKey)
+    public Cart order(Cart cart, String authorization, String idempotencyKey) {
+        return order(cart, authorization, idempotencyKey, null, null);
+    }
+
+    // payerPhno/payerPin are only used for the CASH-free "storefront" checkout path, where the caller has no
+    // PhonepayService session token yet - never persisted anywhere, only used in-memory to obtain one via
+    // phonepeClient.login() below. A caller that already has a token (the admin dashboard, existing integrations)
+    // keeps passing it directly through authorization, unchanged.
+    public Cart order(Cart cart, String authorization, String idempotencyKey, Long payerPhno, String payerPin)
     {
         validatePhno(cart.getCustomerPhno());
+        if (cart.getPaymentMethod() == null) {
+            cart.setPaymentMethod(PaymentMethod.PHONEPE);
+        }
         // Validate every item and compute the price WITHOUT touching stock yet, so a later item failing
         // (not found, insufficient stock) can never leave an earlier item's stock decremented with no order to show for it.
         double price=0;
@@ -116,14 +130,21 @@ public class OrderService {
         // Same fail-fast reasoning as stock/coupon above: an address that doesn't exist, or belongs to someone
         // else's phone number, must reject the order before any payment is attempted.
         validateShippingAddress(cart);
-        // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the payment
-        // (insufficient funds, expired session, locked account, bank down, ...) nothing here should exist either.
-        PaymentResponse payment = charge(authorization, finalPrice, idempotencyKey);
+        // Cash on delivery never touches PhonepayService at all - nothing is charged now, so there is nothing to
+        // refund later either (see cancel()/returnOrder()).
+        PaymentResponse payment = null;
+        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
+            // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the
+            // payment (insufficient funds, expired session, locked account, bank down, ...) nothing here should
+            // exist either.
+            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
+            payment = charge(token, finalPrice, idempotencyKey);
+        }
         recordCouponRedemption(cart.getCouponCode(), cart.getCustomerPhno());
         cart.setTotalPrice(finalPrice);
         cart.setDiscountAmount(discount);
         cart.setStatus(OrderStatus.PLACED);
-        cart.setPaymentTransactionId(payment.transactionId());
+        cart.setPaymentTransactionId(payment != null ? payment.transactionId() : null);
         Cart saved=orderRepository.save(cart);
         for(OrderItem orderItem : saved.getOrderItems())
         {
@@ -152,11 +173,15 @@ public class OrderService {
         if (cart.getStatus() != OrderStatus.PLACED) {
             throw new ProductException("Only a placed order can be cancelled");
         }
-        if (cart.getPaymentTransactionId() == null) {
-            throw new ProductException("This order cannot be cancelled");
+        // A CASH order was never charged through PhonepayService, so it has no paymentTransactionId to refund -
+        // that's expected, not the "this order cannot be cancelled" guard below (which instead catches a PHONEPE
+        // order that's somehow missing its transaction id, a real data-integrity problem).
+        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
+            if (cart.getPaymentTransactionId() == null) {
+                throw new ProductException("This order cannot be cancelled");
+            }
+            refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
         }
-
-        refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
 
         for (OrderItem orderItem : cart.getOrderItems()) {
             productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
@@ -182,7 +207,8 @@ public class OrderService {
         if (cart.getStatus() != OrderStatus.DELIVERED) {
             throw new ProductException("Only a delivered order can be returned");
         }
-        if (cart.getPaymentTransactionId() == null) {
+        // Same CASH exception as cancel() above - never charged, so nothing to refund.
+        if (cart.getPaymentMethod() != PaymentMethod.CASH && cart.getPaymentTransactionId() == null) {
             throw new ProductException("This order cannot be returned");
         }
 
@@ -196,7 +222,9 @@ public class OrderService {
             throw new ProductException("Return window of " + RETURN_WINDOW_DAYS + " days has expired");
         }
 
-        refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
+        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
+            refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
+        }
 
         for (OrderItem orderItem : cart.getOrderItems()) {
             productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
@@ -560,6 +588,28 @@ public class OrderService {
 
     private static final String COMPLETED = "COMPLETED";
     private static final int RETURN_WINDOW_DAYS = 7;
+
+    // An already-supplied token (the admin dashboard, or any caller that logged into PhonepayService itself)
+    // always wins - never re-authenticate behind the caller's back. Only when there's no token at all does the
+    // storefront's phone+PIN get used, exchanged for a fresh token via PhonepayService's own /phonepe/login -
+    // OrderService never checks the PIN itself, so a wrong PIN surfaces as PhonepayService's own 401/423, not a
+    // silently-generic OrderService error.
+    private String resolveBuyerToken(String authorization, Long payerPhno, String payerPin) {
+        if (authorization != null && !authorization.isBlank()) {
+            return authorization;
+        }
+        if (payerPhno == null || payerPin == null || payerPin.isBlank()) {
+            throw new ProductException("PhonePe payment requires either an Authorization token or a phone number and PIN");
+        }
+        PhonepeLoginResponse login;
+        try {
+            login = phonepeClient.login(new PhonepeLoginRequest(payerPhno, payerPin));
+        } catch (FeignException e) {
+            HttpStatus status = HttpStatus.resolve(e.status());
+            throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
+        }
+        return "Bearer " + login.token();
+    }
 
     private PaymentResponse charge(String authorization, double price, String idempotencyKey) {
         BigDecimal amount = BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP);

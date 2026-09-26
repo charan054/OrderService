@@ -21,6 +21,7 @@ import java.util.List;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -161,15 +162,39 @@ class OrderControllerSecurityTest {
                 .andExpect(status().isBadRequest());
     }
 
+    // /cart/checkout is the one write endpoint a genuine customer-facing storefront can call directly (see
+    // OrderController.checkout) - no X-Service-Key at all, unlike /cart/add above. A CASH order needs no buyer
+    // token either.
+    private static final String CASH_CHECKOUT = """
+            {"customerName":"Buyer","customerPhno":9876543210,"orderItems":[{"productId":1,"productQuantity":1}],"paymentMethod":"CASH"}
+            """;
+
+    @Test
+    void checkoutWithCashPaymentMethodNeedsNoKeyOrBuyerToken() throws Exception {
+        Product widget = new Product();
+        widget.setProductId(1);
+        widget.setProductPrice(9.99);
+        widget.setProductStock(10);
+        when(productClient.getProductById(1)).thenReturn(widget);
+
+        mockMvc.perform(post("/cart/checkout").contentType(MediaType.APPLICATION_JSON).content(CASH_CHECKOUT))
+                .andExpect(status().isOk());
+        verifyNoInteractions(phonepeClient);
+    }
+
     @Test
     void cancelOrderWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(post("/cart/42/cancel")).andExpect(status().isUnauthorized());
     }
 
+    // Authorization is now optional at the controller level (a CASH order needs none) - whether a PHONEPE order
+    // actually requires one is only known once the order itself is loaded, so an unknown order id 404s here
+    // regardless, same as cancelOrderOfAnUnknownOrderIdReturns404 below. See OrderServiceTest for the case that
+    // does exercise a missing token against a real PHONEPE order.
     @Test
-    void cancelOrderWithValidKeyButNoBuyerTokenIsRejected() throws Exception {
+    void cancelOrderWithValidKeyAndNoBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
         mockMvc.perform(post("/cart/42/cancel").header("X-Service-Key", VALID_KEY))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isNotFound());
     }
 
     @Test
@@ -277,10 +302,11 @@ class OrderControllerSecurityTest {
         mockMvc.perform(post("/cart/42/return").param("reason", "damaged")).andExpect(status().isUnauthorized());
     }
 
+    // Same reasoning as cancelOrderWithValidKeyAndNoBuyerTokenOfAnUnknownOrderReturns404 above.
     @Test
-    void returnOrderWithValidKeyButNoBuyerTokenIsRejected() throws Exception {
+    void returnOrderWithValidKeyAndNoBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
         mockMvc.perform(post("/cart/42/return").param("reason", "damaged").header("X-Service-Key", VALID_KEY))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isNotFound());
     }
 
     @Test

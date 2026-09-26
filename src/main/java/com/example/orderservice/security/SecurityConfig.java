@@ -34,6 +34,9 @@ public class SecurityConfig {
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether").permitAll()
+                        // The customer-facing storefront's own checkout - see OrderController.checkout for why
+                        // this can't require the same X-Service-Key /cart/add does.
+                        .requestMatchers(HttpMethod.POST, "/cart/checkout").permitAll()
                         // Same self-service trust level as /cart/byphno above - looking up your own wishlist (and
                         // its price-drop alerts) by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/wishlist/byphno", "/wishlist/pricedrops").permitAll()
@@ -56,7 +59,7 @@ public class SecurityConfig {
                         // The static dashboard itself - not an order action, just the HTML/JS shell. The
                         // mutating buttons on it still hit the X-Service-Key-guarded endpoints above like any
                         // other caller, so this only unblocks loading the page, not bypassing anything.
-                        .requestMatchers(HttpMethod.GET, "/cart.html").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/cart.html", "/shop.html").permitAll()
                         // A controller-level failure (e.g. a missing required header) triggers an internal
                         // dispatch to /error; ServiceKeyAuthenticationFilter doesn't re-run on that dispatch
                         // (OncePerRequestFilter skips ERROR dispatches by default), so without this the real
