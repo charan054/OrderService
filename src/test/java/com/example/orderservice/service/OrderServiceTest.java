@@ -10,6 +10,7 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.Wishlist;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
@@ -17,6 +18,7 @@ import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
+import com.example.orderservice.repository.WishlistRepository;
 import feign.FeignException;
 import feign.Request;
 import feign.Response;
@@ -65,6 +67,8 @@ class OrderServiceTest {
     private OrderItemRepository orderItemRepository;
     @Mock
     private CouponRepository couponRepository;
+    @Mock
+    private WishlistRepository wishlistRepository;
     @Mock
     private ProductClient productClient;
     @Mock
@@ -341,6 +345,89 @@ class OrderServiceTest {
         Coupon result = service.saveCoupon(input);
 
         assertEquals("SAVE10", result.getCode());
+    }
+
+    // ---------- wishlist ----------
+
+    @Test
+    void addToWishlistRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.addToWishlist(12345, 1));
+        verifyNoInteractions(productClient, wishlistRepository);
+    }
+
+    @Test
+    void addToWishlistThrowsWhenTheProductDoesNotExist() {
+        when(productClient.getProductById(1)).thenReturn(null);
+        assertThrows(ProductException.class, () -> service.addToWishlist(CUSTOMER, 1));
+        verify(wishlistRepository, never()).save(any());
+    }
+
+    // Regression: ProductService's real /product/byId throws for a missing id rather than returning null (only
+    // a mocked ProductClient in a test can return null), so this must be caught and translated, not left to
+    // surface as a raw 500.
+    @Test
+    void addToWishlistThrowsWhenProductClientRejectsTheLookup() {
+        when(productClient.getProductById(1)).thenThrow(declinedBy("byId", 400, "Product not found"));
+        assertThrows(ProductException.class, () -> service.addToWishlist(CUSTOMER, 1));
+        verify(wishlistRepository, never()).save(any());
+    }
+
+    @Test
+    void addToWishlistSavesANewEntryWhenNotAlreadyPresent() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 9.99, 10));
+        when(wishlistRepository.findByCustomerPhnoAndProductId(CUSTOMER, 1)).thenReturn(Optional.empty());
+        Wishlist saved = new Wishlist();
+        saved.setId(1L);
+        saved.setCustomerPhno(CUSTOMER);
+        saved.setProductId(1);
+        when(wishlistRepository.save(any(Wishlist.class))).thenReturn(saved);
+
+        Wishlist result = service.addToWishlist(CUSTOMER, 1);
+
+        assertEquals(1, result.getProductId());
+        verify(wishlistRepository).save(any(Wishlist.class));
+    }
+
+    // Idempotent: adding an already-wishlisted product returns the existing row instead of creating a duplicate.
+    @Test
+    void addToWishlistReturnsTheExistingEntryWithoutDuplicating() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 9.99, 10));
+        Wishlist existing = new Wishlist();
+        existing.setId(1L);
+        existing.setCustomerPhno(CUSTOMER);
+        existing.setProductId(1);
+        when(wishlistRepository.findByCustomerPhnoAndProductId(CUSTOMER, 1)).thenReturn(Optional.of(existing));
+
+        Wishlist result = service.addToWishlist(CUSTOMER, 1);
+
+        assertEquals(existing, result);
+        verify(wishlistRepository, never()).save(any());
+    }
+
+    @Test
+    void getWishlistRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.getWishlist(12345));
+    }
+
+    @Test
+    void getWishlistDelegatesToTheRepository() {
+        Wishlist w = new Wishlist();
+        w.setCustomerPhno(CUSTOMER);
+        w.setProductId(1);
+        when(wishlistRepository.findByCustomerPhno(CUSTOMER)).thenReturn(List.of(w));
+        assertEquals(1, service.getWishlist(CUSTOMER).size());
+    }
+
+    @Test
+    void removeFromWishlistRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.removeFromWishlist(12345, 1));
+        verifyNoInteractions(wishlistRepository);
+    }
+
+    @Test
+    void removeFromWishlistDelegatesToTheRepository() {
+        service.removeFromWishlist(CUSTOMER, 1);
+        verify(wishlistRepository).deleteByCustomerPhnoAndProductId(CUSTOMER, 1);
     }
 
     // ---------- cancel() ----------
