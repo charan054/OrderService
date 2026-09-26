@@ -303,6 +303,21 @@
 </header>
 
 <main class="container">
+    <section class="grid">
+        <div class="card wide">
+            <div class="card-header">
+                <div class="icon">🔑</div>
+                <div class="title-wrap">
+                    <h2>Service Credentials</h2>
+                    <span class="method">REQUIRED</span>
+                </div>
+            </div>
+            <p>Place Order, All Orders and Delete Product require the same <code>X-Service-Key</code> value as this service's <code>.env</code>. Place Order also requires the buyer's own PhonepayService session token, sent exactly as PhonepayService expects it (e.g. <code>Bearer &lt;token&gt;</code>) - that is who gets charged. Both are remembered in this browser only.</p>
+            <input type="text" id="serviceKey" placeholder="X-Service-Key value" />
+            <input type="text" id="buyerAuthorization" placeholder="Authorization header value, e.g. Bearer &lt;token&gt;" />
+        </div>
+    </section>
+
     <section class="products-section">
         <div class="section-header">
             <div>
@@ -412,6 +427,35 @@
     const BASE_URL = "http://localhost:8083/cart";
     let products = [];
     let selectedItems = [];
+
+    const serviceKeyInput = document.getElementById("serviceKey");
+    const buyerAuthorizationInput = document.getElementById("buyerAuthorization");
+    serviceKeyInput.value = localStorage.getItem("cartServiceKey") || "";
+    buyerAuthorizationInput.value = localStorage.getItem("cartBuyerAuthorization") || "";
+    serviceKeyInput.addEventListener("input", () => {
+      localStorage.setItem("cartServiceKey", serviceKeyInput.value);
+    });
+    buyerAuthorizationInput.addEventListener("input", () => {
+      localStorage.setItem("cartBuyerAuthorization", buyerAuthorizationInput.value);
+    });
+
+    function requireServiceKey() {
+      const key = serviceKeyInput.value;
+      if (!key) {
+        showStatus("Please enter the Service Key above first.", "error");
+        return null;
+      }
+      return key;
+    }
+
+    function requireBuyerAuthorization() {
+      const authorization = buyerAuthorizationInput.value;
+      if (!authorization) {
+        showStatus("Please enter the buyer's Authorization header value above first.", "error");
+        return null;
+      }
+      return authorization;
+    }
 
     async function apiCall(url, options = {}) {
       try {
@@ -555,6 +599,11 @@
       if (!phno) return showStatus("Please enter customer phone number.", "error");
       if (selectedItems.length === 0) return showStatus("Please add at least one product to cart.", "error");
 
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const authorization = requireBuyerAuthorization();
+      if (!authorization) return;
+
       const cart = {
         customerPhno: Number(phno),
         orderItems: selectedItems
@@ -563,7 +612,9 @@
       const data = await apiCall(`${BASE_URL}/add`, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "X-Service-Key": serviceKey,
+          "Authorization": authorization
         },
         body: JSON.stringify(cart)
       });
@@ -576,7 +627,12 @@
     }
 
     async function getAllOrders() {
-      const data = await apiCall(`${BASE_URL}/all`);
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`${BASE_URL}/all`, {
+        headers: { "X-Service-Key": serviceKey }
+      });
       showStatus("All cart orders loaded successfully. Result opened in new tab.", "success");
       openResultTab("All Cart Orders", data);
     }
@@ -596,8 +652,12 @@
 
       if (!phno || !productId) return showStatus("Please enter phone number and product ID.", "error");
 
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
       const data = await apiCall(`${BASE_URL}/deleteproduct?phno=${encodeURIComponent(phno)}&productId=${encodeURIComponent(productId)}`, {
-        method: "DELETE"
+        method: "DELETE",
+        headers: { "X-Service-Key": serviceKey }
       });
 
       showStatus("Product deleted from cart successfully. Result opened in new tab.", "success");
