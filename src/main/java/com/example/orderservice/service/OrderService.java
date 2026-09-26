@@ -9,6 +9,9 @@ import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.CouponRedemption;
+import com.example.orderservice.entity.LoyaltyAccount;
+import com.example.orderservice.entity.LoyaltyTransaction;
+import com.example.orderservice.entity.LoyaltyTransactionType;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderStatus;
@@ -21,6 +24,8 @@ import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CouponRedemptionRepository;
 import com.example.orderservice.repository.CouponRepository;
+import com.example.orderservice.repository.LoyaltyAccountRepository;
+import com.example.orderservice.repository.LoyaltyTransactionRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.NotificationLogRepository;
@@ -54,6 +59,10 @@ public class OrderService {
     private CouponRepository couponRepository;
     @Autowired
     private CouponRedemptionRepository couponRedemptionRepository;
+    @Autowired
+    private LoyaltyAccountRepository loyaltyAccountRepository;
+    @Autowired
+    private LoyaltyTransactionRepository loyaltyTransactionRepository;
     @Autowired
     private WishlistRepository wishlistRepository;
     @Autowired
@@ -92,7 +101,10 @@ public class OrderService {
         // Resolved (and normalized onto the cart) BEFORE charging, same reasoning as stock: an invalid/inactive
         // code must fail before anything - including a payment - has happened.
         double discount = resolveDiscount(cart, price);
-        double finalPrice = price - discount;
+        // Same fail-fast reasoning, applied on top of the coupon discount: redeeming more points than the
+        // customer's balance actually holds, or more than what's left to pay, must fail before any payment.
+        double pointsDiscount = resolvePointsRedemption(cart, price - discount);
+        double finalPrice = price - discount - pointsDiscount;
         // Same fail-fast reasoning as stock/coupon above: an address that doesn't exist, or belongs to someone
         // else's phone number, must reject the order before any payment is attempted.
         validateShippingAddress(cart);
@@ -112,6 +124,7 @@ public class OrderService {
         }
         Cart result = orderRepository.save(saved);
         recordTracking(result.getOrderId(), OrderStatus.PLACED);
+        redeemLoyaltyPoints(result.getCustomerPhno(), result.getPointsRedeemed(), result.getOrderId());
         sendNotification("Order placed successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Items: " + result.getOrderItems().size()
@@ -184,6 +197,7 @@ public class OrderService {
         cart.setReturnReason(reason);
         Cart result = orderRepository.save(cart);
         recordTracking(result.getOrderId(), OrderStatus.RETURNED);
+        clawBackLoyaltyPoints(result);
         sendNotification("Order returned successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Reason: " + reason
@@ -223,6 +237,129 @@ public class OrderService {
         }
         cart.setCouponCode(normalized);
         return price * coupon.getDiscountPercent() / 100.0;
+    }
+
+    // No points requested - the common case - is free. A request that exceeds the customer's actual balance, or
+    // exceeds what's left to pay after any coupon discount, fails loudly rather than silently capping it: the
+    // same "a buyer must never be charged something other than what they were quoted" reasoning as resolveDiscount.
+    private double resolvePointsRedemption(Cart cart, double remainingPrice) {
+        Integer requested = cart.getPointsRedeemed();
+        if (requested == null || requested == 0) {
+            cart.setPointsRedeemed(null);
+            return 0;
+        }
+        if (requested < 0) {
+            throw new ProductException("Points redeemed cannot be negative");
+        }
+        int balance = loyaltyAccountRepository.findById(cart.getCustomerPhno())
+                .map(LoyaltyAccount::getPointsBalance)
+                .orElse(0);
+        if (requested > balance) {
+            throw new ProductException("You only have " + balance + " loyalty points available");
+        }
+        // 1 point = ₹1, same flat conversion PriceHistory/coupon-percent style code elsewhere in this codebase
+        // keeps simple rather than configurable, since nothing here requires it to vary.
+        if (requested > remainingPrice) {
+            throw new ProductException("Cannot redeem more points than the order total after any coupon discount");
+        }
+        return requested;
+    }
+
+    // Only called after a successful charge (see order()) - a failed/declined payment must not consume points,
+    // same reasoning recordCouponRedemption already follows for coupon usage.
+    private void redeemLoyaltyPoints(long customerPhno, Integer pointsRedeemed, long orderId) {
+        if (pointsRedeemed == null || pointsRedeemed == 0) {
+            return;
+        }
+        LoyaltyAccount account = loyaltyAccountRepository.findById(customerPhno)
+                .orElseGet(() -> newLoyaltyAccount(customerPhno));
+        account.setPointsBalance(account.getPointsBalance() - pointsRedeemed);
+        loyaltyAccountRepository.save(account);
+        recordLoyaltyTransaction(customerPhno, orderId, -pointsRedeemed, LoyaltyTransactionType.REDEEMED, null);
+    }
+
+    // Earned once an order actually reaches DELIVERED (see deliver() below) rather than at order()/PLACED time -
+    // a cancelled-before-delivery or returned order never earns anything, same "only a completed sale counts"
+    // reasoning recordCouponRedemption applies to coupon usage.
+    private static final int RUPEES_PER_POINT = 10;
+
+    private void earnLoyaltyPoints(Cart cart) {
+        int earned = (int) (cart.getTotalPrice() / RUPEES_PER_POINT);
+        if (earned <= 0) {
+            return;
+        }
+        LoyaltyAccount account = loyaltyAccountRepository.findById(cart.getCustomerPhno())
+                .orElseGet(() -> newLoyaltyAccount(cart.getCustomerPhno()));
+        account.setPointsBalance(account.getPointsBalance() + earned);
+        loyaltyAccountRepository.save(account);
+        recordLoyaltyTransaction(cart.getCustomerPhno(), cart.getOrderId(), earned, LoyaltyTransactionType.EARNED, null);
+    }
+
+    // Reverses the points earned at deliver() time when that same order is later returned - otherwise a
+    // refunded order would still leave the customer with points earned on money they no longer paid. Clamped at
+    // zero rather than going negative: the customer may have already spent those points on a different order in
+    // the meantime, and this system has no notion of a customer owing points back.
+    private void clawBackLoyaltyPoints(Cart cart) {
+        int earned = (int) (cart.getTotalPrice() / RUPEES_PER_POINT);
+        if (earned <= 0) {
+            return;
+        }
+        LoyaltyAccount account = loyaltyAccountRepository.findById(cart.getCustomerPhno())
+                .orElseGet(() -> newLoyaltyAccount(cart.getCustomerPhno()));
+        int clawedBack = Math.min(earned, account.getPointsBalance());
+        if (clawedBack <= 0) {
+            return;
+        }
+        account.setPointsBalance(account.getPointsBalance() - clawedBack);
+        loyaltyAccountRepository.save(account);
+        recordLoyaltyTransaction(cart.getCustomerPhno(), cart.getOrderId(), -clawedBack, LoyaltyTransactionType.ADJUSTED,
+                "Points earned on order #" + cart.getOrderId() + " reversed after return");
+    }
+
+    private LoyaltyAccount newLoyaltyAccount(long customerPhno) {
+        LoyaltyAccount account = new LoyaltyAccount();
+        account.setCustomerPhno(customerPhno);
+        account.setPointsBalance(0);
+        return account;
+    }
+
+    private void recordLoyaltyTransaction(long customerPhno, Long orderId, int points, LoyaltyTransactionType type, String reason) {
+        LoyaltyTransaction transaction = new LoyaltyTransaction();
+        transaction.setCustomerPhno(customerPhno);
+        transaction.setOrderId(orderId);
+        transaction.setPoints(points);
+        transaction.setType(type);
+        transaction.setReason(reason);
+        transaction.setTimestamp(Instant.now());
+        loyaltyTransactionRepository.save(transaction);
+    }
+
+    public LoyaltyAccount getLoyaltyAccount(long phno) {
+        validatePhno(phno);
+        return loyaltyAccountRepository.findById(phno).orElseGet(() -> newLoyaltyAccount(phno));
+    }
+
+    public List<LoyaltyTransaction> getLoyaltyHistory(long phno) {
+        validatePhno(phno);
+        return loyaltyTransactionRepository.findByCustomerPhnoOrderByTimestampDesc(phno);
+    }
+
+    // Admin correction path (e.g. a goodwill credit, or fixing a mistaken accrual) - not tied to any order, so
+    // orderId is null on the resulting transaction, same as any other ADJUSTED entry.
+    public LoyaltyAccount adjustLoyaltyPoints(long phno, int points, String reason) {
+        validatePhno(phno);
+        if (reason == null || reason.isBlank()) {
+            throw new ProductException("A reason is required for a manual points adjustment");
+        }
+        LoyaltyAccount account = loyaltyAccountRepository.findById(phno).orElseGet(() -> newLoyaltyAccount(phno));
+        int newBalance = account.getPointsBalance() + points;
+        if (newBalance < 0) {
+            throw new ProductException("Adjustment would leave a negative points balance");
+        }
+        account.setPointsBalance(newBalance);
+        LoyaltyAccount saved = loyaltyAccountRepository.save(account);
+        recordLoyaltyTransaction(phno, null, points, LoyaltyTransactionType.ADJUSTED, reason);
+        return saved;
     }
 
     // Only called after a successful charge (see order()) - a failed/declined payment must not consume a
@@ -313,6 +450,7 @@ public class OrderService {
         cart.setStatus(OrderStatus.DELIVERED);
         Cart result = orderRepository.save(cart);
         recordTracking(result.getOrderId(), OrderStatus.DELIVERED);
+        earnLoyaltyPoints(result);
         sendNotification("Order delivered. OrderId: " + result.getOrderId());
         return result;
     }

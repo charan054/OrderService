@@ -9,6 +9,9 @@ import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.CouponRedemption;
+import com.example.orderservice.entity.LoyaltyAccount;
+import com.example.orderservice.entity.LoyaltyTransaction;
+import com.example.orderservice.entity.LoyaltyTransactionType;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
@@ -22,6 +25,8 @@ import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.CouponRedemptionRepository;
 import com.example.orderservice.repository.CouponRepository;
+import com.example.orderservice.repository.LoyaltyAccountRepository;
+import com.example.orderservice.repository.LoyaltyTransactionRepository;
 import com.example.orderservice.repository.NotificationLogRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.ShippingAddressRepository;
@@ -53,6 +58,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
@@ -78,6 +84,10 @@ class OrderServiceTest {
     private CouponRepository couponRepository;
     @Mock
     private CouponRedemptionRepository couponRedemptionRepository;
+    @Mock
+    private LoyaltyAccountRepository loyaltyAccountRepository;
+    @Mock
+    private LoyaltyTransactionRepository loyaltyTransactionRepository;
     @Mock
     private WishlistRepository wishlistRepository;
     @Mock
@@ -134,6 +144,13 @@ class OrderServiceTest {
         c.setCustomerPhno(phno);
         c.setOrderItems(new ArrayList<>(List.of(items)));
         return c;
+    }
+
+    private LoyaltyAccount loyaltyAccount(long phno, int pointsBalance) {
+        LoyaltyAccount account = new LoyaltyAccount();
+        account.setCustomerPhno(phno);
+        account.setPointsBalance(pointsBalance);
+        return account;
     }
 
     private Coupon coupon(String code, double discountPercent, boolean active) {
@@ -525,6 +542,109 @@ class OrderServiceTest {
         assertEquals(7, result.getRedemptionCount());
     }
 
+    // ---------- loyalty points redemption at checkout ----------
+
+    @Test
+    void orderRedeemsPointsOnTopOfAnyCouponDiscount() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(loyaltyAccountRepository.findById(CUSTOMER))
+                .thenReturn(Optional.of(loyaltyAccount(CUSTOMER, 100)));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPointsRedeemed(50);
+
+        Cart result = service.order(cart, AUTH, null);
+
+        assertEquals(450.0, result.getTotalPrice());
+        assertEquals(50, result.getPointsRedeemed());
+        verify(phonepeClient).makePayment(eq(AUTH), eq(new PaymentRequest(new BigDecimal("450.00"), "Order payment", null)));
+    }
+
+    @Test
+    void orderWithNoPointsRedeemedTouchesNoLoyaltyLookup() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        Cart result = service.order(cart, AUTH, null);
+
+        assertEquals(500.0, result.getTotalPrice());
+        verifyNoInteractions(loyaltyAccountRepository);
+    }
+
+    @Test
+    void orderThrowsWhenRedeemingMorePointsThanTheBalanceHolds() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(loyaltyAccountRepository.findById(CUSTOMER))
+                .thenReturn(Optional.of(loyaltyAccount(CUSTOMER, 20)));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPointsRedeemed(50);
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void orderThrowsWhenRedeemingMorePointsThanTheRemainingPrice() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 30.0, 10));
+        when(loyaltyAccountRepository.findById(CUSTOMER))
+                .thenReturn(Optional.of(loyaltyAccount(CUSTOMER, 100)));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPointsRedeemed(50);
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void orderRejectsNegativePointsRedeemed() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPointsRedeemed(-5);
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void orderDeductsRedeemedPointsFromTheBalanceOnlyAfterASuccessfulCharge() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 100);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPointsRedeemed(50);
+
+        service.order(cart, AUTH, null);
+
+        assertEquals(50, account.getPointsBalance());
+        verify(loyaltyAccountRepository).save(account);
+        ArgumentCaptor<LoyaltyTransaction> captor = ArgumentCaptor.forClass(LoyaltyTransaction.class);
+        verify(loyaltyTransactionRepository).save(captor.capture());
+        assertEquals(-50, captor.getValue().getPoints());
+        assertEquals(LoyaltyTransactionType.REDEEMED, captor.getValue().getType());
+        assertEquals(CUSTOMER, captor.getValue().getCustomerPhno());
+    }
+
+    @Test
+    void orderDoesNotDeductPointsWhenThePaymentIsDeclined() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(loyaltyAccountRepository.findById(CUSTOMER))
+                .thenReturn(Optional.of(loyaltyAccount(CUSTOMER, 100)));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class)))
+                .thenThrow(declinedBy("payment", 402, "Insufficient funds"));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPointsRedeemed(50);
+
+        assertThrows(PaymentException.class, () -> service.order(cart, AUTH, null));
+
+        verifyNoInteractions(loyaltyTransactionRepository);
+        verify(loyaltyAccountRepository, never()).save(any());
+    }
+
     // ---------- wishlist ----------
 
     @Test
@@ -782,6 +902,41 @@ class OrderServiceTest {
         assertEquals(42L, captor.getValue().getOrderId());
     }
 
+    // 1 point per RUPEES_PER_POINT (₹10) of the order's actual total, earned only once DELIVERED.
+    @Test
+    void deliverEarnsLoyaltyPointsBasedOnTheOrdersTotal() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setStatus(OrderStatus.SHIPPED);
+        cart.setTotalPrice(455.0);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.empty());
+
+        service.deliver(42L);
+
+        ArgumentCaptor<LoyaltyAccount> accountCaptor = ArgumentCaptor.forClass(LoyaltyAccount.class);
+        verify(loyaltyAccountRepository).save(accountCaptor.capture());
+        assertEquals(45, accountCaptor.getValue().getPointsBalance());
+        ArgumentCaptor<LoyaltyTransaction> txCaptor = ArgumentCaptor.forClass(LoyaltyTransaction.class);
+        verify(loyaltyTransactionRepository).save(txCaptor.capture());
+        assertEquals(45, txCaptor.getValue().getPoints());
+        assertEquals(LoyaltyTransactionType.EARNED, txCaptor.getValue().getType());
+        assertEquals(42L, txCaptor.getValue().getOrderId());
+    }
+
+    @Test
+    void deliverEarnsNoPointsWhenTheTotalIsBelowTheConversionThreshold() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setStatus(OrderStatus.SHIPPED);
+        cart.setTotalPrice(9.0);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        service.deliver(42L);
+
+        verifyNoInteractions(loyaltyAccountRepository, loyaltyTransactionRepository);
+    }
+
     // ---------- getTracking() ----------
 
     @Test
@@ -931,6 +1086,64 @@ class OrderServiceTest {
         ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
         verify(trackingEventRepository).save(captor.capture());
         assertEquals(OrderStatus.RETURNED, captor.getValue().getStatus());
+    }
+
+    // A return reverses the points earned at delivery time - otherwise a refunded order would still leave the
+    // customer with points earned on money they no longer paid.
+    @Test
+    void returnOrderClawsBackThePointsEarnedAtDelivery() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 1));
+        cart.setTotalPrice(455.0);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 100);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        service.returnOrder(42L, AUTH, null, "damaged");
+
+        assertEquals(55, account.getPointsBalance());
+        verify(loyaltyAccountRepository).save(account);
+        ArgumentCaptor<LoyaltyTransaction> captor = ArgumentCaptor.forClass(LoyaltyTransaction.class);
+        verify(loyaltyTransactionRepository).save(captor.capture());
+        assertEquals(-45, captor.getValue().getPoints());
+        assertEquals(LoyaltyTransactionType.ADJUSTED, captor.getValue().getType());
+    }
+
+    // The customer may have already spent those points on a different order - the clawback must clamp at zero
+    // rather than driving the balance negative.
+    @Test
+    void returnOrderClawsBackNoMorePointsThanTheCurrentBalanceHolds() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 1));
+        cart.setTotalPrice(455.0);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 10);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        service.returnOrder(42L, AUTH, null, "damaged");
+
+        assertEquals(0, account.getPointsBalance());
+        ArgumentCaptor<LoyaltyTransaction> captor = ArgumentCaptor.forClass(LoyaltyTransaction.class);
+        verify(loyaltyTransactionRepository).save(captor.capture());
+        assertEquals(-10, captor.getValue().getPoints());
+    }
+
+    @Test
+    void returnOrderTouchesNoLoyaltyAccountWhenTheOrderEarnedNoPoints() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 1));
+        cart.setTotalPrice(5.0);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        service.returnOrder(42L, AUTH, null, "damaged");
+
+        verifyNoInteractions(loyaltyAccountRepository, loyaltyTransactionRepository);
     }
 
     @Test
@@ -1096,5 +1309,78 @@ class OrderServiceTest {
         service.deleteAddress(CUSTOMER, 99L);
 
         verify(shippingAddressRepository).deleteById(99L);
+    }
+
+    // ---------- loyalty account management ----------
+
+    @Test
+    void getLoyaltyAccountRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.getLoyaltyAccount(555));
+    }
+
+    // A customer who's never earned anything still gets a zero-balance account back, not a 404 - same
+    // first-class-empty-state approach as an empty wishlist or address list.
+    @Test
+    void getLoyaltyAccountReturnsAZeroBalanceForACustomerWithNoAccountYet() {
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.empty());
+
+        LoyaltyAccount result = service.getLoyaltyAccount(CUSTOMER);
+
+        assertEquals(0, result.getPointsBalance());
+        assertEquals(CUSTOMER, result.getCustomerPhno());
+        verify(loyaltyAccountRepository, never()).save(any());
+    }
+
+    @Test
+    void getLoyaltyAccountReturnsTheExistingBalance() {
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(loyaltyAccount(CUSTOMER, 30)));
+        assertEquals(30, service.getLoyaltyAccount(CUSTOMER).getPointsBalance());
+    }
+
+    @Test
+    void getLoyaltyHistoryRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.getLoyaltyHistory(555));
+    }
+
+    @Test
+    void getLoyaltyHistoryDelegatesToTheRepository() {
+        LoyaltyTransaction tx = new LoyaltyTransaction();
+        tx.setCustomerPhno(CUSTOMER);
+        when(loyaltyTransactionRepository.findByCustomerPhnoOrderByTimestampDesc(CUSTOMER)).thenReturn(List.of(tx));
+        assertEquals(List.of(tx), service.getLoyaltyHistory(CUSTOMER));
+    }
+
+    @Test
+    void adjustLoyaltyPointsRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.adjustLoyaltyPoints(555, 10, "goodwill"));
+    }
+
+    @Test
+    void adjustLoyaltyPointsRejectsABlankReason() {
+        assertThrows(ProductException.class, () -> service.adjustLoyaltyPoints(CUSTOMER, 10, " "));
+        verifyNoInteractions(loyaltyAccountRepository);
+    }
+
+    @Test
+    void adjustLoyaltyPointsRejectsADebitThatWouldGoNegative() {
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(loyaltyAccount(CUSTOMER, 5)));
+        assertThrows(ProductException.class, () -> service.adjustLoyaltyPoints(CUSTOMER, -10, "correction"));
+        verify(loyaltyAccountRepository, never()).save(any());
+    }
+
+    @Test
+    void adjustLoyaltyPointsCreditsANewAccountAndRecordsTheAdjustment() {
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.empty());
+        when(loyaltyAccountRepository.save(any(LoyaltyAccount.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        LoyaltyAccount result = service.adjustLoyaltyPoints(CUSTOMER, 25, "goodwill credit");
+
+        assertEquals(25, result.getPointsBalance());
+        ArgumentCaptor<LoyaltyTransaction> captor = ArgumentCaptor.forClass(LoyaltyTransaction.class);
+        verify(loyaltyTransactionRepository).save(captor.capture());
+        assertEquals(25, captor.getValue().getPoints());
+        assertEquals(LoyaltyTransactionType.ADJUSTED, captor.getValue().getType());
+        assertEquals("goodwill credit", captor.getValue().getReason());
+        assertNull(captor.getValue().getOrderId());
     }
 }

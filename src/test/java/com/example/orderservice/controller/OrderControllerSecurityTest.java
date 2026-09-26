@@ -279,4 +279,31 @@ class OrderControllerSecurityTest {
     void notificationsOfAnUnknownOrderIsPublicButReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/notifications")).andExpect(status().isNotFound());
     }
+
+    @Test
+    void lookingUpOwnLoyaltyBalanceByPhoneIsPublic() throws Exception {
+        mockMvc.perform(get("/loyalty/byphno").param("phno", "9876543210")).andExpect(status().isOk());
+    }
+
+    @Test
+    void lookingUpOwnLoyaltyHistoryByPhoneIsPublic() throws Exception {
+        mockMvc.perform(get("/loyalty/history").param("phno", "9876543210")).andExpect(status().isOk());
+    }
+
+    private static final String LOYALTY_ADJUSTMENT = """
+            {"customerPhno":9876543210,"points":25,"reason":"goodwill credit"}
+            """;
+
+    @Test
+    void adjustLoyaltyPointsWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/loyalty/adjust").contentType(MediaType.APPLICATION_JSON).content(LOYALTY_ADJUSTMENT))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void adjustLoyaltyPointsWithValidKeySucceeds() throws Exception {
+        mockMvc.perform(post("/loyalty/adjust").contentType(MediaType.APPLICATION_JSON).content(LOYALTY_ADJUSTMENT)
+                        .header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk());
+    }
 }
