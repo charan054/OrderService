@@ -134,6 +134,28 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void shipOrderWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/42/ship")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void shipOrderOfAnUnknownOrderIdReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/ship").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void deliverOrderWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/42/deliver")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void deliverOrderOfAnUnknownOrderIdReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/deliver").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void deleteProductWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(delete("/cart/deleteproduct").param("phno", "9876543210").param("productId", "1"))
                 .andExpect(status().isUnauthorized());

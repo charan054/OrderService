@@ -32,6 +32,16 @@ public class OrderController {
                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
         return orderService.cancel(orderId, authorization, idempotencyKey);
     }
+    // Operational actions (warehouse/ops moving an order along), not something the buyer's own token gates -
+    // authenticated the same way as every other trusted-caller endpoint here, via X-Service-Key.
+    @PostMapping("/{orderId}/ship")
+    public Cart shipOrder(@PathVariable long orderId){
+        return orderService.ship(orderId);
+    }
+    @PostMapping("/{orderId}/deliver")
+    public Cart deliverOrder(@PathVariable long orderId){
+        return orderService.deliver(orderId);
+    }
     @GetMapping("/display")
     public List<Product> findAll(){
         return orderService.getProducts();
