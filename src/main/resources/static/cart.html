@@ -312,7 +312,7 @@
                     <span class="method">REQUIRED</span>
                 </div>
             </div>
-            <p>Place Order, All Orders, Ship Order, Deliver Order and Delete Product require the same <code>X-Service-Key</code> value as this service's <code>.env</code>. Place Order also requires the buyer's own PhonepayService session token, sent exactly as PhonepayService expects it (e.g. <code>Bearer &lt;token&gt;</code>) - that is who gets charged. Both are remembered in this browser only.</p>
+            <p>Place Order, All Orders, Ship Order, Deliver Order, Add Coupon and Delete Product require the same <code>X-Service-Key</code> value as this service's <code>.env</code>. Place Order also requires the buyer's own PhonepayService session token, sent exactly as PhonepayService expects it (e.g. <code>Bearer &lt;token&gt;</code>) - that is who gets charged. Both are remembered in this browser only.</p>
             <input type="text" id="serviceKey" placeholder="X-Service-Key value" />
             <input type="text" id="buyerAuthorization" placeholder="Authorization header value, e.g. Bearer &lt;token&gt;" />
         </div>
@@ -365,7 +365,22 @@
                 </div>
             </div>
             <p>Submit selected cart items to <b>/cart/add</b>. Result opens in a separate tab.</p>
+            <input type="text" id="couponCode" placeholder="Coupon code (optional)" />
             <button class="green" onclick="placeOrder()">Place Order</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">🏷️</div>
+                <div class="title-wrap">
+                    <h2>Add Coupon</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Create or update a coupon. Requires the Service Key above.</p>
+            <input type="text" id="newCouponCode" placeholder="Coupon code, e.g. SAVE10" />
+            <input type="number" id="newCouponDiscount" placeholder="Discount percent (1-100)" />
+            <button class="blue" onclick="addCoupon()">Add Coupon</button>
         </div>
 
         <div class="card">
@@ -630,9 +645,12 @@
       const authorization = requireBuyerAuthorization();
       if (!authorization) return;
 
+      const couponCode = document.getElementById("couponCode").value.trim();
+
       const cart = {
         customerPhno: Number(phno),
-        orderItems: selectedItems
+        orderItems: selectedItems,
+        couponCode: couponCode || null
       };
 
       const data = await apiCall(`${BASE_URL}/add`, {
@@ -688,6 +706,28 @@
 
       showStatus("Product deleted from cart successfully. Result opened in new tab.", "success");
       openResultTab("Delete Product From Cart", data);
+    }
+
+    async function addCoupon() {
+      const code = document.getElementById("newCouponCode").value.trim();
+      const discountPercent = document.getElementById("newCouponDiscount").value;
+
+      if (!code || !discountPercent) return showStatus("Please enter a coupon code and discount percent.", "error");
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`http://localhost:8083/coupons/add`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Service-Key": serviceKey
+        },
+        body: JSON.stringify({ code, discountPercent: Number(discountPercent), active: true })
+      });
+
+      showStatus("Coupon saved successfully. Result opened in new tab.", "success");
+      openResultTab("Add Coupon", data);
     }
 
     async function shipOrder() {
