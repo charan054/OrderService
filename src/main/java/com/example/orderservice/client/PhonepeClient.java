@@ -2,6 +2,8 @@ package com.example.orderservice.client;
 
 import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
+import com.example.orderservice.dto.PhonepeLoginRequest;
+import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.RefundRequest;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -21,4 +23,10 @@ public interface PhonepeClient {
     @PostMapping("/phonepe/transactions/{transactionId}/refund")
     PaymentResponse refund(@RequestHeader("Authorization") String authorization,
                            @PathVariable long transactionId, @RequestBody RefundRequest request);
+
+    // Lets a checkout that only has the buyer's phone+PIN (the storefront flow) obtain the same session token a
+    // buyer who already had one would supply directly - PhonepayService's own credential check, nothing verified
+    // here.
+    @PostMapping("/phonepe/login")
+    PhonepeLoginResponse login(@RequestBody PhonepeLoginRequest request);
 }

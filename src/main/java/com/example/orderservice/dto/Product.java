@@ -8,7 +8,8 @@ import lombok.Data;
         "productName",
         "productCategory",
         "productPrice",
-        "productStock"
+        "productStock",
+        "productImageUrl"
 })
 @Data
 public class Product {
@@ -17,4 +18,5 @@ public class Product {
     private String productCategory;
     private double productPrice;
     private int productStock;
+    private String productImageUrl;
 }

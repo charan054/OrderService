@@ -18,29 +18,49 @@ import java.util.List;
 public class OrderController {
     @Autowired
     private OrderService orderService;
-    // Authorization must be the buyer's OWN PhonepayService session token ("Bearer <token>") - that is who gets
-    // charged. Idempotency-Key is optional: send the same value on a retry of the same checkout attempt (e.g.
-    // after a lost response) to avoid paying twice; a different value, or none, is always a brand new payment.
+    // Authorization is the buyer's OWN PhonepayService session token ("Bearer <token>") - that is who gets
+    // charged. It's optional here (unlike before) only so the storefront checkout can instead send payerPhno/
+    // payerPin for a PHONEPE order with no token yet; OrderService exchanges those for a token itself via
+    // PhonepayService's own /phonepe/login (see OrderService.resolveBuyerToken) - the PIN is never stored, only
+    // used in-memory for that one call. A CASH order needs neither. Idempotency-Key is optional: send the same
+    // value on a retry of the same checkout attempt (e.g. after a lost response) to avoid paying twice; a
+    // different value, or none, is always a brand new payment.
     @PostMapping("/add")
     public Cart addOrder(@RequestBody Cart cart,
-                         @RequestHeader("Authorization") String authorization,
-                         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
-        return orderService.order(cart, authorization, idempotencyKey);
+                         @RequestHeader(value = "Authorization", required = false) String authorization,
+                         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+                         @RequestParam(required = false) Long payerPhno,
+                         @RequestParam(required = false) String payerPin){
+        return orderService.order(cart, authorization, idempotencyKey, payerPhno, payerPin);
     }
-    // Authorization must be the buyer's OWN PhonepayService session token - PhonepayService only refunds a
-    // payment back to the person who made it, so this can never cancel (and refund) someone else's order.
+    // Same as /add above, but without the X-Service-Key requirement - this is the one write endpoint a genuine
+    // customer-facing storefront can call directly, since it has no way to know that internal secret (see
+    // SecurityConfig). The only gate against abuse is the same one /add already has for a PHONEPE order: a real
+    // successful debit through PhonepayService. A CASH order has no such gate, same trust level /cart/byphno
+    // already extends to "anyone who knows a phone number" elsewhere in this system.
+    @PostMapping("/checkout")
+    public Cart checkout(@RequestBody Cart cart,
+                         @RequestHeader(value = "Authorization", required = false) String authorization,
+                         @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+                         @RequestParam(required = false) Long payerPhno,
+                         @RequestParam(required = false) String payerPin){
+        return orderService.order(cart, authorization, idempotencyKey, payerPhno, payerPin);
+    }
+    // Authorization must be the buyer's OWN PhonepayService session token for a PHONEPE order - PhonepayService
+    // only refunds a payment back to the person who made it, so this can never cancel (and refund) someone
+    // else's order. Not required for a CASH order, which was never charged and so has nothing to refund.
     @PostMapping("/{orderId}/cancel")
     public Cart cancelOrder(@PathVariable long orderId,
-                            @RequestHeader("Authorization") String authorization,
+                            @RequestHeader(value = "Authorization", required = false) String authorization,
                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
         return orderService.cancel(orderId, authorization, idempotencyKey);
     }
-    // Same buyer-token requirement as cancel above, but only usable once an order has reached DELIVERED - cancel
-    // and return are mutually exclusive by status, never overlapping windows.
+    // Same buyer-token requirement as cancel above (waived for CASH, same reasoning), but only usable once an
+    // order has reached DELIVERED - cancel and return are mutually exclusive by status, never overlapping windows.
     @PostMapping("/{orderId}/return")
     public Cart returnOrder(@PathVariable long orderId,
                             @RequestParam String reason,
-                            @RequestHeader("Authorization") String authorization,
+                            @RequestHeader(value = "Authorization", required = false) String authorization,
                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
         return orderService.returnOrder(orderId, authorization, idempotencyKey, reason);
     }

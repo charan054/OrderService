@@ -6,6 +6,8 @@ import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
+import com.example.orderservice.dto.PhonepeLoginRequest;
+import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.WishlistPriceAlert;
@@ -19,6 +21,7 @@ import com.example.orderservice.entity.LoyaltyTransactionType;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.PaymentMethod;
 import com.example.orderservice.entity.ShippingAddress;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.Wishlist;
@@ -261,6 +264,87 @@ class OrderServiceTest {
         verify(trackingEventRepository).save(captor.capture());
         assertEquals(OrderStatus.PLACED, captor.getValue().getStatus());
         assertEquals(42L, captor.getValue().getOrderId());
+    }
+
+    // ---------- CASH / storefront checkout ----------
+
+    // A CASH order never touches PhonepayService at all - no makePayment, no login, and the saved order has no
+    // paymentTransactionId (there was nothing to charge).
+    @Test
+    void orderWithCashPaymentMethodNeverChargesAndSavesWithNoTransactionId() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+
+        Cart result = service.order(cart, null, null);
+
+        assertEquals(PaymentMethod.CASH, result.getPaymentMethod());
+        assertNull(result.getPaymentTransactionId());
+        assertEquals(500.0, result.getTotalPrice());
+        verifyNoInteractions(phonepeClient);
+        verify(orderKafkaProducer).sendMessage(contains("Order placed successfully"));
+    }
+
+    // The storefront checkout path: no Authorization token yet, only the buyer's own phone+PIN - OrderService
+    // exchanges those for a token via PhonepayService's own /phonepe/login, then charges with it exactly like an
+    // already-logged-in caller would.
+    @Test
+    void orderWithPhonePhnoAndPinLogsInAndChargesWithTheReturnedToken() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.login(new PhonepeLoginRequest(CUSTOMER, "1234")))
+                .thenReturn(new PhonepeLoginResponse("fresh-token", Instant.parse("2026-09-25T11:00:00Z"), CUSTOMER, "Buyer"));
+        when(phonepeClient.makePayment(eq("Bearer fresh-token"), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        Cart result = service.order(cart, null, null, CUSTOMER, "1234");
+
+        assertEquals(100000L, result.getPaymentTransactionId());
+        verify(phonepeClient).makePayment(eq("Bearer fresh-token"), any(PaymentRequest.class));
+    }
+
+    // An Authorization header the caller already has always wins over payerPhno/payerPin - never silently
+    // re-authenticate behind an already-logged-in caller's back.
+    @Test
+    void orderPrefersAnExistingAuthorizationTokenOverPayerCredentials() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        service.order(cart, AUTH, null, CUSTOMER, "1234");
+
+        verify(phonepeClient, never()).login(any());
+        verify(phonepeClient).makePayment(eq(AUTH), any(PaymentRequest.class));
+    }
+
+    // A PHONEPE checkout with neither a token nor phone+PIN must fail before anything happens - same fail-fast
+    // reasoning as every other checkout precondition.
+    @Test
+    void orderThrowsWhenNoTokenOrPayerCredentialsAreSupplied() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        assertThrows(ProductException.class, () -> service.order(cart, null, null, null, null));
+        verifyNoInteractions(phonepeClient);
+        verify(orderRepository, never()).save(any());
+    }
+
+    // A wrong PIN surfaces as PhonepayService's own 401, relayed as-is - OrderService never validates the PIN
+    // itself.
+    @Test
+    void orderRelaysAnInvalidPinFromPhonepayServiceLogin() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.login(new PhonepeLoginRequest(CUSTOMER, "0000")))
+                .thenThrow(declinedBy("login", 401, "Invalid phone number or PIN"));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        PaymentException ex = assertThrows(PaymentException.class,
+                () -> service.order(cart, null, null, CUSTOMER, "0000"));
+
+        assertEquals("Invalid phone number or PIN", ex.getMessage());
+        verify(orderRepository, never()).save(any());
     }
 
     @Test
@@ -881,6 +965,23 @@ class OrderServiceTest {
         verify(trackingEventRepository).save(captor.capture());
         assertEquals(OrderStatus.CANCELLED, captor.getValue().getStatus());
         assertEquals(42L, captor.getValue().getOrderId());
+    }
+
+    // A CASH order was never charged through PhonepayService, so cancelling it needs no Authorization token and
+    // makes no refund call at all - only the stock restoration and status change happen.
+    @Test
+    void cancelOfACashOrderRestoresStockWithNoRefundCall() {
+        Cart cart = placedOrder(42L, 0, item(1, 2));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setPaymentTransactionId(null);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.cancel(42L, null, null);
+
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        verifyNoInteractions(phonepeClient);
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 2);
     }
 
     // A broken notification channel must never turn a completed cancellation into an error.

@@ -1,0 +1,503 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shop</title>
+
+    <style>
+        :root {
+          --primary: #6d28d9;
+          --primary-dark: #4c1d95;
+          --green: #16a34a;
+          --red: #dc2626;
+          --dark: #0f172a;
+          --muted: #64748b;
+          --border: #e2e8f0;
+          --bg: #f8fafc;
+          --shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+        }
+
+        * {
+          box-sizing: border-box;
+          margin: 0;
+          padding: 0;
+          font-family: Inter, Segoe UI, Arial, sans-serif;
+        }
+
+        body {
+          min-height: 100vh;
+          background: var(--bg);
+          color: var(--dark);
+        }
+
+        header.topbar {
+          background: linear-gradient(135deg, #111827, #312e81, #6d28d9);
+          color: white;
+          padding: 22px 24px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+        }
+
+        header.topbar h1 {
+          font-size: 22px;
+        }
+
+        #accountInfo {
+          font-size: 14px;
+          color: #ede9fe;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+
+        #accountInfo button {
+          width: auto;
+          padding: 8px 14px;
+          font-size: 13px;
+        }
+
+        main {
+          width: min(1100px, calc(100% - 32px));
+          margin: 28px auto 60px;
+        }
+
+        .hidden { display: none !important; }
+
+        .center-card {
+          max-width: 380px;
+          margin: 60px auto;
+          background: white;
+          border-radius: 20px;
+          padding: 28px;
+          box-shadow: var(--shadow);
+          border: 1px solid var(--border);
+        }
+
+        .center-card h2 { margin-bottom: 6px; }
+        .center-card p { color: var(--muted); font-size: 14px; margin-bottom: 18px; }
+
+        input, select {
+          width: 100%;
+          border: 1px solid #cbd5e1;
+          border-radius: 12px;
+          padding: 12px 14px;
+          font-size: 15px;
+          margin-bottom: 12px;
+          outline: none;
+          background: #fbfdff;
+        }
+
+        input:focus, select:focus {
+          border-color: var(--primary);
+          box-shadow: 0 0 0 4px rgba(109, 40, 217, 0.13);
+        }
+
+        button {
+          width: 100%;
+          border: none;
+          border-radius: 12px;
+          padding: 12px 16px;
+          cursor: pointer;
+          color: white;
+          font-weight: 700;
+          font-size: 15px;
+          background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+        }
+
+        button.secondary {
+          background: #e2e8f0;
+          color: var(--dark);
+        }
+
+        button.red { background: linear-gradient(135deg, #ef4444, #b91c1c); }
+
+        .error-text { color: var(--red); font-size: 13px; margin: -6px 0 12px; }
+
+        .layout {
+          display: grid;
+          grid-template-columns: 2fr 1fr;
+          gap: 24px;
+          align-items: start;
+        }
+
+        .product-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+          gap: 16px;
+        }
+
+        .product-card {
+          background: white;
+          border: 1px solid var(--border);
+          border-radius: 16px;
+          overflow: hidden;
+          box-shadow: var(--shadow);
+        }
+
+        .product-image {
+          height: 120px;
+          background: #f1f5f9;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: var(--muted);
+          font-size: 13px;
+        }
+
+        .product-image img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+
+        .product-body { padding: 14px; }
+        .product-body h3 { font-size: 15px; margin-bottom: 2px; }
+        .product-body .meta { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+        .product-body .price-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 10px;
+        }
+        .product-body .price { font-weight: 800; font-size: 16px; }
+
+        .qty-row { display: flex; gap: 8px; margin-bottom: 10px; }
+        .qty-row input { margin-bottom: 0; text-align: center; }
+
+        .panel {
+          background: white;
+          border: 1px solid var(--border);
+          border-radius: 16px;
+          box-shadow: var(--shadow);
+          padding: 18px;
+          position: sticky;
+          top: 20px;
+        }
+
+        .panel h2 { font-size: 18px; margin-bottom: 12px; }
+
+        .cart-line {
+          display: flex;
+          justify-content: space-between;
+          font-size: 14px;
+          padding: 8px 0;
+          border-bottom: 1px solid #edf2f7;
+        }
+
+        .cart-line button {
+          width: auto;
+          background: none;
+          color: var(--red);
+          font-weight: 700;
+          padding: 0 4px;
+        }
+
+        .total-row {
+          display: flex;
+          justify-content: space-between;
+          font-weight: 800;
+          font-size: 16px;
+          margin: 14px 0;
+        }
+
+        .pay-option {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 10px 12px;
+          margin-bottom: 8px;
+          cursor: pointer;
+        }
+
+        .pay-option.selected {
+          border-color: var(--primary);
+          background: #f5f3ff;
+        }
+
+        .pay-option input { width: auto; margin: 0; }
+
+        .status-banner {
+          margin-top: 12px;
+          font-size: 13px;
+          font-weight: 700;
+          padding: 10px 12px;
+          border-radius: 10px;
+        }
+
+        .status-banner.success { background: #dcfce7; color: #15803d; }
+        .status-banner.error { background: #fee2e2; color: #b91c1c; }
+        .status-banner.info { background: #ede9fe; color: var(--primary-dark); }
+
+        @media (max-width: 800px) {
+          .layout { grid-template-columns: 1fr; }
+          .panel { position: static; }
+        }
+    </style>
+</head>
+<body>
+
+<header class="topbar">
+    <h1>Shop</h1>
+    <div id="accountInfo"></div>
+</header>
+
+<main>
+    <section id="loginSection" class="center-card">
+        <h2>Welcome</h2>
+        <p>Enter your phone number to continue.</p>
+        <input type="tel" id="loginPhno" placeholder="10-digit phone number" />
+        <div id="loginError" class="error-text hidden"></div>
+        <button onclick="login()">Continue</button>
+    </section>
+
+    <section id="shopSection" class="hidden">
+        <div class="layout">
+            <div>
+                <div id="productGrid" class="product-grid"></div>
+            </div>
+
+            <div class="panel">
+                <h2>Your cart</h2>
+                <div id="cartLines"><p style="color:var(--muted); font-size:14px;">Your cart is empty.</p></div>
+                <div class="total-row"><span>Total</span><span id="cartTotal">₹0</span></div>
+
+                <div id="payOptions">
+                    <label class="pay-option selected" id="payPhonepeOption">
+                        <input type="radio" name="payMethod" value="PHONEPE" checked onchange="onPaymentMethodChange()" />
+                        Pay with PhonePe
+                    </label>
+                    <label class="pay-option" id="payCashOption">
+                        <input type="radio" name="payMethod" value="CASH" onchange="onPaymentMethodChange()" />
+                        Cash on delivery
+                    </label>
+                </div>
+
+                <div id="phonepeFields">
+                    <input type="tel" id="payerPhno" placeholder="PhonePe phone number" />
+                    <input type="password" id="payerPin" placeholder="PhonePe PIN" />
+                </div>
+
+                <div id="checkoutError" class="error-text hidden"></div>
+                <button onclick="placeOrder()">Place order</button>
+                <div id="checkoutStatus"></div>
+            </div>
+        </div>
+    </section>
+</main>
+
+<script>
+    const BASE_URL = "http://localhost:8083";
+    let customerPhno = null;
+    let products = [];
+    let cart = []; // {productId, name, price, quantity, stock}
+
+    function showAccountInfo() {
+      document.getElementById("accountInfo").innerHTML = customerPhno
+        ? `Signed in as ${customerPhno} <button class="secondary" onclick="logout()">Log out</button>`
+        : "";
+    }
+
+    function logout() {
+      localStorage.removeItem("shopCustomerPhno");
+      customerPhno = null;
+      cart = [];
+      document.getElementById("loginSection").classList.remove("hidden");
+      document.getElementById("shopSection").classList.add("hidden");
+      showAccountInfo();
+    }
+
+    function login() {
+      const value = document.getElementById("loginPhno").value.trim();
+      const errorBox = document.getElementById("loginError");
+      if (!/^[6-9][0-9]{9}$/.test(value)) {
+        errorBox.textContent = "Enter a valid 10-digit phone number.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+      errorBox.classList.add("hidden");
+      customerPhno = value;
+      localStorage.setItem("shopCustomerPhno", value);
+      enterShop();
+    }
+
+    function enterShop() {
+      document.getElementById("loginSection").classList.add("hidden");
+      document.getElementById("shopSection").classList.remove("hidden");
+      document.getElementById("payerPhno").value = customerPhno;
+      showAccountInfo();
+      loadProducts();
+    }
+
+    async function loadProducts() {
+      const response = await fetch(`${BASE_URL}/cart/display`);
+      products = response.ok ? await response.json() : [];
+      renderProducts();
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+    }
+
+    function renderProducts() {
+      const grid = document.getElementById("productGrid");
+      if (!products.length) {
+        grid.innerHTML = `<p style="color:var(--muted);">No products available right now.</p>`;
+        return;
+      }
+      grid.innerHTML = products.map(p => `
+        <div class="product-card">
+          <div class="product-image">
+            ${p.productImageUrl
+              ? `<img src="${escapeHtml(p.productImageUrl)}" alt="${escapeHtml(p.productName)}" onerror="this.parentElement.textContent='No image'" />`
+              : "No image"}
+          </div>
+          <div class="product-body">
+            <h3>${escapeHtml(p.productName)}</h3>
+            <div class="meta">${escapeHtml(p.productCategory)} &middot; ${p.productStock > 0 ? p.productStock + " in stock" : "out of stock"}</div>
+            <div class="price-row"><span class="price">₹${p.productPrice}</span></div>
+            <div class="qty-row">
+              <input type="number" min="1" value="1" id="qty_${p.productId}" ${p.productStock <= 0 ? "disabled" : ""} />
+              <button style="width:auto;" ${p.productStock <= 0 ? "disabled" : ""} onclick="addToCart(${p.productId})">Add</button>
+            </div>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function addToCart(productId) {
+      const product = products.find(p => p.productId === productId);
+      if (!product) return;
+      const qtyInput = document.getElementById(`qty_${productId}`);
+      const quantity = Math.max(1, Number(qtyInput.value) || 1);
+
+      const existing = cart.find(item => item.productId === productId);
+      if (existing) {
+        existing.quantity += quantity;
+      } else {
+        cart.push({ productId, name: product.productName, price: product.productPrice, quantity });
+      }
+      renderCart();
+    }
+
+    function removeFromCart(productId) {
+      cart = cart.filter(item => item.productId !== productId);
+      renderCart();
+    }
+
+    function renderCart() {
+      const linesBox = document.getElementById("cartLines");
+      if (!cart.length) {
+        linesBox.innerHTML = `<p style="color:var(--muted); font-size:14px;">Your cart is empty.</p>`;
+      } else {
+        linesBox.innerHTML = cart.map(item => `
+          <div class="cart-line">
+            <span>${escapeHtml(item.name)} &times; ${item.quantity}</span>
+            <span>₹${(item.price * item.quantity).toFixed(2)} <button onclick="removeFromCart(${item.productId})">&times;</button></span>
+          </div>
+        `).join("");
+      }
+      const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      document.getElementById("cartTotal").textContent = `₹${total.toFixed(2)}`;
+    }
+
+    function onPaymentMethodChange() {
+      const method = document.querySelector('input[name="payMethod"]:checked').value;
+      document.getElementById("payPhonepeOption").classList.toggle("selected", method === "PHONEPE");
+      document.getElementById("payCashOption").classList.toggle("selected", method === "CASH");
+      document.getElementById("phonepeFields").classList.toggle("hidden", method === "CASH");
+    }
+
+    function setCheckoutError(message) {
+      const box = document.getElementById("checkoutError");
+      if (!message) {
+        box.classList.add("hidden");
+        box.textContent = "";
+        return;
+      }
+      box.textContent = message;
+      box.classList.remove("hidden");
+    }
+
+    function setCheckoutStatus(message, kind) {
+      const box = document.getElementById("checkoutStatus");
+      box.className = "status-banner " + (kind || "");
+      box.textContent = message || "";
+    }
+
+    async function placeOrder() {
+      setCheckoutError(null);
+      setCheckoutStatus("");
+
+      if (!cart.length) {
+        setCheckoutError("Your cart is empty.");
+        return;
+      }
+
+      const method = document.querySelector('input[name="payMethod"]:checked').value;
+      let payerPhno = null;
+      let payerPin = null;
+
+      if (method === "PHONEPE") {
+        payerPhno = document.getElementById("payerPhno").value.trim();
+        payerPin = document.getElementById("payerPin").value.trim();
+        if (!/^[6-9][0-9]{9}$/.test(payerPhno) || !payerPin) {
+          setCheckoutError("Enter the PhonePe phone number and PIN, or switch to cash on delivery.");
+          return;
+        }
+      }
+
+      const cartPayload = {
+        customerPhno: Number(customerPhno),
+        orderItems: cart.map(item => ({ productId: item.productId, productQuantity: item.quantity })),
+        paymentMethod: method
+      };
+
+      const query = method === "PHONEPE"
+        ? `?payerPhno=${encodeURIComponent(payerPhno)}&payerPin=${encodeURIComponent(payerPin)}`
+        : "";
+
+      setCheckoutStatus("Placing your order...", "info");
+      try {
+        const response = await fetch(`${BASE_URL}/cart/checkout${query}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": crypto.randomUUID()
+          },
+          body: JSON.stringify(cartPayload)
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || `Request failed (${response.status})`);
+        }
+
+        const order = await response.json();
+        cart = [];
+        renderCart();
+        document.getElementById("payerPin").value = "";
+        setCheckoutStatus(
+          `Order #${order.orderId} placed${method === "CASH" ? " - pay on delivery." : ", paid via PhonePe."}`,
+          "success"
+        );
+        loadProducts();
+      } catch (error) {
+        setCheckoutStatus("");
+        setCheckoutError(error.message);
+      }
+    }
+
+    const savedPhno = localStorage.getItem("shopCustomerPhno");
+    if (savedPhno) {
+      customerPhno = savedPhno;
+      enterShop();
+    }
+</script>
+</body>
+</html>
