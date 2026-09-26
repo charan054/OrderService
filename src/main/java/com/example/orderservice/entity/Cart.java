@@ -48,5 +48,8 @@ public class Cart {
     // The PhonepayService transaction that paid for this order (see OrderService.order()); needed to refund it
     // on cancellation. Null for orders placed before this field existed.
     private Long paymentTransactionId;
+    // Set by OrderService.returnOrder() when a DELIVERED order is returned; null otherwise. Purely a record of
+    // why, same role couponCode/shippingAddressId play - re-editing it after the fact has no effect.
+    private String returnReason;
 
 }

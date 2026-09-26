@@ -696,6 +696,112 @@ class OrderServiceTest {
         verify(phonepeClient, never()).refund(any(), anyInt(), any());
     }
 
+    // ---------- returnOrder() ----------
+
+    private Cart deliveredOrder(long orderId, long paymentTransactionId, OrderItem... items) {
+        Cart cart = placedOrder(orderId, paymentTransactionId, items);
+        cart.setStatus(OrderStatus.DELIVERED);
+        return cart;
+    }
+
+    @Test
+    void returnOrderRejectsABlankReason() {
+        assertThrows(ProductException.class, () -> service.returnOrder(42L, AUTH, null, " "));
+        verifyNoInteractions(orderRepository);
+    }
+
+    @Test
+    void returnOrderThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.empty());
+        assertThrows(OrderNotFoundException.class, () -> service.returnOrder(42L, AUTH, null, "damaged"));
+    }
+
+    @Test
+    void returnOrderThrowsWhenTheOrderIsNotDelivered() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.returnOrder(42L, AUTH, null, "damaged"));
+        verify(phonepeClient, never()).refund(any(), anyInt(), any());
+    }
+
+    @Test
+    void returnOrderThrowsForAnOrderWithNoStoredPayment() {
+        Cart cart = deliveredOrder(42L, 0, item(1, 1));
+        cart.setPaymentTransactionId(null);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.returnOrder(42L, AUTH, null, "damaged"));
+        verify(phonepeClient, never()).refund(any(), anyInt(), any());
+    }
+
+    @Test
+    void returnOrderThrowsWhenTheReturnWindowHasExpired() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        TrackingEvent delivered = new TrackingEvent();
+        delivered.setOrderId(42L);
+        delivered.setStatus(OrderStatus.DELIVERED);
+        delivered.setTimestamp(Instant.now().minus(8, java.time.temporal.ChronoUnit.DAYS));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of(delivered));
+
+        assertThrows(ProductException.class, () -> service.returnOrder(42L, AUTH, null, "damaged"));
+        verify(phonepeClient, never()).refund(any(), anyInt(), any());
+    }
+
+    @Test
+    void returnOrderWithNoDeliveredTrackingEventSkipsTheWindowCheck() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.returnOrder(42L, AUTH, null, "damaged");
+
+        assertEquals(OrderStatus.RETURNED, result.getStatus());
+    }
+
+    @Test
+    void returnOrderRefundsRestoresStockAndMarksTheOrderReturned() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 2), item(2, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        TrackingEvent delivered = new TrackingEvent();
+        delivered.setOrderId(42L);
+        delivered.setStatus(OrderStatus.DELIVERED);
+        delivered.setTimestamp(Instant.now().minus(1, java.time.temporal.ChronoUnit.DAYS));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of(delivered));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), eq(new RefundRequest("return-1"))))
+                .thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.returnOrder(42L, AUTH, "return-1", "damaged in transit");
+
+        assertEquals(OrderStatus.RETURNED, result.getStatus());
+        assertEquals("damaged in transit", result.getReturnReason());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 2);
+        verify(productClient).updateProductStock(SERVICE_KEY, 2, 1);
+        verify(orderKafkaProducer).sendMessage(contains("Order returned successfully"));
+        ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertEquals(OrderStatus.RETURNED, captor.getValue().getStatus());
+    }
+
+    @Test
+    void returnOrderThrowsWhenTheRefundIsDeclinedAndTouchesNoStockOrOrder() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 2));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class)))
+                .thenThrow(declinedBy("refund", 502, "We could not confirm your refund with the bank."));
+
+        assertThrows(PaymentException.class, () -> service.returnOrder(42L, AUTH, null, "damaged"));
+
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        verify(orderRepository, never()).save(any());
+        assertEquals(OrderStatus.DELIVERED, cart.getStatus());
+    }
+
     // ---------- ordersOfPhno ----------
 
     @Test

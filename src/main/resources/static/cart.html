@@ -499,6 +499,20 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">↩️</div>
+                <div class="title-wrap">
+                    <h2>Return Order</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Return a delivered order for a full refund (within 7 days of delivery). Requires the Service Key and the buyer's own Authorization above.</p>
+            <input type="number" id="returnOrderId" placeholder="Order ID" />
+            <input type="text" id="returnReason" placeholder="Reason for return" />
+            <button class="red" onclick="returnOrder()">Return Order</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">🗑️</div>
                 <div class="title-wrap">
                     <h2>Delete Product From Cart</h2>
@@ -981,6 +995,28 @@
 
       showStatus("Tracking timeline loaded. Result opened in new tab.", "success");
       openResultTab("Track Order", data);
+    }
+
+    async function returnOrder() {
+      const orderId = document.getElementById("returnOrderId").value;
+      const reason = document.getElementById("returnReason").value.trim();
+      if (!orderId || !reason) return showStatus("Please enter an order ID and a reason.", "error");
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const authorization = requireBuyerAuthorization();
+      if (!authorization) return;
+
+      const data = await apiCall(`${BASE_URL}/${encodeURIComponent(orderId)}/return?reason=${encodeURIComponent(reason)}`, {
+        method: "POST",
+        headers: {
+          "X-Service-Key": serviceKey,
+          "Authorization": authorization
+        }
+      });
+
+      showStatus("Order returned successfully. Result opened in new tab.", "success");
+      openResultTab("Return Order", data);
     }
 
     function flattenRows(data) {

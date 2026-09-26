@@ -255,4 +255,23 @@ class OrderControllerSecurityTest {
         mockMvc.perform(delete("/addresses/remove").param("phno", "9876543210").param("addressId", "1"))
                 .andExpect(status().isUnauthorized());
     }
+
+    @Test
+    void returnOrderWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/42/return").param("reason", "damaged")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void returnOrderWithValidKeyButNoBuyerTokenIsRejected() throws Exception {
+        mockMvc.perform(post("/cart/42/return").param("reason", "damaged").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void returnOrderOfAnUnknownOrderIdReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/return").param("reason", "damaged")
+                        .header("X-Service-Key", VALID_KEY)
+                        .header("Authorization", "Bearer buyer-token"))
+                .andExpect(status().isNotFound());
+    }
 }

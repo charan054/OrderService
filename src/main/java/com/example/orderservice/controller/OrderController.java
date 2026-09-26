@@ -33,6 +33,15 @@ public class OrderController {
                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
         return orderService.cancel(orderId, authorization, idempotencyKey);
     }
+    // Same buyer-token requirement as cancel above, but only usable once an order has reached DELIVERED - cancel
+    // and return are mutually exclusive by status, never overlapping windows.
+    @PostMapping("/{orderId}/return")
+    public Cart returnOrder(@PathVariable long orderId,
+                            @RequestParam String reason,
+                            @RequestHeader("Authorization") String authorization,
+                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
+        return orderService.returnOrder(orderId, authorization, idempotencyKey, reason);
+    }
     // Operational actions (warehouse/ops moving an order along), not something the buyer's own token gates -
     // authenticated the same way as every other trusted-caller endpoint here, via X-Service-Key.
     @PostMapping("/{orderId}/ship")

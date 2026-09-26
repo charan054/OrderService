@@ -35,6 +35,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 @Service
@@ -135,6 +136,48 @@ public class OrderService {
         recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
         sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
+                + " Refunded: " + result.getTotalPrice());
+        return result;
+    }
+
+    // Returns can only happen AFTER delivery, unlike cancel() which only works on a still-PLACED order - the two
+    // are mutually exclusive by status, never overlapping windows. Otherwise the same fail-safe refund-then-
+    // restore-stock shape as cancel(): a declined refund leaves the order exactly DELIVERED, nothing rolled back.
+    public Cart returnOrder(long orderId, String authorization, String idempotencyKey, String reason) {
+        if (reason == null || reason.isBlank()) {
+            throw new ProductException("A return reason is required");
+        }
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() != OrderStatus.DELIVERED) {
+            throw new ProductException("Only a delivered order can be returned");
+        }
+        if (cart.getPaymentTransactionId() == null) {
+            throw new ProductException("This order cannot be returned");
+        }
+
+        List<TrackingEvent> deliveredEvents = trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId);
+        Instant deliveredAt = deliveredEvents.stream()
+                .filter(e -> e.getStatus() == OrderStatus.DELIVERED)
+                .map(TrackingEvent::getTimestamp)
+                .reduce((first, second) -> second) // latest DELIVERED event, in case of any anomaly
+                .orElse(null);
+        if (deliveredAt != null && deliveredAt.isBefore(Instant.now().minus(RETURN_WINDOW_DAYS, ChronoUnit.DAYS))) {
+            throw new ProductException("Return window of " + RETURN_WINDOW_DAYS + " days has expired");
+        }
+
+        refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
+
+        for (OrderItem orderItem : cart.getOrderItems()) {
+            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
+        }
+        cart.setStatus(OrderStatus.RETURNED);
+        cart.setReturnReason(reason);
+        Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.RETURNED);
+        sendNotification("Order returned successfully. OrderId: " + result.getOrderId()
+                + " Customer: " + mask(result.getCustomerPhno())
+                + " Reason: " + reason
                 + " Refunded: " + result.getTotalPrice());
         return result;
     }
@@ -258,6 +301,7 @@ public class OrderService {
     }
 
     private static final String COMPLETED = "COMPLETED";
+    private static final int RETURN_WINDOW_DAYS = 7;
 
     private PaymentResponse charge(String authorization, double price, String idempotencyKey) {
         BigDecimal amount = BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP);
