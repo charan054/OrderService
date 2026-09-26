@@ -597,6 +597,19 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">📉</div>
+                <div class="title-wrap">
+                    <h2>Wishlist Price Drops</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>See which wishlisted products have gotten cheaper since they were added. Public - no Service Key required. Computed live, not a push notification.</p>
+            <input type="number" id="priceDropsPhno" placeholder="Customer phone number" />
+            <button onclick="viewPriceDrops()">Check Price Drops</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">⭐</div>
                 <div class="title-wrap">
                     <h2>View Loyalty Points</h2>
@@ -916,6 +929,16 @@
 
       showStatus("Removed from wishlist successfully. Result opened in new tab.", "success");
       openResultTab("Remove From Wishlist", data);
+    }
+
+    async function viewPriceDrops() {
+      const phno = document.getElementById("priceDropsPhno").value;
+      if (!phno) return showStatus("Please enter customer phone number.", "error");
+
+      const data = await apiCall(`http://localhost:8083/wishlist/pricedrops?phno=${encodeURIComponent(phno)}`);
+
+      showStatus("Price drop check complete. Result opened in new tab.", "success");
+      openResultTab("Wishlist Price Drops", data);
     }
 
     async function viewLoyalty() {
