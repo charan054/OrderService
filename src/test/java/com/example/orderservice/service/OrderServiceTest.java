@@ -352,6 +352,76 @@ class OrderServiceTest {
         verifyNoInteractions(orderKafkaProducer);
     }
 
+    // ---------- ship() / deliver() ----------
+
+    @Test
+    void shipThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.empty());
+        assertThrows(OrderNotFoundException.class, () -> service.ship(42L));
+    }
+
+    @Test
+    void shipThrowsWhenTheOrderIsNotPlaced() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setStatus(OrderStatus.SHIPPED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.ship(42L));
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void shipMovesAPlacedOrderToShipped() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.ship(42L);
+
+        assertEquals(OrderStatus.SHIPPED, result.getStatus());
+        verify(orderKafkaProducer).sendMessage(contains("Order shipped"));
+    }
+
+    @Test
+    void deliverThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.empty());
+        assertThrows(OrderNotFoundException.class, () -> service.deliver(42L));
+    }
+
+    @Test
+    void deliverThrowsWhenTheOrderIsNotShipped() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.deliver(42L));
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void deliverMovesAShippedOrderToDelivered() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setStatus(OrderStatus.SHIPPED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.deliver(42L);
+
+        assertEquals(OrderStatus.DELIVERED, result.getStatus());
+        verify(orderKafkaProducer).sendMessage(contains("Order delivered"));
+    }
+
+    // Regression: cancellation must stop being available once an order has moved past PLACED, not just once
+    // it's already CANCELLED.
+    @Test
+    void cancelThrowsForAShippedOrder() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setStatus(OrderStatus.SHIPPED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.cancel(42L, AUTH, null));
+        verify(phonepeClient, never()).refund(any(), anyInt(), any());
+    }
+
     // ---------- ordersOfPhno ----------
 
     @Test
