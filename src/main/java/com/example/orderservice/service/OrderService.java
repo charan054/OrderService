@@ -11,6 +11,7 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.CouponRedemption;
 import com.example.orderservice.entity.LoyaltyAccount;
+import com.example.orderservice.entity.LoyaltyTier;
 import com.example.orderservice.entity.LoyaltyTransaction;
 import com.example.orderservice.entity.LoyaltyTransactionType;
 import com.example.orderservice.entity.OrderItem;
@@ -285,27 +286,38 @@ public class OrderService {
     // reasoning recordCouponRedemption applies to coupon usage.
     private static final int RUPEES_PER_POINT = 10;
 
+    // The multiplier applied is the tier the customer was in BEFORE this order's points are added - so crossing
+    // a tier threshold takes effect starting with the customer's NEXT order, not retroactively on the one that
+    // crossed it.
     private void earnLoyaltyPoints(Cart cart) {
-        int earned = (int) (cart.getTotalPrice() / RUPEES_PER_POINT);
-        if (earned <= 0) {
+        int baseEarned = (int) (cart.getTotalPrice() / RUPEES_PER_POINT);
+        if (baseEarned <= 0) {
             return;
         }
         LoyaltyAccount account = loyaltyAccountRepository.findById(cart.getCustomerPhno())
                 .orElseGet(() -> newLoyaltyAccount(cart.getCustomerPhno()));
+        LoyaltyTier tier = LoyaltyTier.forLifetimePoints(account.getLifetimePointsEarned());
+        int earned = (int) (baseEarned * tier.getEarnMultiplier());
         account.setPointsBalance(account.getPointsBalance() + earned);
+        account.setLifetimePointsEarned(account.getLifetimePointsEarned() + earned);
         loyaltyAccountRepository.save(account);
         recordLoyaltyTransaction(cart.getCustomerPhno(), cart.getOrderId(), earned, LoyaltyTransactionType.EARNED, null);
     }
 
-    // Reverses the points earned at deliver() time when that same order is later returned - otherwise a
-    // refunded order would still leave the customer with points earned on money they no longer paid. Clamped at
-    // zero rather than going negative: the customer may have already spent those points on a different order in
-    // the meantime, and this system has no notion of a customer owing points back.
+    // Reverses the EXACT amount earned at deliver() time when that same order is later returned - looked up from
+    // that order's own EARNED transaction rather than recomputed, since the tier multiplier in effect back then
+    // may differ from the multiplier in effect now. Clamped at zero rather than going negative: the customer may
+    // have already spent those points on a different order in the meantime, and this system has no notion of a
+    // customer owing points back. lifetimePointsEarned is reduced by the same clamped amount - a returned order
+    // must not count toward tier progress any more than it counts toward the spendable balance.
     private void clawBackLoyaltyPoints(Cart cart) {
-        int earned = (int) (cart.getTotalPrice() / RUPEES_PER_POINT);
-        if (earned <= 0) {
+        LoyaltyTransaction earnedTx = loyaltyTransactionRepository
+                .findByOrderIdAndType(cart.getOrderId(), LoyaltyTransactionType.EARNED)
+                .orElse(null);
+        if (earnedTx == null || earnedTx.getPoints() <= 0) {
             return;
         }
+        int earned = earnedTx.getPoints();
         LoyaltyAccount account = loyaltyAccountRepository.findById(cart.getCustomerPhno())
                 .orElseGet(() -> newLoyaltyAccount(cart.getCustomerPhno()));
         int clawedBack = Math.min(earned, account.getPointsBalance());
@@ -313,6 +325,7 @@ public class OrderService {
             return;
         }
         account.setPointsBalance(account.getPointsBalance() - clawedBack);
+        account.setLifetimePointsEarned(Math.max(0, account.getLifetimePointsEarned() - clawedBack));
         loyaltyAccountRepository.save(account);
         recordLoyaltyTransaction(cart.getCustomerPhno(), cart.getOrderId(), -clawedBack, LoyaltyTransactionType.ADJUSTED,
                 "Points earned on order #" + cart.getOrderId() + " reversed after return");
