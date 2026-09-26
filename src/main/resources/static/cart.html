@@ -367,6 +367,7 @@
             <p>Submit selected cart items to <b>/cart/add</b>. Result opens in a separate tab.</p>
             <input type="text" id="couponCode" placeholder="Coupon code (optional)" />
             <input type="number" id="orderShippingAddressId" placeholder="Shipping address ID (optional)" />
+            <input type="number" id="orderPointsRedeemed" placeholder="Loyalty points to redeem (optional, 1 point = ₹1)" />
             <button class="green" onclick="placeOrder()">Place Order</button>
         </div>
 
@@ -593,6 +594,34 @@
             <input type="number" id="wishlistRemoveProductId" placeholder="Product ID" />
             <button class="red" onclick="removeFromWishlist()">Remove From Wishlist</button>
         </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">⭐</div>
+                <div class="title-wrap">
+                    <h2>View Loyalty Points</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>View a customer's points balance and earn/redeem history. Public - no Service Key required.</p>
+            <input type="number" id="loyaltyViewPhno" placeholder="Customer phone number" />
+            <button onclick="viewLoyalty()">View Loyalty Points</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">🛠️</div>
+                <div class="title-wrap">
+                    <h2>Adjust Loyalty Points</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Manually credit or debit a customer's points balance (e.g. a goodwill correction). Requires the Service Key above.</p>
+            <input type="number" id="loyaltyAdjustPhno" placeholder="Customer phone number" />
+            <input type="number" id="loyaltyAdjustPoints" placeholder="Points (negative to debit)" />
+            <input type="text" id="loyaltyAdjustReason" placeholder="Reason" />
+            <button class="blue" onclick="adjustLoyalty()">Adjust Points</button>
+        </div>
     </section>
 
     <div id="status" class="status-panel">Ready. Load products first, then add items to cart.</div>
@@ -781,12 +810,14 @@
 
       const couponCode = document.getElementById("couponCode").value.trim();
       const shippingAddressId = document.getElementById("orderShippingAddressId").value;
+      const pointsRedeemed = document.getElementById("orderPointsRedeemed").value;
 
       const cart = {
         customerPhno: Number(phno),
         orderItems: selectedItems,
         couponCode: couponCode || null,
-        shippingAddressId: shippingAddressId ? Number(shippingAddressId) : null
+        shippingAddressId: shippingAddressId ? Number(shippingAddressId) : null,
+        pointsRedeemed: pointsRedeemed ? Number(pointsRedeemed) : null
       };
 
       const data = await apiCall(`${BASE_URL}/add`, {
@@ -885,6 +916,45 @@
 
       showStatus("Removed from wishlist successfully. Result opened in new tab.", "success");
       openResultTab("Remove From Wishlist", data);
+    }
+
+    async function viewLoyalty() {
+      const phno = document.getElementById("loyaltyViewPhno").value;
+      if (!phno) return showStatus("Please enter customer phone number.", "error");
+
+      const [balance, history] = await Promise.all([
+        apiCall(`http://localhost:8083/loyalty/byphno?phno=${encodeURIComponent(phno)}`),
+        apiCall(`http://localhost:8083/loyalty/history?phno=${encodeURIComponent(phno)}`)
+      ]);
+
+      showStatus("Loyalty points loaded. Result opened in new tab.", "success");
+      openResultTab("Loyalty Points", [balance, ...history]);
+    }
+
+    async function adjustLoyalty() {
+      const phno = document.getElementById("loyaltyAdjustPhno").value;
+      const points = document.getElementById("loyaltyAdjustPoints").value;
+      const reason = document.getElementById("loyaltyAdjustReason").value.trim();
+      if (!phno || !points || !reason) return showStatus("Please enter phone number, points and a reason.", "error");
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`http://localhost:8083/loyalty/adjust`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Service-Key": serviceKey
+        },
+        body: JSON.stringify({
+          customerPhno: Number(phno),
+          points: Number(points),
+          reason
+        })
+      });
+
+      showStatus("Loyalty points adjusted successfully. Result opened in new tab.", "success");
+      openResultTab("Adjust Loyalty Points", data);
     }
 
     async function addCoupon() {

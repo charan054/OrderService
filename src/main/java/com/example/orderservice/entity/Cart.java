@@ -15,6 +15,7 @@ import java.util.List;
         "orderItems",
         "couponCode",
         "discountAmount",
+        "pointsRedeemed",
         "totalPrice",
         "shippingAddressId",
         "status"
@@ -33,6 +34,10 @@ public class Cart {
     // this field after the fact has no effect on anything.
     private String couponCode;
     private double discountAmount;
+    // Set by the caller at checkout (optional); order() validates it against the customer's LoyaltyAccount
+    // balance and turns it into an additional discount (1 point = ₹1) on top of any coupon, before charging.
+    // Kept on the saved order as a record of how many points were applied, same role couponCode plays.
+    private Integer pointsRedeemed;
     private double totalPrice;
     // Set by the caller at checkout (optional); order() validates it belongs to the same customerPhno before
     // saving it as a record of which saved address the order shipped to. Purely informational once saved - like
