@@ -166,6 +166,64 @@
         .qty-row { display: flex; gap: 8px; margin-bottom: 10px; }
         .qty-row input { margin-bottom: 0; text-align: center; }
 
+        .product-card { position: relative; }
+
+        .wishlist-btn {
+          position: absolute;
+          top: 8px;
+          right: 8px;
+          width: 32px;
+          height: 32px;
+          border-radius: 50%;
+          background: rgba(255, 255, 255, 0.9);
+          color: var(--muted);
+          font-size: 16px;
+          line-height: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 0;
+        }
+
+        .wishlist-btn.active { color: var(--red); }
+
+        .search-row { display: flex; gap: 10px; margin-bottom: 14px; }
+        .search-row input { margin-bottom: 0; flex: 2; }
+        .search-row select { margin-bottom: 0; flex: 1; }
+
+        .grid-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+        .grid-tabs button {
+          width: auto;
+          background: none;
+          color: var(--muted);
+          border-bottom: 2px solid transparent;
+          border-radius: 0;
+          padding: 6px 4px;
+        }
+        .grid-tabs button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 800; }
+
+        .price-drop-badge {
+          display: inline-block;
+          background: #dcfce7;
+          color: #15803d;
+          font-size: 11px;
+          font-weight: 700;
+          padding: 2px 8px;
+          border-radius: 999px;
+          margin-bottom: 6px;
+        }
+
+        .rating-row {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 12px;
+          color: var(--muted);
+          margin-bottom: 6px;
+        }
+
+        .rating-row .stars { color: #f59e0b; letter-spacing: 1px; }
+
         .panel {
           background: white;
           border: 1px solid var(--border);
@@ -252,11 +310,33 @@
         <input type="tel" id="loginPhno" placeholder="10-digit phone number" />
         <div id="loginError" class="error-text hidden"></div>
         <button onclick="login()">Continue</button>
+        <button class="secondary" style="margin-top:10px;" onclick="toggleTrackOrder()">Track an order instead</button>
+    </section>
+
+    <section id="trackOrderSection" class="center-card hidden">
+        <h2>Track an order</h2>
+        <p>No login needed - enter the phone number the order was placed with and its order ID.</p>
+        <input type="tel" id="trackPhno" placeholder="10-digit phone number" />
+        <input type="number" id="trackOrderId" placeholder="Order ID" />
+        <div id="trackOrderError" class="error-text hidden"></div>
+        <button onclick="lookupOrder()">Track order</button>
+        <button class="secondary" style="margin-top:10px;" onclick="toggleTrackOrder()">Back to login</button>
+        <div id="trackOrderResult"></div>
     </section>
 
     <section id="shopSection" class="hidden">
         <div class="layout">
             <div>
+                <div class="search-row">
+                    <input type="text" id="searchName" placeholder="Search products" oninput="onSearchChange()" />
+                    <select id="searchCategory" onchange="onSearchChange()">
+                        <option value="">All categories</option>
+                    </select>
+                </div>
+                <div class="grid-tabs">
+                    <button class="active" id="tabAll" onclick="showTab('all')">All products</button>
+                    <button id="tabWishlist" onclick="showTab('wishlist')">Wishlist (<span id="wishlistCount">0</span>)</button>
+                </div>
                 <div id="productGrid" class="product-grid"></div>
             </div>
 
@@ -294,6 +374,12 @@
     let customerPhno = null;
     let products = [];
     let cart = []; // {productId, name, price, quantity, stock}
+    let wishlistProductIds = new Set();
+    let priceDropsByProductId = new Map();
+    let activeTab = "all";
+    let allCategories = [];
+    let searchDebounceTimer = null;
+    let ratingsByProductId = new Map();
 
     function showAccountInfo() {
       document.getElementById("accountInfo").innerHTML = customerPhno
@@ -324,18 +410,132 @@
       enterShop();
     }
 
+    function toggleTrackOrder() {
+      document.getElementById("loginSection").classList.toggle("hidden");
+      document.getElementById("trackOrderSection").classList.toggle("hidden");
+      document.getElementById("trackOrderError").classList.add("hidden");
+      document.getElementById("trackOrderResult").innerHTML = "";
+    }
+
+    async function lookupOrder() {
+      const phno = document.getElementById("trackPhno").value.trim();
+      const orderId = document.getElementById("trackOrderId").value.trim();
+      const errorBox = document.getElementById("trackOrderError");
+      const resultBox = document.getElementById("trackOrderResult");
+      resultBox.innerHTML = "";
+
+      if (!/^[6-9][0-9]{9}$/.test(phno) || !orderId) {
+        errorBox.textContent = "Enter a valid phone number and an order ID.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+      errorBox.classList.add("hidden");
+
+      const ordersResponse = await fetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(phno)}`);
+      const orders = ordersResponse.ok ? await ordersResponse.json() : [];
+      const order = orders.find(o => String(o.orderId) === String(orderId));
+
+      if (!order) {
+        errorBox.textContent = "No order with that ID was found for this phone number.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      const trackingResponse = await fetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/tracking`);
+      const timeline = trackingResponse.ok ? await trackingResponse.json() : [];
+
+      resultBox.innerHTML = `
+        <div class="cart-line"><span>Status</span><span>${escapeHtml(order.status)}</span></div>
+        <div class="cart-line"><span>Total</span><span>₹${order.totalPrice.toFixed(2)}</span></div>
+        <div class="cart-line"><span>Payment</span><span>${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span></div>
+        ${timeline.map(event => `<div class="cart-line"><span>${escapeHtml(event.status)}</span><span>${new Date(event.timestamp).toLocaleString()}</span></div>`).join("")}
+      `;
+    }
+
     function enterShop() {
       document.getElementById("loginSection").classList.add("hidden");
       document.getElementById("shopSection").classList.remove("hidden");
       document.getElementById("payerPhno").value = customerPhno;
       showAccountInfo();
       loadProducts();
+      loadWishlist();
     }
 
     async function loadProducts() {
-      const response = await fetch(`${BASE_URL}/cart/display`);
+      const name = document.getElementById("searchName").value.trim();
+      const category = document.getElementById("searchCategory").value;
+      const query = new URLSearchParams();
+      if (name) query.set("name", name);
+      if (category) query.set("category", category);
+
+      const response = await fetch(`${BASE_URL}/cart/search?${query.toString()}`);
       products = response.ok ? await response.json() : [];
       renderProducts();
+
+      if (!name && !category) {
+        refreshCategoryOptions();
+      }
+      loadRatings();
+    }
+
+    async function loadRatings() {
+      if (!products.length) return;
+      const idsQuery = products.map(p => `productIds=${p.productId}`).join("&");
+      const response = await fetch(`${BASE_URL}/cart/ratings?${idsQuery}`);
+      const ratings = response.ok ? await response.json() : [];
+      ratingsByProductId = new Map(ratings.map(r => [r.productId, r]));
+      renderProducts();
+    }
+
+    function starsFor(averageRating) {
+      const rounded = Math.round(averageRating);
+      return "&#9733;".repeat(rounded) + "&#9734;".repeat(5 - rounded);
+    }
+
+    function refreshCategoryOptions() {
+      allCategories = [...new Set(products.map(p => p.productCategory).filter(Boolean))].sort();
+      const select = document.getElementById("searchCategory");
+      const current = select.value;
+      select.innerHTML = `<option value="">All categories</option>` +
+        allCategories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+      select.value = current;
+    }
+
+    function onSearchChange() {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(loadProducts, 250);
+    }
+
+    async function loadWishlist() {
+      const [wishlistResponse, priceDropsResponse] = await Promise.all([
+        fetch(`${BASE_URL}/wishlist/byphno?phno=${encodeURIComponent(customerPhno)}`),
+        fetch(`${BASE_URL}/wishlist/pricedrops?phno=${encodeURIComponent(customerPhno)}`)
+      ]);
+      const wishlist = wishlistResponse.ok ? await wishlistResponse.json() : [];
+      const priceDrops = priceDropsResponse.ok ? await priceDropsResponse.json() : [];
+
+      wishlistProductIds = new Set(wishlist.map(item => item.productId));
+      priceDropsByProductId = new Map(priceDrops.map(drop => [drop.productId, drop]));
+      document.getElementById("wishlistCount").textContent = wishlistProductIds.size;
+      renderProducts();
+    }
+
+    function showTab(tab) {
+      activeTab = tab;
+      document.getElementById("tabAll").classList.toggle("active", tab === "all");
+      document.getElementById("tabWishlist").classList.toggle("active", tab === "wishlist");
+      renderProducts();
+    }
+
+    async function toggleWishlist(productId) {
+      const isWishlisted = wishlistProductIds.has(productId);
+      const query = `phno=${encodeURIComponent(customerPhno)}&productId=${encodeURIComponent(productId)}`;
+      if (isWishlisted) {
+        await fetch(`${BASE_URL}/wishlist/self/remove?${query}`, { method: "DELETE" });
+      } else {
+        await fetch(`${BASE_URL}/wishlist/self/add?${query}`, { method: "POST" });
+      }
+      await loadWishlist();
     }
 
     function escapeHtml(value) {
@@ -346,12 +546,25 @@
 
     function renderProducts() {
       const grid = document.getElementById("productGrid");
-      if (!products.length) {
-        grid.innerHTML = `<p style="color:var(--muted);">No products available right now.</p>`;
+      const visibleProducts = activeTab === "wishlist"
+        ? products.filter(p => wishlistProductIds.has(p.productId))
+        : products;
+
+      if (!visibleProducts.length) {
+        grid.innerHTML = activeTab === "wishlist"
+          ? `<p style="color:var(--muted);">Nothing wishlisted yet - tap the heart on a product to save it here.</p>`
+          : `<p style="color:var(--muted);">No products available right now.</p>`;
         return;
       }
-      grid.innerHTML = products.map(p => `
+
+      grid.innerHTML = visibleProducts.map(p => {
+        const isWishlisted = wishlistProductIds.has(p.productId);
+        const priceDrop = priceDropsByProductId.get(p.productId);
+        const rating = ratingsByProductId.get(p.productId);
+        return `
         <div class="product-card">
+          <button class="wishlist-btn ${isWishlisted ? "active" : ""}" onclick="toggleWishlist(${p.productId})"
+                  aria-label="${isWishlisted ? "Remove from wishlist" : "Add to wishlist"}">${isWishlisted ? "&#9829;" : "&#9825;"}</button>
           <div class="product-image">
             ${p.productImageUrl
               ? `<img src="${escapeHtml(p.productImageUrl)}" alt="${escapeHtml(p.productName)}" onerror="this.parentElement.textContent='No image'" />`
@@ -360,6 +573,10 @@
           <div class="product-body">
             <h3>${escapeHtml(p.productName)}</h3>
             <div class="meta">${escapeHtml(p.productCategory)} &middot; ${p.productStock > 0 ? p.productStock + " in stock" : "out of stock"}</div>
+            ${rating && rating.reviewCount > 0
+              ? `<div class="rating-row"><span class="stars">${starsFor(rating.averageRating)}</span> (${rating.reviewCount})</div>`
+              : `<div class="rating-row">No reviews yet</div>`}
+            ${priceDrop ? `<div class="price-drop-badge">Price dropped ₹${priceDrop.priceDrop.toFixed(2)}</div>` : ""}
             <div class="price-row"><span class="price">₹${p.productPrice}</span></div>
             <div class="qty-row">
               <input type="number" min="1" value="1" id="qty_${p.productId}" ${p.productStock <= 0 ? "disabled" : ""} />
@@ -367,7 +584,8 @@
             </div>
           </div>
         </div>
-      `).join("");
+      `;
+      }).join("");
     }
 
     function addToCart(productId) {

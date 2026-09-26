@@ -9,6 +9,8 @@ import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
@@ -252,6 +254,7 @@ class OrderServiceTest {
         assertEquals(42L, result.getOrderId());
         assertEquals(OrderStatus.PLACED, result.getStatus());
         assertEquals(100000L, result.getPaymentTransactionId());
+        assertTrue(result.isPaid());
         for (OrderItem oi : result.getOrderItems()) {
             assertEquals(42L, oi.getOrderId());
         }
@@ -281,6 +284,7 @@ class OrderServiceTest {
 
         assertEquals(PaymentMethod.CASH, result.getPaymentMethod());
         assertNull(result.getPaymentTransactionId());
+        assertFalse(result.isPaid());
         assertEquals(500.0, result.getTotalPrice());
         verifyNoInteractions(phonepeClient);
         verify(orderKafkaProducer).sendMessage(contains("Order placed successfully"));
@@ -1139,6 +1143,52 @@ class OrderServiceTest {
         assertEquals(62, captor.getValue().getPoints());
     }
 
+    // ---------- markPaid() ----------
+
+    @Test
+    void markPaidThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.empty());
+        assertThrows(OrderNotFoundException.class, () -> service.markPaid(42L));
+    }
+
+    @Test
+    void markPaidThrowsForAPhonepeOrder() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.PHONEPE);
+        cart.setPaid(true);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.markPaid(42L));
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void markPaidThrowsWhenAlreadyPaid() {
+        Cart cart = placedOrder(42L, 0, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setPaymentTransactionId(null);
+        cart.setPaid(true);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.markPaid(42L));
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void markPaidMarksAnUnpaidCashOrderAsPaid() {
+        Cart cart = placedOrder(42L, 0, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setPaymentTransactionId(null);
+        cart.setPaid(false);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.markPaid(42L);
+
+        assertTrue(result.isPaid());
+        verify(orderKafkaProducer).sendMessage(contains("Order marked paid"));
+    }
+
     // ---------- getTracking() ----------
 
     @Test
@@ -1421,6 +1471,43 @@ class OrderServiceTest {
     void getProductsDelegatesToTheProductClient() {
         when(productClient.findAll()).thenReturn(List.of(product(1, 9.99, 10)));
         assertEquals(1, service.getProducts().size());
+    }
+
+    // ---------- searchProducts ----------
+
+    @Test
+    void searchProductsDelegatesToTheProductClient() {
+        when(productClient.search("mug", "home", 200))
+                .thenReturn(new ProductSearchResult(List.of(product(1, 9.99, 10))));
+
+        List<Product> result = service.searchProducts("mug", "home");
+
+        assertEquals(1, result.size());
+    }
+
+    // Blank/empty search fields are normalized to null before reaching ProductService, so an empty text box
+    // means "no filter" rather than a literal empty-string match.
+    @Test
+    void searchProductsTreatsBlankFiltersAsNoFilter() {
+        when(productClient.search(null, null, 200))
+                .thenReturn(new ProductSearchResult(List.of(product(1, 9.99, 10))));
+
+        List<Product> result = service.searchProducts("  ", "");
+
+        assertEquals(1, result.size());
+    }
+
+    // ---------- getRatingSummaries ----------
+
+    @Test
+    void getRatingSummariesSkipsAProductWhoseLookupFails() {
+        when(productClient.getRatingSummary(1)).thenReturn(new ProductRatingSummary(1, 4.5, 10));
+        when(productClient.getRatingSummary(2)).thenThrow(declinedBy("rating-summary", 404, "Product not found"));
+
+        List<ProductRatingSummary> result = service.getRatingSummaries(List.of(1, 2));
+
+        assertEquals(1, result.size());
+        assertEquals(4.5, result.get(0).averageRating());
     }
 
     @Test

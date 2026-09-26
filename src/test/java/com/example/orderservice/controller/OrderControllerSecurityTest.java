@@ -4,6 +4,8 @@ import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.kafka.OrderKafkaProducer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -79,6 +81,18 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void searchIsPublic() throws Exception {
+        when(productClient.search(any(), any(), anyInt())).thenReturn(new ProductSearchResult(List.of()));
+        mockMvc.perform(get("/cart/search").param("name", "mug")).andExpect(status().isOk());
+    }
+
+    @Test
+    void ratingsIsPublic() throws Exception {
+        when(productClient.getRatingSummary(1)).thenReturn(new ProductRatingSummary(1, 4.5, 3));
+        mockMvc.perform(get("/cart/ratings").param("productIds", "1")).andExpect(status().isOk());
+    }
+
+    @Test
     void staticDashboardIsPublic() throws Exception {
         mockMvc.perform(get("/cart.html")).andExpect(status().isOk());
     }
@@ -121,6 +135,26 @@ class OrderControllerSecurityTest {
     void removeFromWishlistWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(delete("/wishlist/remove").param("phno", "9876543210").param("productId", "1"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    // The storefront's own wishlist add/remove - public, no X-Service-Key, same self-service trust level as
+    // GET /wishlist/byphno (see SecurityConfig).
+    @Test
+    void addToOwnWishlistWithoutKeySucceeds() throws Exception {
+        Product widget = new Product();
+        widget.setProductId(1);
+        widget.setProductPrice(9.99);
+        widget.setProductStock(10);
+        when(productClient.getProductById(1)).thenReturn(widget);
+
+        mockMvc.perform(post("/wishlist/self/add").param("phno", "9876543210").param("productId", "1"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void removeFromOwnWishlistWithoutKeySucceeds() throws Exception {
+        mockMvc.perform(delete("/wishlist/self/remove").param("phno", "9876543210").param("productId", "1"))
+                .andExpect(status().isOk());
     }
 
     @Test
@@ -223,6 +257,17 @@ class OrderControllerSecurityTest {
     @Test
     void deliverOrderOfAnUnknownOrderIdReturns404() throws Exception {
         mockMvc.perform(post("/cart/42/deliver").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void markPaidWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/42/markpaid")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void markPaidOfAnUnknownOrderIdReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/markpaid").header("X-Service-Key", VALID_KEY))
                 .andExpect(status().isNotFound());
     }
 

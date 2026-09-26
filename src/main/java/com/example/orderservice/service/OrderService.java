@@ -9,6 +9,7 @@ import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
@@ -145,6 +146,9 @@ public class OrderService {
         cart.setDiscountAmount(discount);
         cart.setStatus(OrderStatus.PLACED);
         cart.setPaymentTransactionId(payment != null ? payment.transactionId() : null);
+        // A PHONEPE order is paid the instant its charge above succeeds; a CASH order isn't paid yet - see
+        // markPaid().
+        cart.setPaid(payment != null);
         Cart saved=orderRepository.save(cart);
         for(OrderItem orderItem : saved.getOrderItems())
         {
@@ -537,6 +541,28 @@ public class OrderService {
         return result;
     }
 
+    // Records that a CASH order's money has actually been collected (e.g. the courier handed it to the customer
+    // at the door) - deliberately a separate, explicit ops action rather than something deliver() sets
+    // automatically, since a delivery and a successful cash collection aren't the same event (a courier can
+    // deliver without collecting, or collect after a short delay) - this system has no scheduler or payment
+    // provider to reconcile that gap automatically, so an admin/ops caller records it once it's actually true. A
+    // PHONEPE order is already paid the moment its charge succeeds (see order()), so marking it "paid" again
+    // makes no sense and is rejected instead of silently accepted.
+    public Cart markPaid(long orderId) {
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
+            throw new ProductException("Only a cash-on-delivery order can be marked paid this way");
+        }
+        if (cart.isPaid()) {
+            throw new ProductException("This order is already marked paid");
+        }
+        cart.setPaid(true);
+        Cart result = orderRepository.save(cart);
+        sendNotification("Order marked paid (cash collected). OrderId: " + result.getOrderId());
+        return result;
+    }
+
     // Appends one row to the order's tracking timeline. Called only after the Cart's own status has already been
     // saved, same ordering as sendNotification() below - a broken write here must never look like the status
     // change itself failed, so it's logged and swallowed rather than propagated.
@@ -658,6 +684,35 @@ public class OrderService {
     public List<Product> getProducts()
     {
         return productClient.findAll();
+    }
+
+    // MAX_SEARCH_RESULTS caps the single page requested from ProductService's own paginated /product/search -
+    // this storefront's catalog is small enough that a single generously-sized page is simpler than exposing
+    // pagination end-to-end through OrderService too.
+    private static final int MAX_SEARCH_RESULTS = 200;
+
+    public List<Product> searchProducts(String name, String category) {
+        return productClient.search(blankToNull(name), blankToNull(category), MAX_SEARCH_RESULTS).content();
+    }
+
+    private static String blankToNull(String value) {
+        return (value == null || value.isBlank()) ? null : value;
+    }
+
+    // One rating-summary lookup per id, same N-calls-in-a-loop shape getFrequentlyBoughtTogether() already uses
+    // for this catalog's scale - a product whose lookup fails (removed from the catalog, ProductService briefly
+    // unreachable) is skipped rather than failing the whole batch, same reasoning as getPriceDropAlerts().
+    public List<ProductRatingSummary> getRatingSummaries(List<Integer> productIds) {
+        return productIds.stream()
+                .map(id -> {
+                    try {
+                        return productClient.getRatingSummary(id);
+                    } catch (FeignException e) {
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     private static final int DEFAULT_FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 5;

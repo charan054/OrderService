@@ -490,6 +490,19 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">💵</div>
+                <div class="title-wrap">
+                    <h2>Mark Paid</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Record that a cash-on-delivery order's payment was actually collected. Requires the Service Key above.</p>
+            <input type="number" id="markPaidOrderId" placeholder="Order ID" />
+            <button class="green" onclick="markPaid()">Mark Paid</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">🧭</div>
                 <div class="title-wrap">
                     <h2>Track Order</h2>
@@ -1153,6 +1166,22 @@
 
       showStatus("Order delivered successfully. Result opened in new tab.", "success");
       openResultTab("Deliver Order", data);
+    }
+
+    async function markPaid() {
+      const orderId = document.getElementById("markPaidOrderId").value;
+      if (!orderId) return showStatus("Please enter an order ID.", "error");
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`${BASE_URL}/${encodeURIComponent(orderId)}/markpaid`, {
+        method: "POST",
+        headers: { "X-Service-Key": serviceKey }
+      });
+
+      showStatus("Order marked paid successfully. Result opened in new tab.", "success");
+      openResultTab("Mark Paid", data);
     }
 
     async function trackOrder() {

@@ -33,13 +33,18 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings").permitAll()
                         // The customer-facing storefront's own checkout - see OrderController.checkout for why
                         // this can't require the same X-Service-Key /cart/add does.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout").permitAll()
                         // Same self-service trust level as /cart/byphno above - looking up your own wishlist (and
                         // its price-drop alerts) by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/wishlist/byphno", "/wishlist/pricedrops").permitAll()
+                        // The storefront's own add/remove of a customer's own wishlist entries - see
+                        // WishlistController.addToOwnWishlist/removeFromOwnWishlist for why these don't need the
+                        // same X-Service-Key /wishlist/add and /remove do.
+                        .requestMatchers(HttpMethod.POST, "/wishlist/self/add").permitAll()
+                        .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove").permitAll()
                         // The tracking timeline is just a per-transition history of the same status field
                         // /cart/byphno already returns for every order - no additional exposure.
                         .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()

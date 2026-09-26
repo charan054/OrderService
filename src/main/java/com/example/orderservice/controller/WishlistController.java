@@ -9,9 +9,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 // GET /wishlist/byphno and /wishlist/pricedrops are public (see SecurityConfig), the same self-service trust
-// level as GET /cart/byphno - looking up your own list/alerts by your own phone number. Add/remove are
+// level as GET /cart/byphno - looking up your own list/alerts by your own phone number. /add and /remove are
 // mutations and stay under the default "anyRequest().authenticated()" rule (X-Service-Key required), consistent
-// with /cart/add and /cart/deleteproduct.
+// with /cart/add and /cart/deleteproduct - these are the admin dashboard's own calls.
 @RestController
 @RequestMapping("/wishlist")
 public class WishlistController {
@@ -20,6 +20,16 @@ public class WishlistController {
 
     @PostMapping("/add")
     public Wishlist addToWishlist(@RequestParam long phno, @RequestParam int productId) {
+        return orderService.addToWishlist(phno, productId);
+    }
+
+    // Same self-service trust level as GET /wishlist/byphno - a customer adding to their OWN wishlist by their
+    // OWN phone number, no internal X-Service-Key involved (see OrderController.checkout for the same reasoning
+    // applied to placing an order). Not money-moving, so the risk of this being public is limited to someone
+    // adding/removing entries on a phone number they don't own - the same limitation /wishlist/byphno itself
+    // already has for reading one.
+    @PostMapping("/self/add")
+    public Wishlist addToOwnWishlist(@RequestParam long phno, @RequestParam int productId) {
         return orderService.addToWishlist(phno, productId);
     }
 
@@ -37,6 +47,12 @@ public class WishlistController {
 
     @DeleteMapping("/remove")
     public void removeFromWishlist(@RequestParam long phno, @RequestParam int productId) {
+        orderService.removeFromWishlist(phno, productId);
+    }
+
+    // Same reasoning as /self/add above.
+    @DeleteMapping("/self/remove")
+    public void removeFromOwnWishlist(@RequestParam long phno, @RequestParam int productId) {
         orderService.removeFromWishlist(phno, productId);
     }
 }
