@@ -312,7 +312,7 @@
                     <span class="method">REQUIRED</span>
                 </div>
             </div>
-            <p>Place Order, All Orders and Delete Product require the same <code>X-Service-Key</code> value as this service's <code>.env</code>. Place Order also requires the buyer's own PhonepayService session token, sent exactly as PhonepayService expects it (e.g. <code>Bearer &lt;token&gt;</code>) - that is who gets charged. Both are remembered in this browser only.</p>
+            <p>Place Order, All Orders, Ship Order, Deliver Order and Delete Product require the same <code>X-Service-Key</code> value as this service's <code>.env</code>. Place Order also requires the buyer's own PhonepayService session token, sent exactly as PhonepayService expects it (e.g. <code>Bearer &lt;token&gt;</code>) - that is who gets charged. Both are remembered in this browser only.</p>
             <input type="text" id="serviceKey" placeholder="X-Service-Key value" />
             <input type="text" id="buyerAuthorization" placeholder="Authorization header value, e.g. Bearer &lt;token&gt;" />
         </div>
@@ -391,6 +391,32 @@
             <p>Search cart orders using customer phone number.</p>
             <input type="number" id="searchPhno" placeholder="Enter customer phone number" />
             <button onclick="getOrdersByPhno()">Search Orders</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">🚚</div>
+                <div class="title-wrap">
+                    <h2>Ship Order</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Move a placed order to SHIPPED. Requires the Service Key above.</p>
+            <input type="number" id="shipOrderId" placeholder="Order ID" />
+            <button class="blue" onclick="shipOrder()">Ship Order</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">📬</div>
+                <div class="title-wrap">
+                    <h2>Deliver Order</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Move a shipped order to DELIVERED. Requires the Service Key above.</p>
+            <input type="number" id="deliverOrderId" placeholder="Order ID" />
+            <button class="green" onclick="deliverOrder()">Deliver Order</button>
         </div>
 
         <div class="card">
@@ -662,6 +688,38 @@
 
       showStatus("Product deleted from cart successfully. Result opened in new tab.", "success");
       openResultTab("Delete Product From Cart", data);
+    }
+
+    async function shipOrder() {
+      const orderId = document.getElementById("shipOrderId").value;
+      if (!orderId) return showStatus("Please enter an order ID.", "error");
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`${BASE_URL}/${encodeURIComponent(orderId)}/ship`, {
+        method: "POST",
+        headers: { "X-Service-Key": serviceKey }
+      });
+
+      showStatus("Order shipped successfully. Result opened in new tab.", "success");
+      openResultTab("Ship Order", data);
+    }
+
+    async function deliverOrder() {
+      const orderId = document.getElementById("deliverOrderId").value;
+      if (!orderId) return showStatus("Please enter an order ID.", "error");
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`${BASE_URL}/${encodeURIComponent(orderId)}/deliver`, {
+        method: "POST",
+        headers: { "X-Service-Key": serviceKey }
+      });
+
+      showStatus("Order delivered successfully. Result opened in new tab.", "success");
+      openResultTab("Deliver Order", data);
     }
 
     function flattenRows(data) {

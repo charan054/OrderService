@@ -97,6 +97,9 @@ public class OrderService {
         if (cart.getStatus() == OrderStatus.CANCELLED) {
             throw new ProductException("This order is already cancelled");
         }
+        if (cart.getStatus() != OrderStatus.PLACED) {
+            throw new ProductException("Only a placed order can be cancelled");
+        }
         if (cart.getPaymentTransactionId() == null) {
             throw new ProductException("This order cannot be cancelled");
         }
@@ -111,6 +114,33 @@ public class OrderService {
         sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Refunded: " + result.getTotalPrice());
+        return result;
+    }
+
+    // Ship/deliver form a strict one-way lifecycle on top of PLACED/CANCELLED: PLACED -> SHIPPED -> DELIVERED.
+    // Neither step touches stock or payment - those were already settled at order() time - so there's nothing
+    // to roll back if a later step never happens.
+    public Cart ship(long orderId) {
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() != OrderStatus.PLACED) {
+            throw new ProductException("Only a placed order can be shipped");
+        }
+        cart.setStatus(OrderStatus.SHIPPED);
+        Cart result = orderRepository.save(cart);
+        sendNotification("Order shipped. OrderId: " + result.getOrderId());
+        return result;
+    }
+
+    public Cart deliver(long orderId) {
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() != OrderStatus.SHIPPED) {
+            throw new ProductException("Only a shipped order can be delivered");
+        }
+        cart.setStatus(OrderStatus.DELIVERED);
+        Cart result = orderRepository.save(cart);
+        sendNotification("Order delivered. OrderId: " + result.getOrderId());
         return result;
     }
 
