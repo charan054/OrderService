@@ -11,6 +11,7 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.CouponRedemption;
 import com.example.orderservice.entity.LoyaltyAccount;
+import com.example.orderservice.entity.LoyaltyTier;
 import com.example.orderservice.entity.LoyaltyTransaction;
 import com.example.orderservice.entity.LoyaltyTransactionType;
 import com.example.orderservice.entity.NotificationLog;
@@ -1010,6 +1011,29 @@ class OrderServiceTest {
         verifyNoInteractions(loyaltyAccountRepository, loyaltyTransactionRepository);
     }
 
+    // The tier multiplier applied is based on lifetime points BEFORE this order - a SILVER customer (>=500
+    // lifetime points already) earns at 1.25x on this delivery.
+    @Test
+    void deliverAppliesTheCustomersTierMultiplierWhenEarningPoints() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setStatus(OrderStatus.SHIPPED);
+        cart.setTotalPrice(500.0);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 50);
+        account.setLifetimePointsEarned(500);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        service.deliver(42L);
+
+        // base = 500/10 = 50, SILVER multiplier 1.25 -> 62
+        assertEquals(50 + 62, account.getPointsBalance());
+        assertEquals(500 + 62, account.getLifetimePointsEarned());
+        ArgumentCaptor<LoyaltyTransaction> captor = ArgumentCaptor.forClass(LoyaltyTransaction.class);
+        verify(loyaltyTransactionRepository).save(captor.capture());
+        assertEquals(62, captor.getValue().getPoints());
+    }
+
     // ---------- getTracking() ----------
 
     @Test
@@ -1161,16 +1185,26 @@ class OrderServiceTest {
         assertEquals(OrderStatus.RETURNED, captor.getValue().getStatus());
     }
 
-    // A return reverses the points earned at delivery time - otherwise a refunded order would still leave the
-    // customer with points earned on money they no longer paid.
+    private LoyaltyTransaction earnedTransaction(long orderId, int points) {
+        LoyaltyTransaction tx = new LoyaltyTransaction();
+        tx.setOrderId(orderId);
+        tx.setPoints(points);
+        tx.setType(LoyaltyTransactionType.EARNED);
+        return tx;
+    }
+
+    // A return reverses the EXACT points earned at delivery time (looked up from that order's own EARNED
+    // transaction) - otherwise a refunded order would still leave the customer with points earned on money they
+    // no longer paid.
     @Test
     void returnOrderClawsBackThePointsEarnedAtDelivery() {
         Cart cart = deliveredOrder(42L, 100000L, item(1, 1));
-        cart.setTotalPrice(455.0);
         when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
         when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
         when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
         when(orderRepository.save(cart)).thenReturn(cart);
+        when(loyaltyTransactionRepository.findByOrderIdAndType(42L, LoyaltyTransactionType.EARNED))
+                .thenReturn(Optional.of(earnedTransaction(42L, 45)));
         LoyaltyAccount account = loyaltyAccount(CUSTOMER, 100);
         when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
 
@@ -1189,11 +1223,12 @@ class OrderServiceTest {
     @Test
     void returnOrderClawsBackNoMorePointsThanTheCurrentBalanceHolds() {
         Cart cart = deliveredOrder(42L, 100000L, item(1, 1));
-        cart.setTotalPrice(455.0);
         when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
         when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
         when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
         when(orderRepository.save(cart)).thenReturn(cart);
+        when(loyaltyTransactionRepository.findByOrderIdAndType(42L, LoyaltyTransactionType.EARNED))
+                .thenReturn(Optional.of(earnedTransaction(42L, 45)));
         LoyaltyAccount account = loyaltyAccount(CUSTOMER, 10);
         when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
 
@@ -1206,17 +1241,19 @@ class OrderServiceTest {
     }
 
     @Test
-    void returnOrderTouchesNoLoyaltyAccountWhenTheOrderEarnedNoPoints() {
+    void returnOrderTouchesNoLoyaltyAccountWhenTheOrderHasNoEarnedTransaction() {
         Cart cart = deliveredOrder(42L, 100000L, item(1, 1));
-        cart.setTotalPrice(5.0);
         when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
         when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
         when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
         when(orderRepository.save(cart)).thenReturn(cart);
+        when(loyaltyTransactionRepository.findByOrderIdAndType(42L, LoyaltyTransactionType.EARNED))
+                .thenReturn(Optional.empty());
 
         service.returnOrder(42L, AUTH, null, "damaged");
 
-        verifyNoInteractions(loyaltyAccountRepository, loyaltyTransactionRepository);
+        verifyNoInteractions(loyaltyAccountRepository);
+        verify(loyaltyTransactionRepository, never()).save(any());
     }
 
     @Test
@@ -1455,5 +1492,21 @@ class OrderServiceTest {
         assertEquals(LoyaltyTransactionType.ADJUSTED, captor.getValue().getType());
         assertEquals("goodwill credit", captor.getValue().getReason());
         assertNull(captor.getValue().getOrderId());
+    }
+
+    // A goodwill credit isn't spending, so it must not let someone game their way into a higher tier - only
+    // pointsBalance moves, lifetimePointsEarned (the sole basis for tier) stays put.
+    @Test
+    void adjustLoyaltyPointsDoesNotCountTowardTierProgress() {
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 0);
+        account.setLifetimePointsEarned(100);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+        when(loyaltyAccountRepository.save(account)).thenReturn(account);
+
+        LoyaltyAccount result = service.adjustLoyaltyPoints(CUSTOMER, 1000, "goodwill credit");
+
+        assertEquals(1000, result.getPointsBalance());
+        assertEquals(100, result.getLifetimePointsEarned());
+        assertEquals(LoyaltyTier.BRONZE, result.getTier());
     }
 }
