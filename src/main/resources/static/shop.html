@@ -213,6 +213,17 @@
           margin-bottom: 6px;
         }
 
+        .rating-row {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          font-size: 12px;
+          color: var(--muted);
+          margin-bottom: 6px;
+        }
+
+        .rating-row .stars { color: #f59e0b; letter-spacing: 1px; }
+
         .panel {
           background: white;
           border: 1px solid var(--border);
@@ -356,6 +367,7 @@
     let activeTab = "all";
     let allCategories = [];
     let searchDebounceTimer = null;
+    let ratingsByProductId = new Map();
 
     function showAccountInfo() {
       document.getElementById("accountInfo").innerHTML = customerPhno
@@ -409,6 +421,21 @@
       if (!name && !category) {
         refreshCategoryOptions();
       }
+      loadRatings();
+    }
+
+    async function loadRatings() {
+      if (!products.length) return;
+      const idsQuery = products.map(p => `productIds=${p.productId}`).join("&");
+      const response = await fetch(`${BASE_URL}/cart/ratings?${idsQuery}`);
+      const ratings = response.ok ? await response.json() : [];
+      ratingsByProductId = new Map(ratings.map(r => [r.productId, r]));
+      renderProducts();
+    }
+
+    function starsFor(averageRating) {
+      const rounded = Math.round(averageRating);
+      return "&#9733;".repeat(rounded) + "&#9734;".repeat(5 - rounded);
     }
 
     function refreshCategoryOptions() {
@@ -479,6 +506,7 @@
       grid.innerHTML = visibleProducts.map(p => {
         const isWishlisted = wishlistProductIds.has(p.productId);
         const priceDrop = priceDropsByProductId.get(p.productId);
+        const rating = ratingsByProductId.get(p.productId);
         return `
         <div class="product-card">
           <button class="wishlist-btn ${isWishlisted ? "active" : ""}" onclick="toggleWishlist(${p.productId})"
@@ -491,6 +519,9 @@
           <div class="product-body">
             <h3>${escapeHtml(p.productName)}</h3>
             <div class="meta">${escapeHtml(p.productCategory)} &middot; ${p.productStock > 0 ? p.productStock + " in stock" : "out of stock"}</div>
+            ${rating && rating.reviewCount > 0
+              ? `<div class="rating-row"><span class="stars">${starsFor(rating.averageRating)}</span> (${rating.reviewCount})</div>`
+              : `<div class="rating-row">No reviews yet</div>`}
             ${priceDrop ? `<div class="price-drop-badge">Price dropped ₹${priceDrop.priceDrop.toFixed(2)}</div>` : ""}
             <div class="price-row"><span class="price">₹${p.productPrice}</span></div>
             <div class="qty-row">

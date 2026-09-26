@@ -1,10 +1,12 @@
 package com.example.orderservice.client;
 
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.entity.OrderItem;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -32,5 +34,10 @@ public interface ProductClient {
     // own cross-service customer summary.
     @GetMapping("/product/reviews/count")
     long getReviewCount(@RequestParam long phno);
+
+    // Public on ProductService's side (see its SecurityConfig - matches "/product/*/rating-summary"). Used by
+    // OrderService.getRatingSummaries() to surface star ratings on the storefront's product cards.
+    @GetMapping("/product/{productId}/rating-summary")
+    ProductRatingSummary getRatingSummary(@PathVariable long productId);
 
 }

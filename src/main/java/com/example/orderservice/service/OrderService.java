@@ -9,6 +9,7 @@ import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
@@ -696,6 +697,22 @@ public class OrderService {
 
     private static String blankToNull(String value) {
         return (value == null || value.isBlank()) ? null : value;
+    }
+
+    // One rating-summary lookup per id, same N-calls-in-a-loop shape getFrequentlyBoughtTogether() already uses
+    // for this catalog's scale - a product whose lookup fails (removed from the catalog, ProductService briefly
+    // unreachable) is skipped rather than failing the whole batch, same reasoning as getPriceDropAlerts().
+    public List<ProductRatingSummary> getRatingSummaries(List<Integer> productIds) {
+        return productIds.stream()
+                .map(id -> {
+                    try {
+                        return productClient.getRatingSummary(id);
+                    } catch (FeignException e) {
+                        return null;
+                    }
+                })
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     private static final int DEFAULT_FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 5;

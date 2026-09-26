@@ -33,7 +33,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether", "/cart/search").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings").permitAll()
                         // The customer-facing storefront's own checkout - see OrderController.checkout for why
                         // this can't require the same X-Service-Key /cart/add does.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout").permitAll()

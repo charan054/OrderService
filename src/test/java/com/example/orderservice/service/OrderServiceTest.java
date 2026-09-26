@@ -9,6 +9,7 @@ import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.WishlistPriceAlert;
@@ -1494,6 +1495,19 @@ class OrderServiceTest {
         List<Product> result = service.searchProducts("  ", "");
 
         assertEquals(1, result.size());
+    }
+
+    // ---------- getRatingSummaries ----------
+
+    @Test
+    void getRatingSummariesSkipsAProductWhoseLookupFails() {
+        when(productClient.getRatingSummary(1)).thenReturn(new ProductRatingSummary(1, 4.5, 10));
+        when(productClient.getRatingSummary(2)).thenThrow(declinedBy("rating-summary", 404, "Product not found"));
+
+        List<ProductRatingSummary> result = service.getRatingSummaries(List.of(1, 2));
+
+        assertEquals(1, result.size());
+        assertEquals(4.5, result.get(0).averageRating());
     }
 
     @Test

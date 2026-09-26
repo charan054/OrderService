@@ -4,6 +4,7 @@ import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.kafka.OrderKafkaProducer;
 import org.junit.jupiter.api.Test;
@@ -83,6 +84,12 @@ class OrderControllerSecurityTest {
     void searchIsPublic() throws Exception {
         when(productClient.search(any(), any(), anyInt())).thenReturn(new ProductSearchResult(List.of()));
         mockMvc.perform(get("/cart/search").param("name", "mug")).andExpect(status().isOk());
+    }
+
+    @Test
+    void ratingsIsPublic() throws Exception {
+        when(productClient.getRatingSummary(1)).thenReturn(new ProductRatingSummary(1, 4.5, 3));
+        mockMvc.perform(get("/cart/ratings").param("productIds", "1")).andExpect(status().isOk());
     }
 
     @Test

@@ -2,6 +2,7 @@ package com.example.orderservice.controller;
 
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
@@ -102,6 +103,12 @@ public class OrderController {
     public List<Product> search(@RequestParam(required = false) String name,
                                  @RequestParam(required = false) String category){
         return orderService.searchProducts(name, category);
+    }
+    // Same public catalog-browsing trust level as /cart/display above - star ratings for the storefront's
+    // product cards, proxied to ProductService's own public per-product rating-summary endpoint.
+    @GetMapping("/ratings")
+    public List<ProductRatingSummary> getRatings(@RequestParam List<Integer> productIds){
+        return orderService.getRatingSummaries(productIds);
     }
     // Public, same catalog-browsing trust level as /cart/display - a ranked list, not any one customer's data.
     @GetMapping("/frequentlyboughttogether")
