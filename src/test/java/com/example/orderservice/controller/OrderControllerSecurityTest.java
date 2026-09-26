@@ -155,6 +155,28 @@ class OrderControllerSecurityTest {
                 .andExpect(status().isNotFound());
     }
 
+    private static final String NEW_COUPON = """
+            {"code":"save10","discountPercent":10,"active":true}
+            """;
+
+    @Test
+    void addCouponWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/coupons/add").contentType(MediaType.APPLICATION_JSON).content(NEW_COUPON))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void addCouponWithValidKeySucceeds() throws Exception {
+        mockMvc.perform(post("/coupons/add").contentType(MediaType.APPLICATION_JSON).content(NEW_COUPON)
+                        .header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void listingCouponsWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(get("/coupons/all")).andExpect(status().isUnauthorized());
+    }
+
     @Test
     void deleteProductWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(delete("/cart/deleteproduct").param("phno", "9876543210").param("productId", "1"))

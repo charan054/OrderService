@@ -7,12 +7,14 @@ import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.entity.Cart;
+import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.kafka.OrderKafkaProducer;
+import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
 import feign.FeignException;
@@ -36,6 +38,8 @@ public class OrderService {
     private CartRepository orderRepository;
     @Autowired
     private OrderItemRepository orderItemRepository;
+    @Autowired
+    private CouponRepository couponRepository;
     @Autowired
     ProductClient productClient;
     @Autowired
@@ -68,10 +72,15 @@ public class OrderService {
             }
             price=price+(orderItem.getProductQuantity()*pro.getProductPrice());
         }
+        // Resolved (and normalized onto the cart) BEFORE charging, same reasoning as stock: an invalid/inactive
+        // code must fail before anything - including a payment - has happened.
+        double discount = resolveDiscount(cart, price);
+        double finalPrice = price - discount;
         // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the payment
         // (insufficient funds, expired session, locked account, bank down, ...) nothing here should exist either.
-        PaymentResponse payment = charge(authorization, price, idempotencyKey);
-        cart.setTotalPrice(price);
+        PaymentResponse payment = charge(authorization, finalPrice, idempotencyKey);
+        cart.setTotalPrice(finalPrice);
+        cart.setDiscountAmount(discount);
         cart.setStatus(OrderStatus.PLACED);
         cart.setPaymentTransactionId(payment.transactionId());
         Cart saved=orderRepository.save(cart);
@@ -115,6 +124,40 @@ public class OrderService {
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Refunded: " + result.getTotalPrice());
         return result;
+    }
+
+    // No code, no discount - the common case. A code that doesn't match any Coupon, or matches one that's been
+    // deactivated, must fail loudly rather than silently charging full price (a buyer trusting a "10% off"
+    // banner should never find out only after being charged in full).
+    private double resolveDiscount(Cart cart, double price) {
+        String code = cart.getCouponCode();
+        if (code == null || code.isBlank()) {
+            cart.setCouponCode(null);
+            return 0;
+        }
+        String normalized = code.trim().toUpperCase();
+        Coupon coupon = couponRepository.findById(normalized)
+                .orElseThrow(() -> new ProductException("Invalid coupon code"));
+        if (!coupon.isActive()) {
+            throw new ProductException("Coupon is no longer active");
+        }
+        cart.setCouponCode(normalized);
+        return price * coupon.getDiscountPercent() / 100.0;
+    }
+
+    public Coupon saveCoupon(Coupon coupon) {
+        if (coupon.getCode() == null || coupon.getCode().isBlank()) {
+            throw new ProductException("Coupon code is required");
+        }
+        if (coupon.getDiscountPercent() <= 0 || coupon.getDiscountPercent() > 100) {
+            throw new ProductException("Discount percent must be between 0 and 100");
+        }
+        coupon.setCode(coupon.getCode().trim().toUpperCase());
+        return couponRepository.save(coupon);
+    }
+
+    public List<Coupon> getCoupons() {
+        return couponRepository.findAll();
     }
 
     // Ship/deliver form a strict one-way lifecycle on top of PLACED/CANCELLED: PLACED -> SHIPPED -> DELIVERED.
