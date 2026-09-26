@@ -123,6 +123,26 @@ class OrderControllerSecurityTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // The storefront's own wishlist add/remove - public, no X-Service-Key, same self-service trust level as
+    // GET /wishlist/byphno (see SecurityConfig).
+    @Test
+    void addToOwnWishlistWithoutKeySucceeds() throws Exception {
+        Product widget = new Product();
+        widget.setProductId(1);
+        widget.setProductPrice(9.99);
+        widget.setProductStock(10);
+        when(productClient.getProductById(1)).thenReturn(widget);
+
+        mockMvc.perform(post("/wishlist/self/add").param("phno", "9876543210").param("productId", "1"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void removeFromOwnWishlistWithoutKeySucceeds() throws Exception {
+        mockMvc.perform(delete("/wishlist/self/remove").param("phno", "9876543210").param("productId", "1"))
+                .andExpect(status().isOk());
+    }
+
     @Test
     void addOrderWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(post("/cart/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ORDER))

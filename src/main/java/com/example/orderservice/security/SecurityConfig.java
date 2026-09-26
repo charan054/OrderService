@@ -40,6 +40,11 @@ public class SecurityConfig {
                         // Same self-service trust level as /cart/byphno above - looking up your own wishlist (and
                         // its price-drop alerts) by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/wishlist/byphno", "/wishlist/pricedrops").permitAll()
+                        // The storefront's own add/remove of a customer's own wishlist entries - see
+                        // WishlistController.addToOwnWishlist/removeFromOwnWishlist for why these don't need the
+                        // same X-Service-Key /wishlist/add and /remove do.
+                        .requestMatchers(HttpMethod.POST, "/wishlist/self/add").permitAll()
+                        .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove").permitAll()
                         // The tracking timeline is just a per-transition history of the same status field
                         // /cart/byphno already returns for every order - no additional exposure.
                         .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()
