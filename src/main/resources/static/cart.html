@@ -436,6 +436,19 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">🧭</div>
+                <div class="title-wrap">
+                    <h2>Track Order</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>View an order's full status timeline. Public - no Service Key required.</p>
+            <input type="number" id="trackOrderId" placeholder="Order ID" />
+            <button onclick="trackOrder()">Track Order</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">🗑️</div>
                 <div class="title-wrap">
                     <h2>Delete Product From Cart</h2>
@@ -844,6 +857,16 @@
 
       showStatus("Order delivered successfully. Result opened in new tab.", "success");
       openResultTab("Deliver Order", data);
+    }
+
+    async function trackOrder() {
+      const orderId = document.getElementById("trackOrderId").value;
+      if (!orderId) return showStatus("Please enter an order ID.", "error");
+
+      const data = await apiCall(`${BASE_URL}/${encodeURIComponent(orderId)}/tracking`);
+
+      showStatus("Tracking timeline loaded. Result opened in new tab.", "success");
+      openResultTab("Track Order", data);
     }
 
     function flattenRows(data) {

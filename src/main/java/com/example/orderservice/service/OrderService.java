@@ -10,6 +10,7 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.Wishlist;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
@@ -18,6 +19,7 @@ import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.repository.TrackingEventRepository;
 import com.example.orderservice.repository.WishlistRepository;
 import feign.FeignException;
 import jakarta.transaction.Transactional;
@@ -30,6 +32,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
 import java.util.List;
 
 @Service
@@ -44,6 +47,8 @@ public class OrderService {
     private CouponRepository couponRepository;
     @Autowired
     private WishlistRepository wishlistRepository;
+    @Autowired
+    private TrackingEventRepository trackingEventRepository;
     @Autowired
     ProductClient productClient;
     @Autowired
@@ -89,6 +94,7 @@ public class OrderService {
             productClient.updateProductStock(serviceApiKey, orderItem.getProductId(),-orderItem.getProductQuantity());
         }
         Cart result = orderRepository.save(saved);
+        recordTracking(result.getOrderId(), OrderStatus.PLACED);
         sendNotification("Order placed successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Items: " + result.getOrderItems().size()
@@ -119,6 +125,7 @@ public class OrderService {
         }
         cart.setStatus(OrderStatus.CANCELLED);
         Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
         sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Refunded: " + result.getTotalPrice());
@@ -170,6 +177,7 @@ public class OrderService {
         }
         cart.setStatus(OrderStatus.SHIPPED);
         Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.SHIPPED);
         sendNotification("Order shipped. OrderId: " + result.getOrderId());
         return result;
     }
@@ -182,8 +190,31 @@ public class OrderService {
         }
         cart.setStatus(OrderStatus.DELIVERED);
         Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.DELIVERED);
         sendNotification("Order delivered. OrderId: " + result.getOrderId());
         return result;
+    }
+
+    // Appends one row to the order's tracking timeline. Called only after the Cart's own status has already been
+    // saved, same ordering as sendNotification() below - a broken write here must never look like the status
+    // change itself failed, so it's logged and swallowed rather than propagated.
+    private void recordTracking(long orderId, OrderStatus status) {
+        try {
+            TrackingEvent event = new TrackingEvent();
+            event.setOrderId(orderId);
+            event.setStatus(status);
+            event.setTimestamp(Instant.now());
+            trackingEventRepository.save(event);
+        } catch (RuntimeException e) {
+            log.error("Failed to record tracking event for order {}: {}", orderId, e.getMessage());
+        }
+    }
+
+    public List<TrackingEvent> getTracking(long orderId) {
+        if (!orderRepository.existsById(orderId)) {
+            throw new OrderNotFoundException("Order not found");
+        }
+        return trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId);
     }
 
     // Kafka is told only AFTER the save() above returns - neither order() nor cancel() wraps its DB writes in a

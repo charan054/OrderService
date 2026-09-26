@@ -222,4 +222,9 @@ class OrderControllerSecurityTest {
     void listingEveryCustomersOrdersWithValidKeySucceeds() throws Exception {
         mockMvc.perform(get("/cart/all").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
     }
+
+    @Test
+    void trackingOfAnUnknownOrderIsPublicButReturns404() throws Exception {
+        mockMvc.perform(get("/cart/42/tracking")).andExpect(status().isNotFound());
+    }
 }

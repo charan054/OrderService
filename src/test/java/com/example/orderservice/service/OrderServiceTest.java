@@ -10,6 +10,7 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.Wishlist;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
@@ -18,6 +19,7 @@ import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.CouponRepository;
 import com.example.orderservice.repository.OrderItemRepository;
+import com.example.orderservice.repository.TrackingEventRepository;
 import com.example.orderservice.repository.WishlistRepository;
 import feign.FeignException;
 import feign.Request;
@@ -69,6 +71,8 @@ class OrderServiceTest {
     private CouponRepository couponRepository;
     @Mock
     private WishlistRepository wishlistRepository;
+    @Mock
+    private TrackingEventRepository trackingEventRepository;
     @Mock
     private ProductClient productClient;
     @Mock
@@ -217,6 +221,10 @@ class OrderServiceTest {
         verify(productClient).updateProductStock(SERVICE_KEY, 2, -1);
         verify(orderRepository, times(2)).save(any());
         verify(orderKafkaProducer).sendMessage(contains("Order placed successfully"));
+        ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertEquals(OrderStatus.PLACED, captor.getValue().getStatus());
+        assertEquals(42L, captor.getValue().getOrderId());
     }
 
     @Test
@@ -501,6 +509,10 @@ class OrderServiceTest {
         verify(productClient).updateProductStock(SERVICE_KEY, 2, 1);
         verify(orderRepository).save(cart);
         verify(orderKafkaProducer).sendMessage(contains("Order cancelled successfully"));
+        ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertEquals(OrderStatus.CANCELLED, captor.getValue().getStatus());
+        assertEquals(42L, captor.getValue().getOrderId());
     }
 
     // A broken notification channel must never turn a completed cancellation into an error.
@@ -562,6 +574,10 @@ class OrderServiceTest {
 
         assertEquals(OrderStatus.SHIPPED, result.getStatus());
         verify(orderKafkaProducer).sendMessage(contains("Order shipped"));
+        ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertEquals(OrderStatus.SHIPPED, captor.getValue().getStatus());
+        assertEquals(42L, captor.getValue().getOrderId());
     }
 
     @Test
@@ -590,6 +606,36 @@ class OrderServiceTest {
 
         assertEquals(OrderStatus.DELIVERED, result.getStatus());
         verify(orderKafkaProducer).sendMessage(contains("Order delivered"));
+        ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(captor.capture());
+        assertEquals(OrderStatus.DELIVERED, captor.getValue().getStatus());
+        assertEquals(42L, captor.getValue().getOrderId());
+    }
+
+    // ---------- getTracking() ----------
+
+    @Test
+    void getTrackingThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.existsById(42L)).thenReturn(false);
+        assertThrows(OrderNotFoundException.class, () -> service.getTracking(42L));
+        verifyNoInteractions(trackingEventRepository);
+    }
+
+    @Test
+    void getTrackingReturnsTheOrdersTimelineOldestFirst() {
+        when(orderRepository.existsById(42L)).thenReturn(true);
+        TrackingEvent placed = new TrackingEvent();
+        placed.setOrderId(42L);
+        placed.setStatus(OrderStatus.PLACED);
+        TrackingEvent shipped = new TrackingEvent();
+        shipped.setOrderId(42L);
+        shipped.setStatus(OrderStatus.SHIPPED);
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L))
+                .thenReturn(List.of(placed, shipped));
+
+        List<TrackingEvent> result = service.getTracking(42L);
+
+        assertEquals(List.of(placed, shipped), result);
     }
 
     // Regression: cancellation must stop being available once an order has moved past PLACED, not just once
