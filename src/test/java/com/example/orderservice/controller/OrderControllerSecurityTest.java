@@ -386,16 +386,11 @@ class OrderControllerSecurityTest {
                 .andExpect(status().isNotFound());
     }
 
+    // /cart/*/return is now the storefront's own self-service return request - no X-Service-Key required, same
+// as /cart/*/cancel above. An unknown order id 404s regardless of whether a key was supplied.
     @Test
-    void returnOrderWithoutKeyIsUnauthorized() throws Exception {
-        mockMvc.perform(post("/cart/42/return").param("reason", "damaged")).andExpect(status().isUnauthorized());
-    }
-
-    // Same reasoning as cancelOrderWithValidKeyAndNoBuyerTokenOfAnUnknownOrderReturns404 above.
-    @Test
-    void returnOrderWithValidKeyAndNoBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
-        mockMvc.perform(post("/cart/42/return").param("reason", "damaged").header("X-Service-Key", VALID_KEY))
-                .andExpect(status().isNotFound());
+    void returnOrderWithoutKeyOrBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/return").param("reason", "damaged")).andExpect(status().isNotFound());
     }
 
     @Test
