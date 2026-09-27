@@ -18,6 +18,7 @@ import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.TopSellingProduct;
+import com.example.orderservice.dto.WaitlistStatus;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
@@ -32,6 +33,7 @@ import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.PaymentMethod;
 import com.example.orderservice.entity.ShippingAddress;
 import com.example.orderservice.entity.TrackingEvent;
+import com.example.orderservice.entity.StockWaitlist;
 import com.example.orderservice.entity.Wishlist;
 import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.PaymentException;
@@ -46,6 +48,7 @@ import com.example.orderservice.repository.NotificationLogRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.ShippingAddressRepository;
 import com.example.orderservice.repository.TrackingEventRepository;
+import com.example.orderservice.repository.StockWaitlistRepository;
 import com.example.orderservice.repository.WishlistRepository;
 import feign.FeignException;
 import feign.Request;
@@ -108,6 +111,8 @@ class OrderServiceTest {
     private LoyaltyTransactionRepository loyaltyTransactionRepository;
     @Mock
     private WishlistRepository wishlistRepository;
+    @Mock
+    private StockWaitlistRepository stockWaitlistRepository;
     @Mock
     private TrackingEventRepository trackingEventRepository;
     @Mock
@@ -899,6 +904,111 @@ class OrderServiceTest {
     void removeFromWishlistDelegatesToTheRepository() {
         service.removeFromWishlist(CUSTOMER, 1);
         verify(wishlistRepository).deleteByCustomerPhnoAndProductId(CUSTOMER, 1);
+    }
+
+    // ---------- back-in-stock waitlist ----------
+
+    @Test
+    void addToWaitlistRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.addToWaitlist(12345, 1));
+        verifyNoInteractions(productClient, stockWaitlistRepository);
+    }
+
+    @Test
+    void addToWaitlistThrowsWhenTheProductDoesNotExist() {
+        when(productClient.getProductById(1)).thenReturn(null);
+        assertThrows(ProductException.class, () -> service.addToWaitlist(CUSTOMER, 1));
+        verify(stockWaitlistRepository, never()).save(any());
+    }
+
+    @Test
+    void addToWaitlistThrowsWhenProductClientRejectsTheLookup() {
+        when(productClient.getProductById(1)).thenThrow(declinedBy("byId", 400, "Product not found"));
+        assertThrows(ProductException.class, () -> service.addToWaitlist(CUSTOMER, 1));
+        verify(stockWaitlistRepository, never()).save(any());
+    }
+
+    @Test
+    void addToWaitlistSavesANewEntryWhenNotAlreadyPresent() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 9.99, 0));
+        when(stockWaitlistRepository.findByCustomerPhnoAndProductId(CUSTOMER, 1)).thenReturn(Optional.empty());
+        StockWaitlist saved = new StockWaitlist();
+        saved.setId(1L);
+        saved.setCustomerPhno(CUSTOMER);
+        saved.setProductId(1);
+        when(stockWaitlistRepository.save(any(StockWaitlist.class))).thenReturn(saved);
+
+        StockWaitlist result = service.addToWaitlist(CUSTOMER, 1);
+
+        assertEquals(1, result.getProductId());
+        verify(stockWaitlistRepository).save(any(StockWaitlist.class));
+    }
+
+    // Idempotent: adding an already-waitlisted product returns the existing row instead of creating a duplicate.
+    @Test
+    void addToWaitlistReturnsTheExistingEntryWithoutDuplicating() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 9.99, 0));
+        StockWaitlist existing = new StockWaitlist();
+        existing.setId(1L);
+        existing.setCustomerPhno(CUSTOMER);
+        existing.setProductId(1);
+        when(stockWaitlistRepository.findByCustomerPhnoAndProductId(CUSTOMER, 1)).thenReturn(Optional.of(existing));
+
+        StockWaitlist result = service.addToWaitlist(CUSTOMER, 1);
+
+        assertEquals(existing, result);
+        verify(stockWaitlistRepository, never()).save(any());
+    }
+
+    @Test
+    void getWaitlistRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.getWaitlist(12345));
+        verifyNoInteractions(stockWaitlistRepository);
+    }
+
+    private StockWaitlist waitlistItem(int productId) {
+        StockWaitlist w = new StockWaitlist();
+        w.setCustomerPhno(CUSTOMER);
+        w.setProductId(productId);
+        return w;
+    }
+
+    @Test
+    void getWaitlistReportsLiveStockPerEntry() {
+        when(stockWaitlistRepository.findByCustomerPhno(CUSTOMER))
+                .thenReturn(List.of(waitlistItem(1), waitlistItem(2)));
+        when(productClient.getProductById(1)).thenReturn(product(1, 9.99, 0));
+        when(productClient.getProductById(2)).thenReturn(product(2, 4.99, 5));
+
+        List<WaitlistStatus> statuses = service.getWaitlist(CUSTOMER);
+
+        assertEquals(2, statuses.size());
+        assertFalse(statuses.get(0).inStock());
+        assertEquals(0, statuses.get(0).currentStock());
+        assertTrue(statuses.get(1).inStock());
+        assertEquals(5, statuses.get(1).currentStock());
+    }
+
+    // A product that's since been removed from the catalog must not blow up the whole list - it's simply
+    // skipped, same reasoning getPriceDropAlerts() already applies.
+    @Test
+    void getWaitlistSkipsAnItemWhoseProductLookupFails() {
+        when(stockWaitlistRepository.findByCustomerPhno(CUSTOMER)).thenReturn(List.of(waitlistItem(1)));
+        when(productClient.getProductById(1)).thenThrow(declinedBy("byId", 404, "Product not found"));
+
+        assertTrue(service.getWaitlist(CUSTOMER).isEmpty());
+    }
+
+    @Test
+    void removeFromWaitlistRejectsAnInvalidPhoneNumber() {
+        assertThrows(ProductException.class, () -> service.removeFromWaitlist(12345, 1));
+        verifyNoInteractions(stockWaitlistRepository);
+    }
+
+    @Test
+    void removeFromWaitlistDelegatesToTheRepository() {
+        service.removeFromWaitlist(CUSTOMER, 1);
+        verify(stockWaitlistRepository).deleteByCustomerPhnoAndProductId(CUSTOMER, 1);
     }
 
     // ---------- cancel() ----------

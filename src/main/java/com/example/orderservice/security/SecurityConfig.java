@@ -57,6 +57,11 @@ public class SecurityConfig {
                         // same X-Service-Key /wishlist/add and /remove do.
                         .requestMatchers(HttpMethod.POST, "/wishlist/self/add").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove").permitAll()
+                        // The back-in-stock waitlist is a purely self-service feature - no admin/dashboard use
+                        // case exists, so unlike Wishlist there's no separate X-Service-Key-gated pair.
+                        .requestMatchers(HttpMethod.GET, "/waitlist/byphno").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/waitlist/self/add").permitAll()
+                        .requestMatchers(HttpMethod.DELETE, "/waitlist/self/remove").permitAll()
                         // The tracking timeline is just a per-transition history of the same status field
                         // /cart/byphno already returns for every order - no additional exposure.
                         .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()

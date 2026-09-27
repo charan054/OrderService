@@ -192,6 +192,31 @@ class OrderControllerSecurityTest {
                 .andExpect(status().isOk());
     }
 
+    // The back-in-stock waitlist is entirely self-service - no admin/X-Service-Key pair exists for it (unlike
+    // Wishlist), same public trust level as /wishlist/self/add and /wishlist/byphno.
+    @Test
+    void addToOwnWaitlistWithoutKeySucceeds() throws Exception {
+        Product widget = new Product();
+        widget.setProductId(1);
+        widget.setProductPrice(9.99);
+        widget.setProductStock(0);
+        when(productClient.getProductById(1)).thenReturn(widget);
+
+        mockMvc.perform(post("/waitlist/self/add").param("phno", "9876543210").param("productId", "1"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void lookingUpOwnWaitlistByPhoneIsPublic() throws Exception {
+        mockMvc.perform(get("/waitlist/byphno").param("phno", "9876543210")).andExpect(status().isOk());
+    }
+
+    @Test
+    void removeFromOwnWaitlistWithoutKeySucceeds() throws Exception {
+        mockMvc.perform(delete("/waitlist/self/remove").param("phno", "9876543210").param("productId", "1"))
+                .andExpect(status().isOk());
+    }
+
     @Test
     void addOrderWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(post("/cart/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ORDER))
