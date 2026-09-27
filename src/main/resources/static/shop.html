@@ -191,6 +191,35 @@
         .search-row input { margin-bottom: 0; flex: 2; }
         .search-row select { margin-bottom: 0; flex: 1; }
 
+        .account-summary {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+          gap: 12px;
+          margin-bottom: 16px;
+        }
+        .account-summary > div {
+          background: white;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 12px;
+          text-align: center;
+        }
+        .account-summary .value { display: block; font-size: 20px; font-weight: 800; }
+        .account-summary .label { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+        .order-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: white;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 12px 14px;
+          margin-bottom: 8px;
+        }
+        .order-row .meta { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
+        .order-row .price { font-weight: 800; }
+
         .grid-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
         .grid-tabs button {
           width: auto;
@@ -336,8 +365,10 @@
                 <div class="grid-tabs">
                     <button class="active" id="tabAll" onclick="showTab('all')">All products</button>
                     <button id="tabWishlist" onclick="showTab('wishlist')">Wishlist (<span id="wishlistCount">0</span>)</button>
+                    <button id="tabAccount" onclick="showTab('account')">My account</button>
                 </div>
                 <div id="productGrid" class="product-grid"></div>
+                <div id="accountView" class="hidden"></div>
             </div>
 
             <div class="panel">
@@ -540,7 +571,50 @@
       activeTab = tab;
       document.getElementById("tabAll").classList.toggle("active", tab === "all");
       document.getElementById("tabWishlist").classList.toggle("active", tab === "wishlist");
-      renderProducts();
+      document.getElementById("tabAccount").classList.toggle("active", tab === "account");
+      document.getElementById("productGrid").classList.toggle("hidden", tab === "account");
+      document.getElementById("accountView").classList.toggle("hidden", tab !== "account");
+      document.querySelector(".search-row").classList.toggle("hidden", tab === "account");
+      if (tab === "account") {
+        loadAccountView();
+      } else {
+        renderProducts();
+      }
+    }
+
+    async function loadAccountView() {
+      const view = document.getElementById("accountView");
+      view.innerHTML = `<p style="color:var(--muted);">Loading your account...</p>`;
+
+      const [profileResponse, ordersResponse] = await Promise.all([
+        fetch(`${BASE_URL}/customer/profile?phno=${encodeURIComponent(customerPhno)}`),
+        fetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(customerPhno)}`)
+      ]);
+      const profile = profileResponse.ok ? await profileResponse.json() : null;
+      const orders = ordersResponse.ok ? await ordersResponse.json() : [];
+      orders.sort((a, b) => b.orderId - a.orderId);
+
+      const profileHtml = profile ? `
+        <div class="account-summary">
+          <div><span class="value">${profile.totalOrders}</span><span class="label">Orders</span></div>
+          <div><span class="value">${profile.wishlistCount}</span><span class="label">Wishlisted</span></div>
+          <div><span class="value">${profile.loyaltyPointsBalance}</span><span class="label">Points</span></div>
+          <div><span class="value">${escapeHtml(profile.loyaltyTier)}</span><span class="label">Tier</span></div>
+          <div><span class="value">${profile.reviewCount}</span><span class="label">Reviews written</span></div>
+        </div>
+      ` : "";
+
+      const ordersHtml = orders.length ? orders.map(order => `
+        <div class="order-row">
+          <div>
+            <strong>Order #${order.orderId}</strong>
+            <span class="meta">${escapeHtml(order.status)} &middot; ${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span>
+          </div>
+          <div class="price">₹${order.totalPrice.toFixed(2)}</div>
+        </div>
+      `).join("") : `<p style="color:var(--muted);">No orders yet.</p>`;
+
+      view.innerHTML = `${profileHtml}<h3 style="margin:16px 0 10px;">Order history</h3>${ordersHtml}`;
     }
 
     async function toggleWishlist(productId) {
