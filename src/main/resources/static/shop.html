@@ -349,6 +349,20 @@
           padding: 0 4px;
         }
 
+        .qty-stepper {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .qty-stepper button {
+          width: auto;
+          background: none;
+          color: var(--dark);
+          font-weight: 700;
+          padding: 0 6px;
+        }
+
         .total-row {
           display: flex;
           justify-content: space-between;
@@ -992,6 +1006,22 @@
       renderCart();
     }
 
+    // Adjusts an already-added line's quantity by +1/-1 rather than making the customer remove and re-add it.
+    // Dropping to 0 removes the line entirely, same as the existing remove button. Clamped against the
+    // product's known stock client-side as a convenience - the real limit is still enforced server-side at
+    // checkout regardless.
+    function changeCartQuantity(productId, delta) {
+      const item = cart.find(i => i.productId === productId);
+      if (!item) return;
+      const product = products.find(p => p.productId === productId);
+      const maxStock = product ? product.productStock : Infinity;
+      item.quantity = Math.min(maxStock, item.quantity + delta);
+      if (item.quantity <= 0) {
+        cart = cart.filter(i => i.productId !== productId);
+      }
+      renderCart();
+    }
+
     function renderCart() {
       const linesBox = document.getElementById("cartLines");
       if (!cart.length) {
@@ -999,7 +1029,12 @@
       } else {
         linesBox.innerHTML = cart.map(item => `
           <div class="cart-line">
-            <span>${escapeHtml(item.name)} &times; ${item.quantity}</span>
+            <span>${escapeHtml(item.name)}</span>
+            <span class="qty-stepper">
+              <button onclick="changeCartQuantity(${item.productId}, -1)">&minus;</button>
+              <span>${item.quantity}</span>
+              <button onclick="changeCartQuantity(${item.productId}, 1)">&plus;</button>
+            </span>
             <span>₹${(item.price * item.quantity).toFixed(2)} <button onclick="removeFromCart(${item.productId})">&times;</button></span>
           </div>
         `).join("");
