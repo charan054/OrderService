@@ -41,6 +41,11 @@ public class SecurityConfig {
                         // The customer-facing storefront's own checkout - see OrderController.checkout for why
                         // this can't require the same X-Service-Key /cart/add does.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout").permitAll()
+                        // A customer cancelling their own order - same reasoning as checkout above. The only gate
+                        // is that a PHONEPE refund requires the real buyer token (see OrderController.cancelOrder);
+                        // a CASH order has no gate at all, same trust level the storefront's other self-service
+                        // writes already have.
+                        .requestMatchers(HttpMethod.POST, "/cart/*/cancel").permitAll()
                         // Same self-service trust level as /cart/byphno above - looking up your own wishlist (and
                         // its price-drop alerts) by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/wishlist/byphno", "/wishlist/pricedrops").permitAll()
@@ -53,8 +58,9 @@ public class SecurityConfig {
                         // /cart/byphno already returns for every order - no additional exposure.
                         .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()
                         // The notification audit trail is derived from the same status field as tracking above -
-                        // same public trust level.
-                        .requestMatchers(HttpMethod.GET, "/cart/*/notifications").permitAll()
+                        // same public trust level. /cart/notifications (no order id) backs the storefront's "My
+                        // notifications" panel - same self-service trust level as /cart/byphno.
+                        .requestMatchers(HttpMethod.GET, "/cart/*/notifications", "/cart/notifications").permitAll()
                         // Same self-service trust level as /cart/byphno above - looking up your own saved
                         // addresses by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/addresses/byphno").permitAll()
@@ -68,6 +74,9 @@ public class SecurityConfig {
                         // Same self-service trust level as /cart/byphno above - a rollup of your own
                         // orders/wishlist/loyalty/review data by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/customer/profile").permitAll()
+                        // Note: /cart/analytics is deliberately NOT in this permitAll list - it's an admin-only
+                        // sales rollup (see OrderController.getSalesAnalytics), so it falls through to
+                        // anyRequest().authenticated() below like /cart/all does.
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         // The static dashboard itself - not an order action, just the HTML/JS shell. The
                         // mutating buttons on it still hit the X-Service-Key-guarded endpoints above like any

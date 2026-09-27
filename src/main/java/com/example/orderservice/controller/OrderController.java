@@ -5,6 +5,7 @@ import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
@@ -52,11 +53,15 @@ public class OrderController {
     // Authorization must be the buyer's OWN PhonepayService session token for a PHONEPE order - PhonepayService
     // only refunds a payment back to the person who made it, so this can never cancel (and refund) someone
     // else's order. Not required for a CASH order, which was never charged and so has nothing to refund.
+    // payerPhno/payerPin are the same storefront-only fallback checkout has (see OrderController.checkout) - the
+    // customer-facing cancel button has no stored session token, only a phone+PIN entered fresh for this call.
     @PostMapping("/{orderId}/cancel")
     public Cart cancelOrder(@PathVariable long orderId,
                             @RequestHeader(value = "Authorization", required = false) String authorization,
-                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
-        return orderService.cancel(orderId, authorization, idempotencyKey);
+                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+                            @RequestParam(required = false) Long payerPhno,
+                            @RequestParam(required = false) String payerPin){
+        return orderService.cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin);
     }
     // Same buyer-token requirement as cancel above (waived for CASH, same reasoning), but only usable once an
     // order has reached DELIVERED - cancel and return are mutually exclusive by status, never overlapping windows.
@@ -94,6 +99,11 @@ public class OrderController {
     @GetMapping("/{orderId}/notifications")
     public List<NotificationLog> getNotifications(@PathVariable long orderId){
         return orderService.getNotifications(orderId);
+    }
+    // Backs the storefront's "My notifications" panel - same public, self-service trust level as /cart/byphno.
+    @GetMapping("/notifications")
+    public List<NotificationLog> getNotificationsForCustomer(@RequestParam long phno){
+        return orderService.getNotificationsForCustomer(phno);
     }
     @GetMapping("/display")
     public List<Product> findAll(){
@@ -139,6 +149,12 @@ public class OrderController {
     @GetMapping("/all")
     public List<Cart> getAll(){
         return orderService.findAll();
+    }
+    // Admin-only sales rollup, same X-Service-Key trust level as /cart/all above (which this is built from) -
+    // not something a customer's own phone number should be able to pull.
+    @GetMapping("/analytics")
+    public SalesAnalytics getSalesAnalytics(){
+        return orderService.getSalesAnalytics();
     }
     @Transactional
     @DeleteMapping("/deleteproduct")

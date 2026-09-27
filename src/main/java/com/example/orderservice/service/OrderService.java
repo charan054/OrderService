@@ -13,6 +13,8 @@ import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.SalesAnalytics;
+import com.example.orderservice.dto.TopSellingProduct;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
@@ -60,6 +62,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 @Service
 public class OrderService {
@@ -171,6 +174,12 @@ public class OrderService {
     // a successful refund restores stock and marks the order CANCELLED - a declined/failed refund leaves the
     // order exactly as it was, the same fail-safe shape order() already uses for placing one.
     public Cart cancel(long orderId, String authorization, String idempotencyKey) {
+        return cancel(orderId, authorization, idempotencyKey, null, null);
+    }
+
+    // payerPhno/payerPin mirror order()'s storefront path - the customer-facing cancel button has no stored
+    // session token either, only a phone+PIN entered fresh for this one call (see resolveBuyerToken).
+    public Cart cancel(long orderId, String authorization, String idempotencyKey, Long payerPhno, String payerPin) {
         Cart cart = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
         if (cart.getStatus() == OrderStatus.CANCELLED) {
@@ -186,7 +195,8 @@ public class OrderService {
             if (cart.getPaymentTransactionId() == null) {
                 throw new ProductException("This order cannot be cancelled");
             }
-            refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
+            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
+            refund(token, cart.getPaymentTransactionId(), idempotencyKey);
         }
 
         for (OrderItem orderItem : cart.getOrderItems()) {
@@ -596,6 +606,20 @@ public class OrderService {
         return notificationLogRepository.findByOrderIdOrderBySentAtAsc(orderId);
     }
 
+    // Backs the storefront's "My notifications" panel - every notification across all of a customer's own
+    // orders, newest first, same self-service trust level as /cart/byphno (a customer's own phone number is
+    // already how every other "my own data" lookup in this system is scoped).
+    public List<NotificationLog> getNotificationsForCustomer(long phno) {
+        validatePhno(phno);
+        List<Long> orderIds = orderRepository.findBycustomerPhno(phno).stream()
+                .map(Cart::getOrderId)
+                .toList();
+        if (orderIds.isEmpty()) {
+            return List.of();
+        }
+        return notificationLogRepository.findByOrderIdInOrderBySentAtDesc(orderIds);
+    }
+
     // Kafka is told only AFTER the save() above returns - neither order() nor cancel() wraps its DB writes in a
     // surrounding @Transactional, so by that point the write has already committed (each repository.save() is
     // its own auto-committed transaction). A broken notification channel must never turn a completed order/
@@ -778,6 +802,85 @@ public class OrderService {
                 .filter(Objects::nonNull)
                 .toList();
     }
+
+    private static final int TOP_PRODUCTS_LIMIT = 5;
+
+    // Admin-only sales rollup, same in-memory-aggregation-over-findAll() shape getFrequentlyBoughtTogether()
+    // already uses at this system's scale - no separate reporting/warehouse store exists to query instead.
+    // CANCELLED orders are excluded from every figure (fully refunded, never a kept sale); RETURNED ones still
+    // count as revenue (no separate "returns" bucket exists yet to net them back out of the total).
+    public SalesAnalytics getSalesAnalytics() {
+        List<Cart> orders = orderRepository.findAll();
+
+        long totalOrders = orders.size();
+        // A handful of pre-existing dev-database rows predate the status/paymentMethod columns and can come back
+        // null from a real query even though the entity's Java-side default never lets a freshly-built Cart have
+        // one - grouped under "UNKNOWN" rather than throwing, same defensive spirit as skipping a product whose
+        // catalog lookup fails elsewhere in this class.
+        Map<String, Long> ordersByStatus = orders.stream()
+                .collect(Collectors.groupingBy(cart -> statusNameOrUnknown(cart.getStatus()), Collectors.counting()));
+
+        List<Cart> countedOrders = orders.stream()
+                .filter(cart -> cart.getStatus() != OrderStatus.CANCELLED)
+                .toList();
+
+        double totalRevenue = countedOrders.stream().mapToDouble(Cart::getTotalPrice).sum();
+        Map<String, Double> revenueByPaymentMethod = countedOrders.stream()
+                .collect(Collectors.groupingBy(cart -> paymentMethodNameOrUnknown(cart.getPaymentMethod()),
+                        Collectors.summingDouble(Cart::getTotalPrice)));
+
+        Map<Integer, Integer> unitsSoldByProduct = new HashMap<>();
+        Map<Integer, Double> revenueByProduct = new HashMap<>();
+        for (Cart cart : countedOrders) {
+            List<OrderItem> items = cart.getOrderItems();
+            if (items == null) continue;
+            for (OrderItem item : items) {
+                unitsSoldByProduct.merge(item.getProductId(), item.getProductQuantity(), Integer::sum);
+                revenueByProduct.merge(item.getProductId(),
+                        item.getProductQuantity() * productPriceOrZero(item.getProductId()), Double::sum);
+            }
+        }
+
+        List<TopSellingProduct> topProducts = unitsSoldByProduct.entrySet().stream()
+                .sorted(Map.Entry.<Integer, Integer>comparingByValue().reversed())
+                .limit(TOP_PRODUCTS_LIMIT)
+                .map(entry -> {
+                    Product product;
+                    try {
+                        product = productClient.getProductById(entry.getKey());
+                    } catch (FeignException e) {
+                        return null;
+                    }
+                    return product == null ? null
+                            : new TopSellingProduct(product.getProductId(), product.getProductName(),
+                                    entry.getValue(), revenueByProduct.getOrDefault(entry.getKey(), 0.0));
+                })
+                .filter(Objects::nonNull)
+                .toList();
+
+        return new SalesAnalytics(totalOrders, totalRevenue, ordersByStatus, revenueByPaymentMethod, topProducts);
+    }
+
+    private static String statusNameOrUnknown(OrderStatus status) {
+        return status == null ? "UNKNOWN" : status.name();
+    }
+
+    private static String paymentMethodNameOrUnknown(PaymentMethod paymentMethod) {
+        return paymentMethod == null ? "UNKNOWN" : paymentMethod.name();
+    }
+
+    // A product's current price, cached implicitly by the caller's own map - used only to turn units sold into
+    // an approximate revenue-per-product figure (the order's actual totalPrice already reflects coupon/points
+    // discounts at the whole-order level, which aren't split back out per line item anywhere in this system).
+    private double productPriceOrZero(int productId) {
+        try {
+            Product product = productClient.getProductById(productId);
+            return product == null ? 0.0 : product.getProductPrice();
+        } catch (FeignException e) {
+            return 0.0;
+        }
+    }
+
     @Transactional
     public List<Cart> deleteProduct(long phno, long productId) {
         validatePhno(phno);

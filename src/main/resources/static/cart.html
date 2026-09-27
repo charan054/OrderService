@@ -464,6 +464,18 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">📊</div>
+                <div class="title-wrap">
+                    <h2>Sales Analytics</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Total revenue, orders by status, revenue by payment method, and top-selling products. Requires the Service Key above.</p>
+            <button onclick="getSalesAnalytics()">View Analytics</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">🚚</div>
                 <div class="title-wrap">
                     <h2>Ship Order</h2>
@@ -908,6 +920,17 @@
       const data = await apiCall(`${BASE_URL}/byphno?phno=${encodeURIComponent(phno)}`);
       showStatus("Orders by phone number loaded successfully. Result opened in new tab.", "success");
       openResultTab("Orders By Phone Number", data);
+    }
+
+    async function getSalesAnalytics() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`${BASE_URL}/analytics`, {
+        headers: { "X-Service-Key": serviceKey }
+      });
+      showStatus("Sales analytics loaded successfully. Result opened in new tab.", "success");
+      openResultTab("Sales Analytics", data);
     }
 
     async function deleteProductFromCart() {
