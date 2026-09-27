@@ -631,8 +631,27 @@
       showAccountInfo();
       loadProducts();
       loadWishlist();
+      loadWaitlist();
       loadLoyaltyBalance();
       loadAddressOptions();
+    }
+
+    async function loadWaitlist() {
+      const response = await fetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const waitlist = response.ok ? await response.json() : [];
+      waitlistProductIds = new Set(waitlist.map(item => item.productId));
+      renderProducts();
+    }
+
+    async function toggleWaitlist(productId) {
+      const isWaitlisted = waitlistProductIds.has(productId);
+      const query = `phno=${encodeURIComponent(customerPhno)}&productId=${encodeURIComponent(productId)}`;
+      if (isWaitlisted) {
+        await fetch(`${BASE_URL}/waitlist/self/remove?${query}`, { method: "DELETE" });
+      } else {
+        await fetch(`${BASE_URL}/waitlist/self/add?${query}`, { method: "POST" });
+      }
+      await loadWaitlist();
     }
 
     async function loadAddressOptions() {
@@ -757,15 +776,17 @@
       const view = document.getElementById("accountView");
       view.innerHTML = `<p style="color:var(--muted);">Loading your account...</p>`;
 
-      const [profileResponse, ordersResponse, addressesResponse] = await Promise.all([
+      const [profileResponse, ordersResponse, addressesResponse, waitlistResponse] = await Promise.all([
         fetch(`${BASE_URL}/customer/profile?phno=${encodeURIComponent(customerPhno)}`),
         fetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(customerPhno)}`),
-        fetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`)
+        fetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`),
+        fetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`)
       ]);
       const profile = profileResponse.ok ? await profileResponse.json() : null;
       const orders = ordersResponse.ok ? await ordersResponse.json() : [];
       orders.sort((a, b) => b.orderId - a.orderId);
       const addresses = addressesResponse.ok ? await addressesResponse.json() : [];
+      const waitlist = waitlistResponse.ok ? await waitlistResponse.json() : [];
 
       const profileHtml = profile ? `
         <div class="account-summary">
@@ -799,10 +820,22 @@
         </div>
       `).join("");
 
+      const waitlistHtml = waitlist.map(w => `
+        <div class="order-row">
+          <div>
+            <strong>${escapeHtml(w.productName)}</strong>
+            <span class="meta">${w.inStock ? `Back in stock (${w.currentStock})` : "Still out of stock"}</span>
+          </div>
+          <button class="secondary" style="width:auto;" onclick="removeFromWaitlistInAccount(${w.productId})">Remove</button>
+        </div>
+      `).join("");
+
       view.innerHTML = `
         ${profileHtml}
         <h3 style="margin:16px 0 10px;">Order history</h3>
         ${ordersHtml}
+        <h3 style="margin:20px 0 10px;">Waiting for restock</h3>
+        ${waitlistHtml || `<p style="color:var(--muted);">Nothing on your restock waitlist - tap "Notify me" on an out-of-stock product to add it here.</p>`}
         <h3 style="margin:20px 0 10px;">Saved addresses</h3>
         ${addressesHtml || `<p style="color:var(--muted);">No saved addresses yet.</p>`}
         <div style="margin-top:12px;">
@@ -856,6 +889,11 @@
         alert(body || "Could not return this order.");
         return;
       }
+      loadAccountView();
+    }
+
+    async function removeFromWaitlistInAccount(productId) {
+      await toggleWaitlist(productId);
       loadAccountView();
     }
 
@@ -937,6 +975,7 @@
 
       grid.innerHTML = visibleProducts.map(p => {
         const isWishlisted = wishlistProductIds.has(p.productId);
+        const isWaitlisted = waitlistProductIds.has(p.productId);
         const priceDrop = priceDropsByProductId.get(p.productId);
         const rating = ratingsByProductId.get(p.productId);
         return `
@@ -957,10 +996,12 @@
             <button class="details-link" onclick="openProductModal(${p.productId})">Reviews &amp; similar items</button>
             ${priceDrop ? `<div class="price-drop-badge">Price dropped ₹${priceDrop.priceDrop.toFixed(2)}</div>` : ""}
             <div class="price-row"><span class="price">₹${p.productPrice}</span></div>
-            <div class="qty-row">
-              <input type="number" min="1" value="1" id="qty_${p.productId}" ${p.productStock <= 0 ? "disabled" : ""} />
-              <button style="width:auto;" ${p.productStock <= 0 ? "disabled" : ""} onclick="addToCart(${p.productId})">Add</button>
-            </div>
+            ${p.productStock <= 0
+              ? `<button class="secondary" style="width:auto;" onclick="toggleWaitlist(${p.productId})">${isWaitlisted ? "Notified when back ✓" : "Notify me"}</button>`
+              : `<div class="qty-row">
+                  <input type="number" min="1" value="1" id="qty_${p.productId}" />
+                  <button style="width:auto;" onclick="addToCart(${p.productId})">Add</button>
+                </div>`}
           </div>
         </div>
       `;

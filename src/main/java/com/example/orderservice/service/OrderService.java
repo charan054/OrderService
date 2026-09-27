@@ -16,6 +16,7 @@ import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.TopSellingProduct;
+import com.example.orderservice.dto.WaitlistStatus;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
@@ -29,6 +30,7 @@ import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.PaymentMethod;
 import com.example.orderservice.entity.ShippingAddress;
+import com.example.orderservice.entity.StockWaitlist;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.Wishlist;
 import com.example.orderservice.exception.OrderNotFoundException;
@@ -43,6 +45,7 @@ import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.NotificationLogRepository;
 import com.example.orderservice.repository.ShippingAddressRepository;
+import com.example.orderservice.repository.StockWaitlistRepository;
 import com.example.orderservice.repository.TrackingEventRepository;
 import com.example.orderservice.repository.WishlistRepository;
 import feign.FeignException;
@@ -83,6 +86,8 @@ public class OrderService {
     private LoyaltyTransactionRepository loyaltyTransactionRepository;
     @Autowired
     private WishlistRepository wishlistRepository;
+    @Autowired
+    private StockWaitlistRepository stockWaitlistRepository;
     @Autowired
     private TrackingEventRepository trackingEventRepository;
     @Autowired
@@ -1001,6 +1006,59 @@ public class OrderService {
     public void removeFromWishlist(long phno, int productId) {
         validatePhno(phno);
         wishlistRepository.deleteByCustomerPhnoAndProductId(phno, productId);
+    }
+
+    // ---------- back-in-stock waitlist ----------
+
+    // Idempotent by design, same reasoning as addToWishlist() - the caller just wants to be on the list, not to
+    // know whether they already were. Deliberately does NOT require the product to actually be out of stock
+    // right now - a customer waitlisting a moment before it sells out (or just being cautious) shouldn't 404.
+    public StockWaitlist addToWaitlist(long phno, int productId) {
+        validatePhno(phno);
+        Product product;
+        try {
+            product = productClient.getProductById(productId);
+        } catch (FeignException e) {
+            throw new ProductException("Product not found");
+        }
+        if (product == null) {
+            throw new ProductException("Product not found");
+        }
+        return stockWaitlistRepository.findByCustomerPhnoAndProductId(phno, productId)
+                .orElseGet(() -> {
+                    StockWaitlist waitlist = new StockWaitlist();
+                    waitlist.setCustomerPhno(phno);
+                    waitlist.setProductId(productId);
+                    return stockWaitlistRepository.save(waitlist);
+                });
+    }
+
+    // Computed on demand, same "no scheduler/push provider exists here" reasoning as getPriceDropAlerts() - live
+    // stock is re-fetched fresh on every call rather than tracked/pushed. A product whose Feign lookup fails
+    // (removed from the catalog) is skipped rather than failing the whole list.
+    public List<WaitlistStatus> getWaitlist(long phno) {
+        validatePhno(phno);
+        List<WaitlistStatus> statuses = new ArrayList<>();
+        for (StockWaitlist item : stockWaitlistRepository.findByCustomerPhno(phno)) {
+            Product product;
+            try {
+                product = productClient.getProductById(item.getProductId());
+            } catch (FeignException e) {
+                continue;
+            }
+            if (product == null) {
+                continue;
+            }
+            statuses.add(new WaitlistStatus(product.getProductId(), product.getProductName(),
+                    product.getProductStock(), product.getProductStock() > 0));
+        }
+        return statuses;
+    }
+
+    @Transactional
+    public void removeFromWaitlist(long phno, int productId) {
+        validatePhno(phno);
+        stockWaitlistRepository.deleteByCustomerPhnoAndProductId(phno, productId);
     }
 
     // At most one default address per customer: making this one the default silently un-defaults whichever one
