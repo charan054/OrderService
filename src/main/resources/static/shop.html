@@ -448,9 +448,11 @@
                     <button class="active" id="tabAll" onclick="showTab('all')">All products</button>
                     <button id="tabWishlist" onclick="showTab('wishlist')">Wishlist (<span id="wishlistCount">0</span>)</button>
                     <button id="tabAccount" onclick="showTab('account')">My account</button>
+                    <button id="tabNotifications" onclick="showTab('notifications')">My notifications</button>
                 </div>
                 <div id="productGrid" class="product-grid"></div>
                 <div id="accountView" class="hidden"></div>
+                <div id="notificationsView" class="hidden"></div>
             </div>
 
             <div class="panel">
@@ -699,14 +701,36 @@
       document.getElementById("tabAll").classList.toggle("active", tab === "all");
       document.getElementById("tabWishlist").classList.toggle("active", tab === "wishlist");
       document.getElementById("tabAccount").classList.toggle("active", tab === "account");
-      document.getElementById("productGrid").classList.toggle("hidden", tab === "account");
+      document.getElementById("tabNotifications").classList.toggle("active", tab === "notifications");
+      document.getElementById("productGrid").classList.toggle("hidden", tab === "account" || tab === "notifications");
       document.getElementById("accountView").classList.toggle("hidden", tab !== "account");
-      document.querySelector(".search-row").classList.toggle("hidden", tab === "account");
+      document.getElementById("notificationsView").classList.toggle("hidden", tab !== "notifications");
+      document.querySelector(".search-row").classList.toggle("hidden", tab === "account" || tab === "notifications");
       if (tab === "account") {
         loadAccountView();
+      } else if (tab === "notifications") {
+        loadNotificationsView();
       } else {
         renderProducts();
       }
+    }
+
+    async function loadNotificationsView() {
+      const view = document.getElementById("notificationsView");
+      view.innerHTML = `<p style="color:var(--muted);">Loading your notifications...</p>`;
+
+      const response = await fetch(`${BASE_URL}/cart/notifications?phno=${encodeURIComponent(customerPhno)}`);
+      const notifications = response.ok ? await response.json() : [];
+
+      view.innerHTML = notifications.length ? notifications.map(n => `
+        <div class="order-row">
+          <div>
+            <strong>Order #${n.orderId} - ${escapeHtml(n.eventType)}</strong>
+            <span class="meta">${escapeHtml(n.message)}</span>
+          </div>
+          <div class="meta">${new Date(n.sentAt).toLocaleString()}</div>
+        </div>
+      `).join("") : `<p style="color:var(--muted);">No notifications yet.</p>`;
     }
 
     async function loadAccountView() {

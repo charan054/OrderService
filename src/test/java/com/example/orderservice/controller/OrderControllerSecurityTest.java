@@ -129,6 +129,12 @@ class OrderControllerSecurityTest {
         mockMvc.perform(get("/wishlist/byphno").param("phno", "9876543210")).andExpect(status().isOk());
     }
 
+    // Backs the storefront's "My notifications" panel - same public trust level as byphno above.
+    @Test
+    void lookingUpOwnNotificationsByPhoneIsPublic() throws Exception {
+        mockMvc.perform(get("/cart/notifications").param("phno", "9876543210")).andExpect(status().isOk());
+    }
+
     @Test
     void lookingUpOwnPriceDropAlertsByPhoneIsPublic() throws Exception {
         mockMvc.perform(get("/wishlist/pricedrops").param("phno", "9876543210")).andExpect(status().isOk());

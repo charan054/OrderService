@@ -1243,6 +1243,37 @@ class OrderServiceTest {
         assertEquals(List.of(shipped), result);
     }
 
+    // ---------- getNotificationsForCustomer() ----------
+
+    @Test
+    void getNotificationsForCustomerRejectsAnInvalidPhno() {
+        assertThrows(ProductException.class, () -> service.getNotificationsForCustomer(12345L));
+        verifyNoInteractions(notificationLogRepository);
+    }
+
+    @Test
+    void getNotificationsForCustomerReturnsEmptyWithoutQueryingWhenTheCustomerHasNoOrders() {
+        when(orderRepository.findBycustomerPhno(CUSTOMER)).thenReturn(List.of());
+
+        assertTrue(service.getNotificationsForCustomer(CUSTOMER).isEmpty());
+        verifyNoInteractions(notificationLogRepository);
+    }
+
+    @Test
+    void getNotificationsForCustomerAggregatesAcrossAllOfTheCustomersOrders() {
+        Cart orderA = placedOrder(1L, CUSTOMER, item(1, 1));
+        Cart orderB = placedOrder(2L, CUSTOMER, item(2, 1));
+        when(orderRepository.findBycustomerPhno(CUSTOMER)).thenReturn(List.of(orderA, orderB));
+        NotificationLog delivered = new NotificationLog();
+        delivered.setOrderId(2L);
+        delivered.setEventType(OrderStatus.DELIVERED);
+        when(notificationLogRepository.findByOrderIdInOrderBySentAtDesc(List.of(1L, 2L))).thenReturn(List.of(delivered));
+
+        List<NotificationLog> result = service.getNotificationsForCustomer(CUSTOMER);
+
+        assertEquals(List.of(delivered), result);
+    }
+
     // Regression: cancellation must stop being available once an order has moved past PLACED, not just once
     // it's already CANCELLED.
     @Test

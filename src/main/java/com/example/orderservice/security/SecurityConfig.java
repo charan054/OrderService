@@ -58,8 +58,9 @@ public class SecurityConfig {
                         // /cart/byphno already returns for every order - no additional exposure.
                         .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()
                         // The notification audit trail is derived from the same status field as tracking above -
-                        // same public trust level.
-                        .requestMatchers(HttpMethod.GET, "/cart/*/notifications").permitAll()
+                        // same public trust level. /cart/notifications (no order id) backs the storefront's "My
+                        // notifications" panel - same self-service trust level as /cart/byphno.
+                        .requestMatchers(HttpMethod.GET, "/cart/*/notifications", "/cart/notifications").permitAll()
                         // Same self-service trust level as /cart/byphno above - looking up your own saved
                         // addresses by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/addresses/byphno").permitAll()

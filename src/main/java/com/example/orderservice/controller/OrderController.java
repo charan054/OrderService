@@ -100,6 +100,11 @@ public class OrderController {
     public List<NotificationLog> getNotifications(@PathVariable long orderId){
         return orderService.getNotifications(orderId);
     }
+    // Backs the storefront's "My notifications" panel - same public, self-service trust level as /cart/byphno.
+    @GetMapping("/notifications")
+    public List<NotificationLog> getNotificationsForCustomer(@RequestParam long phno){
+        return orderService.getNotificationsForCustomer(phno);
+    }
     @GetMapping("/display")
     public List<Product> findAll(){
         return orderService.getProducts();

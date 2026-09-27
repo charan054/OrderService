@@ -606,6 +606,20 @@ public class OrderService {
         return notificationLogRepository.findByOrderIdOrderBySentAtAsc(orderId);
     }
 
+    // Backs the storefront's "My notifications" panel - every notification across all of a customer's own
+    // orders, newest first, same self-service trust level as /cart/byphno (a customer's own phone number is
+    // already how every other "my own data" lookup in this system is scoped).
+    public List<NotificationLog> getNotificationsForCustomer(long phno) {
+        validatePhno(phno);
+        List<Long> orderIds = orderRepository.findBycustomerPhno(phno).stream()
+                .map(Cart::getOrderId)
+                .toList();
+        if (orderIds.isEmpty()) {
+            return List.of();
+        }
+        return notificationLogRepository.findByOrderIdInOrderBySentAtDesc(orderIds);
+    }
+
     // Kafka is told only AFTER the save() above returns - neither order() nor cancel() wraps its DB writes in a
     // surrounding @Transactional, so by that point the write has already committed (each repository.save() is
     // its own auto-committed transaction). A broken notification channel must never turn a completed order/
