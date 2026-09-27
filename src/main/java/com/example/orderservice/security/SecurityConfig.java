@@ -73,6 +73,9 @@ public class SecurityConfig {
                         // Same self-service trust level as /cart/byphno above - a rollup of your own
                         // orders/wishlist/loyalty/review data by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/customer/profile").permitAll()
+                        // Note: /cart/analytics is deliberately NOT in this permitAll list - it's an admin-only
+                        // sales rollup (see OrderController.getSalesAnalytics), so it falls through to
+                        // anyRequest().authenticated() below like /cart/all does.
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
                         // The static dashboard itself - not an order action, just the HTML/JS shell. The
                         // mutating buttons on it still hit the X-Service-Key-guarded endpoints above like any

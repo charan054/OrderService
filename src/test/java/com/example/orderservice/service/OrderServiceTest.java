@@ -15,6 +15,8 @@ import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.SalesAnalytics;
+import com.example.orderservice.dto.TopSellingProduct;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
@@ -1613,6 +1615,78 @@ class OrderServiceTest {
         when(productClient.getProductById(2)).thenThrow(declinedBy("byId", 404, "Product not found"));
 
         assertTrue(service.getFrequentlyBoughtTogether(1, null).isEmpty());
+    }
+
+    // ---------- getSalesAnalytics ----------
+
+    @Test
+    void getSalesAnalyticsExcludesCancelledOrdersFromRevenueButCountsThemByStatus() {
+        Cart placed = cart(CUSTOMER, item(1, 1));
+        placed.setTotalPrice(100.0);
+        placed.setStatus(OrderStatus.PLACED);
+        Cart cancelled = cart(CUSTOMER, item(1, 1));
+        cancelled.setTotalPrice(50.0);
+        cancelled.setStatus(OrderStatus.CANCELLED);
+        when(orderRepository.findAll()).thenReturn(List.of(placed, cancelled));
+        when(productClient.getProductById(1)).thenReturn(product(1, 100.0, 5));
+
+        SalesAnalytics result = service.getSalesAnalytics();
+
+        assertEquals(2, result.totalOrders());
+        assertEquals(100.0, result.totalRevenue());
+        assertEquals(1L, result.ordersByStatus().get("PLACED"));
+        assertEquals(1L, result.ordersByStatus().get("CANCELLED"));
+    }
+
+    @Test
+    void getSalesAnalyticsGroupsRevenueByPaymentMethod() {
+        Cart phonepeOrder = cart(CUSTOMER, item(1, 1));
+        phonepeOrder.setTotalPrice(100.0);
+        phonepeOrder.setPaymentMethod(PaymentMethod.PHONEPE);
+        Cart cashOrder = cart(CUSTOMER, item(1, 1));
+        cashOrder.setTotalPrice(50.0);
+        cashOrder.setPaymentMethod(PaymentMethod.CASH);
+        when(orderRepository.findAll()).thenReturn(List.of(phonepeOrder, cashOrder));
+        when(productClient.getProductById(1)).thenReturn(product(1, 100.0, 5));
+
+        SalesAnalytics result = service.getSalesAnalytics();
+
+        assertEquals(100.0, result.revenueByPaymentMethod().get("PHONEPE"));
+        assertEquals(50.0, result.revenueByPaymentMethod().get("CASH"));
+    }
+
+    // A handful of pre-existing dev-database rows predate the status/paymentMethod columns and can come back
+    // null from a real query - grouped under "UNKNOWN" rather than throwing a NullPointerException.
+    @Test
+    void getSalesAnalyticsGroupsNullStatusAndPaymentMethodAsUnknown() {
+        Cart legacyOrder = cart(CUSTOMER, item(1, 1));
+        legacyOrder.setTotalPrice(20.0);
+        legacyOrder.setStatus(null);
+        legacyOrder.setPaymentMethod(null);
+        when(orderRepository.findAll()).thenReturn(List.of(legacyOrder));
+        when(productClient.getProductById(1)).thenReturn(product(1, 20.0, 5));
+
+        SalesAnalytics result = service.getSalesAnalytics();
+
+        assertEquals(1L, result.ordersByStatus().get("UNKNOWN"));
+        assertEquals(20.0, result.revenueByPaymentMethod().get("UNKNOWN"));
+    }
+
+    @Test
+    void getSalesAnalyticsRanksTopProductsByUnitsSold() {
+        Cart cart = cart(CUSTOMER, item(1, 5), item(2, 1));
+        cart.setTotalPrice(100.0);
+        when(orderRepository.findAll()).thenReturn(List.of(cart));
+        when(productClient.getProductById(1)).thenReturn(product(1, 10.0, 5));
+        when(productClient.getProductById(2)).thenReturn(product(2, 20.0, 5));
+
+        List<TopSellingProduct> topProducts = service.getSalesAnalytics().topProducts();
+
+        assertEquals(2, topProducts.size());
+        assertEquals(1, topProducts.get(0).productId());
+        assertEquals(5, topProducts.get(0).unitsSold());
+        assertEquals(50.0, topProducts.get(0).revenue());
+        assertEquals(2, topProducts.get(1).productId());
     }
 
     // ---------- shipping addresses ----------

@@ -5,6 +5,7 @@ import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
@@ -143,6 +144,12 @@ public class OrderController {
     @GetMapping("/all")
     public List<Cart> getAll(){
         return orderService.findAll();
+    }
+    // Admin-only sales rollup, same X-Service-Key trust level as /cart/all above (which this is built from) -
+    // not something a customer's own phone number should be able to pull.
+    @GetMapping("/analytics")
+    public SalesAnalytics getSalesAnalytics(){
+        return orderService.getSalesAnalytics();
     }
     @Transactional
     @DeleteMapping("/deleteproduct")

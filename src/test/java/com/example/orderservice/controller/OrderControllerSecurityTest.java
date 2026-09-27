@@ -238,15 +238,15 @@ class OrderControllerSecurityTest {
         verifyNoInteractions(phonepeClient);
     }
 
+    // /cart/*/cancel is now the storefront's own self-service cancel - no X-Service-Key required, same as
+// /cart/checkout above. The only gate is that a PHONEPE refund needs the real buyer token (see
+// OrderController.cancelOrder); an unknown order id 404s regardless of whether one was supplied, same as
+// cancelOrderOfAnUnknownOrderIdReturns404 below. See OrderServiceTest for the case that does exercise a
+// missing token against a real PHONEPE order.
     @Test
-    void cancelOrderWithoutKeyIsUnauthorized() throws Exception {
-        mockMvc.perform(post("/cart/42/cancel")).andExpect(status().isUnauthorized());
+    void cancelOrderWithoutKeyOrBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/cancel")).andExpect(status().isNotFound());
     }
-
-    // Authorization is now optional at the controller level (a CASH order needs none) - whether a PHONEPE order
-    // actually requires one is only known once the order itself is loaded, so an unknown order id 404s here
-    // regardless, same as cancelOrderOfAnUnknownOrderIdReturns404 below. See OrderServiceTest for the case that
-    // does exercise a missing token against a real PHONEPE order.
     @Test
     void cancelOrderWithValidKeyAndNoBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
         mockMvc.perform(post("/cart/42/cancel").header("X-Service-Key", VALID_KEY))
