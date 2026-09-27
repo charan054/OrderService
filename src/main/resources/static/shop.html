@@ -765,6 +765,7 @@
           </div>
           <div class="price">₹${order.totalPrice.toFixed(2)}</div>
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
+          ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
         </div>
       `).join("") : `<p style="color:var(--muted);">No orders yet.</p>`;
 
@@ -813,6 +814,26 @@
       if (!response.ok) {
         const body = await response.text();
         alert(body || "Could not cancel this order.");
+        return;
+      }
+      loadAccountView();
+    }
+
+    async function returnMyOrder(orderId, paymentMethod) {
+      const reason = prompt("Why are you returning this order?");
+      if (!reason) return;
+
+      let query = `?reason=${encodeURIComponent(reason)}`;
+      if (paymentMethod !== "CASH") {
+        const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
+        if (!pin) return;
+        query += `&payerPhno=${encodeURIComponent(customerPhno)}&payerPin=${encodeURIComponent(pin)}`;
+      }
+
+      const response = await fetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/return${query}`, { method: "POST" });
+      if (!response.ok) {
+        const body = await response.text();
+        alert(body || "Could not return this order.");
         return;
       }
       loadAccountView();

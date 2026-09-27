@@ -69,8 +69,10 @@ public class OrderController {
     public Cart returnOrder(@PathVariable long orderId,
                             @RequestParam String reason,
                             @RequestHeader(value = "Authorization", required = false) String authorization,
-                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey){
-        return orderService.returnOrder(orderId, authorization, idempotencyKey, reason);
+                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+                            @RequestParam(required = false) Long payerPhno,
+                            @RequestParam(required = false) String payerPin){
+        return orderService.returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin);
     }
     // Operational actions (warehouse/ops moving an order along), not something the buyer's own token gates -
     // authenticated the same way as every other trusted-caller endpoint here, via X-Service-Key.

@@ -46,6 +46,9 @@ public class SecurityConfig {
                         // a CASH order has no gate at all, same trust level the storefront's other self-service
                         // writes already have.
                         .requestMatchers(HttpMethod.POST, "/cart/*/cancel").permitAll()
+                        // Same reasoning as cancel above - a customer requesting a return on their own delivered
+                        // order. The only gate is the same PHONEPE-refund buyer-token requirement.
+                        .requestMatchers(HttpMethod.POST, "/cart/*/return").permitAll()
                         // Same self-service trust level as /cart/byphno above - looking up your own wishlist (and
                         // its price-drop alerts) by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/wishlist/byphno", "/wishlist/pricedrops").permitAll()

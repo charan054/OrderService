@@ -215,6 +215,12 @@ public class OrderService {
     // are mutually exclusive by status, never overlapping windows. Otherwise the same fail-safe refund-then-
     // restore-stock shape as cancel(): a declined refund leaves the order exactly DELIVERED, nothing rolled back.
     public Cart returnOrder(long orderId, String authorization, String idempotencyKey, String reason) {
+        return returnOrder(orderId, authorization, idempotencyKey, reason, null, null);
+    }
+
+    // payerPhno/payerPin mirror cancel()'s storefront path - the customer-facing return button has no stored
+    // session token either, only a phone+PIN entered fresh for this one call (see resolveBuyerToken).
+    public Cart returnOrder(long orderId, String authorization, String idempotencyKey, String reason, Long payerPhno, String payerPin) {
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A return reason is required");
         }
@@ -239,7 +245,8 @@ public class OrderService {
         }
 
         if (cart.getPaymentMethod() != PaymentMethod.CASH) {
-            refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
+            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
+            refund(token, cart.getPaymentTransactionId(), idempotencyKey);
         }
 
         for (OrderItem orderItem : cart.getOrderItems()) {
