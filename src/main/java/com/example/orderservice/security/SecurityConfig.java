@@ -54,6 +54,10 @@ public class SecurityConfig {
                         // Same self-service trust level as /cart/byphno above - looking up your own saved
                         // addresses by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/addresses/byphno").permitAll()
+                        // The storefront's own add/remove of a customer's own saved addresses - see
+                        // ShippingAddressController.addOwnAddress/removeOwnAddress.
+                        .requestMatchers(HttpMethod.POST, "/addresses/self/add").permitAll()
+                        .requestMatchers(HttpMethod.DELETE, "/addresses/self/remove").permitAll()
                         // Same self-service trust level as /cart/byphno above - looking up your own loyalty
                         // points balance/history by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/loyalty/byphno", "/loyalty/history").permitAll()
