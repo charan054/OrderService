@@ -47,6 +47,17 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-openfeign</artifactId>
         </dependency>
+        <!-- Without this, Feign falls back to the JDK's HttpURLConnection-based client, which - on a
+             keep-alive connection - can hand FeignException an empty body even though the server sent a real
+             one with a correct Content-Length (confirmed live: curling PhonepayService directly always returns
+             the real error text, but the same failure through OrderService's Feign call came back with an
+             empty body every time). Apache HttpClient5 reads error bodies reliably regardless of keep-alive
+             reuse; Spring Cloud OpenFeign auto-configures it once it's on the classpath, no extra property
+             needed. -->
+        <dependency>
+            <groupId>io.github.openfeign</groupId>
+            <artifactId>feign-hc5</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
