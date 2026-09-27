@@ -1,6 +1,7 @@
 package com.example.orderservice.client;
 
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ProductReviewsResult;
@@ -53,5 +54,10 @@ public interface ProductClient {
 
     @PostMapping("/product/{productId}/reviews")
     ProductReview addReview(@PathVariable long productId, @RequestBody ReviewSubmission review);
+
+    // Public on ProductService's side (see its SecurityConfig - matches "/product/*/images"). Used by
+    // OrderService's own /cart/gallery proxy, since shop.html only ever calls its own origin.
+    @GetMapping("/product/{productId}/images")
+    List<ProductGalleryImage> getGalleryImages(@PathVariable long productId);
 
 }

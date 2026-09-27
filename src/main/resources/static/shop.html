@@ -497,6 +497,8 @@
             <h2 id="modalProductName"></h2>
             <div id="modalRatingSummary" class="rating-row"></div>
 
+            <div id="modalGallery" class="fbt-strip hidden"></div>
+
             <h3>Frequently bought together</h3>
             <div id="modalFbt" class="fbt-strip"></div>
 
@@ -1004,7 +1006,7 @@
         ? `<span class="stars">${starsFor(rating.averageRating)}</span> ${rating.averageRating.toFixed(1)} (${rating.reviewCount} reviews)`
         : "No reviews yet";
 
-      await Promise.all([loadModalReviews(productId), loadModalFrequentlyBoughtTogether(productId)]);
+      await Promise.all([loadModalReviews(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
     }
 
     function closeProductModal() {
@@ -1024,6 +1026,16 @@
           </div>
         `).join("")
         : `<p style="color:var(--muted); font-size:14px;">No reviews yet - be the first!</p>`;
+    }
+
+    async function loadModalGallery(productId) {
+      const box = document.getElementById("modalGallery");
+      const response = await fetch(`${BASE_URL}/cart/gallery?productId=${productId}`);
+      const images = response.ok ? await response.json() : [];
+      box.classList.toggle("hidden", images.length === 0);
+      box.innerHTML = images.map(img => `
+        <img src="${escapeHtml(img.imageUrl)}" alt="" style="width:100px; height:100px; object-fit:cover; border-radius:8px;" onerror="this.style.display='none'" />
+      `).join("");
     }
 
     async function loadModalFrequentlyBoughtTogether(productId) {

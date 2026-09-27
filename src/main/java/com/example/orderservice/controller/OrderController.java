@@ -2,6 +2,7 @@ package com.example.orderservice.controller;
 
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.Product;
+import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ReviewSubmission;
@@ -143,6 +144,12 @@ public class OrderController {
     @PostMapping("/reviews")
     public ProductReview addReview(@RequestParam long productId, @RequestBody ReviewSubmission review) {
         return orderService.addProductReview(productId, review.reviewerName(), review.reviewerPhno(), review.rating(), review.comment());
+    }
+    // Public, same catalog-browsing trust level as /cart/display - straight proxy to ProductService's own
+    // public gallery listing (see OrderService.getGalleryImages for why this exists at all).
+    @GetMapping("/gallery")
+    public List<ProductGalleryImage> getGalleryImages(@RequestParam long productId) {
+        return orderService.getGalleryImages(productId);
     }
     @GetMapping("/byphno")
     public List<Cart> findByPhno(long phno){

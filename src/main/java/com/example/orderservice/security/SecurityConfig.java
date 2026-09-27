@@ -33,7 +33,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery").permitAll()
                         // Posting a review is a customer action, same self-service trust level as the storefront's
                         // own checkout/wishlist/address writes above - proxies straight to ProductService's own
                         // public review-posting endpoint.

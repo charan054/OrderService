@@ -5,6 +5,7 @@ import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
+import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
@@ -760,6 +761,12 @@ public class OrderService {
 
     public ProductReview addProductReview(long productId, String reviewerName, long reviewerPhno, int rating, String comment) {
         return productClient.addReview(productId, new ReviewSubmission(reviewerName, reviewerPhno, rating, comment));
+    }
+
+    // Straight proxy to ProductService's own public gallery listing - same "shop.html only calls its own
+    // origin" reasoning as getProductReviews() above.
+    public List<ProductGalleryImage> getGalleryImages(long productId) {
+        return productClient.getGalleryImages(productId);
     }
 
     private static final int DEFAULT_FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 5;

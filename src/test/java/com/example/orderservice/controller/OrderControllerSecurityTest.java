@@ -135,6 +135,13 @@ class OrderControllerSecurityTest {
         mockMvc.perform(get("/cart/notifications").param("phno", "9876543210")).andExpect(status().isOk());
     }
 
+    // Straight proxy to ProductService's own public gallery listing - same catalog-browsing trust level as
+    // /cart/display.
+    @Test
+    void productGalleryIsPublic() throws Exception {
+        mockMvc.perform(get("/cart/gallery").param("productId", "1")).andExpect(status().isOk());
+    }
+
     @Test
     void lookingUpOwnPriceDropAlertsByPhoneIsPublic() throws Exception {
         mockMvc.perform(get("/wishlist/pricedrops").param("phno", "9876543210")).andExpect(status().isOk());

@@ -10,6 +10,7 @@ import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
@@ -1596,6 +1597,16 @@ class OrderServiceTest {
 
         assertEquals(saved, result);
         verify(productClient).addReview(1L, new ReviewSubmission("Bob", 9876543210L, 4, "Good"));
+    }
+
+    @Test
+    void getGalleryImagesDelegatesToProductClient() {
+        ProductGalleryImage image = new ProductGalleryImage(1, 1, "https://example.com/gallery1.jpg");
+        when(productClient.getGalleryImages(1)).thenReturn(List.of(image));
+
+        List<ProductGalleryImage> result = service.getGalleryImages(1);
+
+        assertEquals(List.of(image), result);
     }
 
     @Test
