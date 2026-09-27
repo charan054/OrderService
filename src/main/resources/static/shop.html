@@ -601,8 +601,24 @@
         <div class="cart-line"><span>Status</span><span>${escapeHtml(order.status)}</span></div>
         <div class="cart-line"><span>Total</span><span>₹${order.totalPrice.toFixed(2)}</span></div>
         <div class="cart-line"><span>Payment</span><span>${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span></div>
+        ${deliveryEtaLine(order.status, timeline)}
         ${timeline.map(event => `<div class="cart-line"><span>${escapeHtml(event.status)}</span><span>${new Date(event.timestamp).toLocaleString()}</span></div>`).join("")}
       `;
+    }
+
+    // A simple estimate, not a real carrier ETA - this system has no logistics/carrier integration to draw a
+    // real one from. Only shown once SHIPPED (an estimate before that would be pure guesswork), and no longer
+    // once the order has actually reached a final state (DELIVERED/CANCELLED/RETURNED) - the real event already
+    // says what happened by then, an estimate would be redundant or wrong.
+    const SHIPPING_ETA_DAYS = 3;
+
+    function deliveryEtaLine(status, timeline) {
+      if (status !== "SHIPPED") return "";
+      const shippedEvent = timeline.find(e => e.status === "SHIPPED");
+      if (!shippedEvent) return "";
+      const eta = new Date(shippedEvent.timestamp);
+      eta.setDate(eta.getDate() + SHIPPING_ETA_DAYS);
+      return `<div class="cart-line"><span>Estimated delivery</span><span>${eta.toLocaleDateString()}</span></div>`;
     }
 
     function enterShop() {
