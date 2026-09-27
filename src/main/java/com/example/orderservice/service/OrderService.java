@@ -10,7 +10,9 @@ import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.RefundRequest;
+import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
@@ -713,6 +715,20 @@ public class OrderService {
                 })
                 .filter(Objects::nonNull)
                 .toList();
+    }
+
+    private static final int DEFAULT_REVIEWS_PAGE_SIZE = 20;
+
+    // Straight proxy to ProductService's own public review listing/posting - shop.html only ever calls its own
+    // origin (see searchProducts()/getRatingSummaries() above for the same reasoning), so OrderService fronts it.
+    public List<ProductReview> getProductReviews(long productId, Integer page, Integer size) {
+        int effectivePage = (page == null || page < 0) ? 0 : page;
+        int effectiveSize = (size == null || size <= 0) ? DEFAULT_REVIEWS_PAGE_SIZE : size;
+        return productClient.getReviews(productId, effectivePage, effectiveSize).content();
+    }
+
+    public ProductReview addProductReview(long productId, String reviewerName, long reviewerPhno, int rating, String comment) {
+        return productClient.addReview(productId, new ReviewSubmission(reviewerName, reviewerPhno, rating, comment));
     }
 
     private static final int DEFAULT_FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 5;

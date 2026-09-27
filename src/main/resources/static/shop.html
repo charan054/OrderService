@@ -253,6 +253,74 @@
 
         .rating-row .stars { color: #f59e0b; letter-spacing: 1px; }
 
+        .details-link {
+          background: none;
+          border: none;
+          width: auto;
+          color: var(--primary);
+          font-weight: 600;
+          font-size: 12px;
+          padding: 0;
+          margin-bottom: 6px;
+          text-decoration: underline;
+          cursor: pointer;
+        }
+
+        .modal-overlay {
+          position: fixed;
+          inset: 0;
+          background: rgba(15, 23, 42, 0.55);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: 20px;
+          z-index: 50;
+        }
+
+        .modal-box {
+          background: white;
+          border-radius: 20px;
+          padding: 24px;
+          width: min(560px, 100%);
+          max-height: 85vh;
+          overflow-y: auto;
+          box-shadow: var(--shadow);
+        }
+
+        .modal-box h2 { margin-bottom: 4px; }
+        .modal-box h3 { font-size: 15px; margin: 18px 0 8px; }
+
+        .modal-close {
+          width: auto;
+          background: #e2e8f0;
+          color: var(--dark);
+          padding: 6px 12px;
+          font-size: 13px;
+          float: right;
+        }
+
+        .fbt-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+        .fbt-chip {
+          flex: 0 0 auto;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 8px 12px;
+          font-size: 13px;
+          background: #fbfdff;
+        }
+        .fbt-chip .fbt-count { color: var(--muted); font-size: 11px; }
+
+        .review-item {
+          border-bottom: 1px solid var(--border);
+          padding: 10px 0;
+        }
+        .review-item:last-child { border-bottom: none; }
+        .review-item .stars { color: #f59e0b; letter-spacing: 1px; font-size: 13px; }
+        .review-item .review-meta { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+        .review-item .review-comment { font-size: 14px; }
+
+        .review-form select, .review-form input { margin-bottom: 10px; }
+
         .panel {
           background: white;
           border: 1px solid var(--border);
@@ -405,6 +473,36 @@
             </div>
         </div>
     </section>
+
+    <div id="productModal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <button class="modal-close" onclick="closeProductModal()">Close</button>
+            <h2 id="modalProductName"></h2>
+            <div id="modalRatingSummary" class="rating-row"></div>
+
+            <h3>Frequently bought together</h3>
+            <div id="modalFbt" class="fbt-strip"></div>
+
+            <h3>Reviews</h3>
+            <div id="modalReviews"></div>
+
+            <h3>Write a review</h3>
+            <div class="review-form">
+                <input type="text" id="reviewerName" placeholder="Your name" />
+                <input type="tel" id="reviewerPhno" placeholder="Your phone number" />
+                <select id="reviewRating">
+                    <option value="5">&#9733;&#9733;&#9733;&#9733;&#9733; - Excellent</option>
+                    <option value="4">&#9733;&#9733;&#9733;&#9733;&#9734; - Good</option>
+                    <option value="3">&#9733;&#9733;&#9733;&#9734;&#9734; - Okay</option>
+                    <option value="2">&#9733;&#9733;&#9734;&#9734;&#9734; - Poor</option>
+                    <option value="1">&#9733;&#9734;&#9734;&#9734;&#9734; - Terrible</option>
+                </select>
+                <input type="text" id="reviewComment" placeholder="Your comment" />
+                <div id="reviewFormError" class="error-text hidden"></div>
+                <button onclick="submitReview()">Submit review</button>
+            </div>
+        </div>
+    </div>
 </main>
 
 <script>
@@ -417,6 +515,7 @@
     let activeTab = "all";
     let allCategories = [];
     let searchDebounceTimer = null;
+    let modalProductId = null;
     let ratingsByProductId = new Map();
 
     function showAccountInfo() {
@@ -752,6 +851,7 @@
             ${rating && rating.reviewCount > 0
               ? `<div class="rating-row"><span class="stars">${starsFor(rating.averageRating)}</span> (${rating.reviewCount})</div>`
               : `<div class="rating-row">No reviews yet</div>`}
+            <button class="details-link" onclick="openProductModal(${p.productId})">Reviews &amp; similar items</button>
             ${priceDrop ? `<div class="price-drop-badge">Price dropped ₹${priceDrop.priceDrop.toFixed(2)}</div>` : ""}
             <div class="price-row"><span class="price">₹${p.productPrice}</span></div>
             <div class="qty-row">
@@ -762,6 +862,94 @@
         </div>
       `;
       }).join("");
+    }
+
+    async function openProductModal(productId) {
+      modalProductId = productId;
+      const product = products.find(p => p.productId === productId);
+      document.getElementById("modalProductName").textContent = product ? product.productName : "";
+      document.getElementById("reviewFormError").classList.add("hidden");
+      document.getElementById("reviewerName").value = "";
+      document.getElementById("reviewComment").value = "";
+      document.getElementById("productModal").classList.remove("hidden");
+
+      const rating = ratingsByProductId.get(productId);
+      document.getElementById("modalRatingSummary").innerHTML = rating && rating.reviewCount > 0
+        ? `<span class="stars">${starsFor(rating.averageRating)}</span> ${rating.averageRating.toFixed(1)} (${rating.reviewCount} reviews)`
+        : "No reviews yet";
+
+      await Promise.all([loadModalReviews(productId), loadModalFrequentlyBoughtTogether(productId)]);
+    }
+
+    function closeProductModal() {
+      document.getElementById("productModal").classList.add("hidden");
+      modalProductId = null;
+    }
+
+    async function loadModalReviews(productId) {
+      const box = document.getElementById("modalReviews");
+      const response = await fetch(`${BASE_URL}/cart/reviews?productId=${productId}`);
+      const reviews = response.ok ? await response.json() : [];
+      box.innerHTML = reviews.length
+        ? reviews.map(r => `
+          <div class="review-item">
+            <div class="review-meta">${escapeHtml(r.reviewerName)} &middot; <span class="stars">${starsFor(r.rating)}</span></div>
+            <div class="review-comment">${escapeHtml(r.comment || "")}</div>
+          </div>
+        `).join("")
+        : `<p style="color:var(--muted); font-size:14px;">No reviews yet - be the first!</p>`;
+    }
+
+    async function loadModalFrequentlyBoughtTogether(productId) {
+      const box = document.getElementById("modalFbt");
+      const response = await fetch(`${BASE_URL}/cart/frequentlyboughttogether?productId=${productId}`);
+      const items = response.ok ? await response.json() : [];
+      box.innerHTML = items.length
+        ? items.map(item => `
+          <div class="fbt-chip">
+            ${escapeHtml(item.productName)}
+            <div class="fbt-count">bought together ${item.timesBoughtTogether}&times;</div>
+          </div>
+        `).join("")
+        : `<p style="color:var(--muted); font-size:14px;">No pairing data yet.</p>`;
+    }
+
+    async function submitReview() {
+      const errorBox = document.getElementById("reviewFormError");
+      errorBox.classList.add("hidden");
+
+      const reviewerName = document.getElementById("reviewerName").value.trim();
+      const reviewerPhno = document.getElementById("reviewerPhno").value.trim();
+      const rating = Number(document.getElementById("reviewRating").value);
+      const comment = document.getElementById("reviewComment").value.trim();
+
+      if (!reviewerName || !reviewerPhno) {
+        errorBox.textContent = "Please enter your name and phone number.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      const response = await fetch(`${BASE_URL}/cart/reviews?productId=${modalProductId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewerName, reviewerPhno: Number(reviewerPhno), rating, comment })
+      });
+
+      if (!response.ok) {
+        errorBox.textContent = "Could not submit your review. You may have already reviewed this product.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      document.getElementById("reviewerName").value = "";
+      document.getElementById("reviewerPhno").value = "";
+      document.getElementById("reviewComment").value = "";
+      await loadModalReviews(modalProductId);
+      await loadRatings();
+      const rating2 = ratingsByProductId.get(modalProductId);
+      document.getElementById("modalRatingSummary").innerHTML = rating2 && rating2.reviewCount > 0
+        ? `<span class="stars">${starsFor(rating2.averageRating)}</span> ${rating2.averageRating.toFixed(1)} (${rating2.reviewCount} reviews)`
+        : "No reviews yet";
     }
 
     function addToCart(productId) {

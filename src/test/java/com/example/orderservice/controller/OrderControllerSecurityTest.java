@@ -5,6 +5,8 @@ import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ProductReview;
+import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.kafka.OrderKafkaProducer;
 import org.junit.jupiter.api.Test;
@@ -18,11 +20,13 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -90,6 +94,24 @@ class OrderControllerSecurityTest {
     void ratingsIsPublic() throws Exception {
         when(productClient.getRatingSummary(1)).thenReturn(new ProductRatingSummary(1, 4.5, 3));
         mockMvc.perform(get("/cart/ratings").param("productIds", "1")).andExpect(status().isOk());
+    }
+
+    @Test
+    void reviewsListingIsPublic() throws Exception {
+        when(productClient.getReviews(1, 0, 20)).thenReturn(new ProductReviewsResult(List.of()));
+        mockMvc.perform(get("/cart/reviews").param("productId", "1")).andExpect(status().isOk());
+    }
+
+    @Test
+    void postingAReviewWithoutKeySucceeds() throws Exception {
+        when(productClient.addReview(eq(1L), any()))
+                .thenReturn(new ProductReview(1, "Alice", 9876543210L, 5, "Great!", LocalDateTime.now()));
+        mockMvc.perform(post("/cart/reviews").param("productId", "1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"reviewerName":"Alice","reviewerPhno":9876543210,"rating":5,"comment":"Great!"}
+                                """))
+                .andExpect(status().isOk());
     }
 
     @Test

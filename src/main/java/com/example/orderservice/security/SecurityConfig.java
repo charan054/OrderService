@@ -33,7 +33,11 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews").permitAll()
+                        // Posting a review is a customer action, same self-service trust level as the storefront's
+                        // own checkout/wishlist/address writes above - proxies straight to ProductService's own
+                        // public review-posting endpoint.
+                        .requestMatchers(HttpMethod.POST, "/cart/reviews").permitAll()
                         // The customer-facing storefront's own checkout - see OrderController.checkout for why
                         // this can't require the same X-Service-Key /cart/add does.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout").permitAll()
