@@ -2,12 +2,17 @@ package com.example.orderservice.client;
 
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ProductReview;
+import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
+import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.entity.OrderItem;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -39,5 +44,14 @@ public interface ProductClient {
     // OrderService.getRatingSummaries() to surface star ratings on the storefront's product cards.
     @GetMapping("/product/{productId}/rating-summary")
     ProductRatingSummary getRatingSummary(@PathVariable long productId);
+
+    // Public on ProductService's side (see its SecurityConfig - matches "/product/*/reviews" with no HttpMethod
+    // restriction, so both GET and POST are open). Used by OrderService's own /cart/reviews proxy, since
+    // shop.html only ever calls its own origin.
+    @GetMapping("/product/{productId}/reviews")
+    ProductReviewsResult getReviews(@PathVariable long productId, @RequestParam int page, @RequestParam int size);
+
+    @PostMapping("/product/{productId}/reviews")
+    ProductReview addReview(@PathVariable long productId, @RequestBody ReviewSubmission review);
 
 }

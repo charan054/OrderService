@@ -10,8 +10,11 @@ import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ProductReview;
+import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.RefundRequest;
+import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
@@ -56,6 +59,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -1508,6 +1512,38 @@ class OrderServiceTest {
 
         assertEquals(1, result.size());
         assertEquals(4.5, result.get(0).averageRating());
+    }
+
+    // ---------- getProductReviews / addProductReview ----------
+
+    @Test
+    void getProductReviewsDefaultsPageAndSizeWhenNotProvided() {
+        when(productClient.getReviews(1, 0, 20))
+                .thenReturn(new ProductReviewsResult(List.of(new ProductReview(1, "Alice", 9876543210L, 5, "Great!", LocalDateTime.now()))));
+
+        List<ProductReview> result = service.getProductReviews(1, null, null);
+
+        assertEquals(1, result.size());
+        assertEquals("Alice", result.get(0).reviewerName());
+    }
+
+    @Test
+    void getProductReviewsUsesProvidedPageAndSize() {
+        when(productClient.getReviews(1, 2, 5)).thenReturn(new ProductReviewsResult(List.of()));
+
+        assertTrue(service.getProductReviews(1, 2, 5).isEmpty());
+        verify(productClient).getReviews(1, 2, 5);
+    }
+
+    @Test
+    void addProductReviewDelegatesToProductClient() {
+        ProductReview saved = new ProductReview(1, "Bob", 9876543210L, 4, "Good", LocalDateTime.now());
+        when(productClient.addReview(eq(1L), any())).thenReturn(saved);
+
+        ProductReview result = service.addProductReview(1, "Bob", 9876543210L, 4, "Good");
+
+        assertEquals(saved, result);
+        verify(productClient).addReview(1L, new ReviewSubmission("Bob", 9876543210L, 4, "Good"));
     }
 
     @Test
