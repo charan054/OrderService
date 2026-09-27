@@ -22,6 +22,13 @@ public class ShippingAddressController {
         return orderService.saveAddress(address);
     }
 
+    // Same self-service trust level as GET /addresses/byphno - a customer managing their OWN saved addresses by
+    // their OWN phone number, no internal X-Service-Key involved (same reasoning as /wishlist/self/add).
+    @PostMapping("/self/add")
+    public ShippingAddress addOwnAddress(@RequestBody ShippingAddress address) {
+        return orderService.saveAddress(address);
+    }
+
     @GetMapping("/byphno")
     public List<ShippingAddress> getAddresses(@RequestParam long phno) {
         return orderService.getAddresses(phno);
@@ -29,6 +36,12 @@ public class ShippingAddressController {
 
     @DeleteMapping("/remove")
     public void removeAddress(@RequestParam long phno, @RequestParam long addressId) {
+        orderService.deleteAddress(phno, addressId);
+    }
+
+    // Same reasoning as /self/add above.
+    @DeleteMapping("/self/remove")
+    public void removeOwnAddress(@RequestParam long phno, @RequestParam long addressId) {
         orderService.deleteAddress(phno, addressId);
     }
 }

@@ -342,6 +342,22 @@ class OrderControllerSecurityTest {
                 .andExpect(status().isUnauthorized());
     }
 
+    // The storefront's own address add/remove - public, no X-Service-Key, same self-service trust level as
+    // GET /addresses/byphno (see SecurityConfig).
+    @Test
+    void addOwnAddressWithoutKeySucceeds() throws Exception {
+        mockMvc.perform(post("/addresses/self/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ADDRESS))
+                .andExpect(status().isOk());
+    }
+
+    // Public and reachable with no key at all - a non-existent address id still 404s the same way
+    // /addresses/remove (X-Service-Key gated) already does, it just doesn't need the key to get there.
+    @Test
+    void removeOwnAddressWithoutKeyOfAnUnknownAddressReturns404() throws Exception {
+        mockMvc.perform(delete("/addresses/self/remove").param("phno", "9876543210").param("addressId", "1"))
+                .andExpect(status().isNotFound());
+    }
+
     @Test
     void returnOrderWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(post("/cart/42/return").param("reason", "damaged")).andExpect(status().isUnauthorized());
