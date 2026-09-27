@@ -33,7 +33,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery").permitAll()
                         // Posting a review is a customer action, same self-service trust level as the storefront's
                         // own checkout/wishlist/address writes above - proxies straight to ProductService's own
                         // public review-posting endpoint.
@@ -46,6 +46,9 @@ public class SecurityConfig {
                         // a CASH order has no gate at all, same trust level the storefront's other self-service
                         // writes already have.
                         .requestMatchers(HttpMethod.POST, "/cart/*/cancel").permitAll()
+                        // Same reasoning as cancel above - a customer requesting a return on their own delivered
+                        // order. The only gate is the same PHONEPE-refund buyer-token requirement.
+                        .requestMatchers(HttpMethod.POST, "/cart/*/return").permitAll()
                         // Same self-service trust level as /cart/byphno above - looking up your own wishlist (and
                         // its price-drop alerts) by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/wishlist/byphno", "/wishlist/pricedrops").permitAll()

@@ -10,6 +10,7 @@ import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
@@ -1377,6 +1378,25 @@ class OrderServiceTest {
         assertEquals(OrderStatus.RETURNED, captor.getValue().getStatus());
     }
 
+    // Mirrors order()'s storefront path - the customer-facing return button has no stored session token either,
+    // only a phone+PIN entered fresh for this call (see resolveBuyerToken).
+    @Test
+    void returnOrderWithPhonePhnoAndPinLogsInAndRefundsWithTheReturnedToken() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 2));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.login(new PhonepeLoginRequest(CUSTOMER, "1234")))
+                .thenReturn(new PhonepeLoginResponse("fresh-token", Instant.parse("2026-09-25T11:00:00Z"), CUSTOMER, "Buyer"));
+        when(phonepeClient.refund(eq("Bearer fresh-token"), eq(100000L), any(RefundRequest.class)))
+                .thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.returnOrder(42L, null, null, "damaged", CUSTOMER, "1234");
+
+        assertEquals(OrderStatus.RETURNED, result.getStatus());
+        verify(phonepeClient).refund(eq("Bearer fresh-token"), eq(100000L), any(RefundRequest.class));
+    }
+
     private LoyaltyTransaction earnedTransaction(long orderId, int points) {
         LoyaltyTransaction tx = new LoyaltyTransaction();
         tx.setOrderId(orderId);
@@ -1577,6 +1597,16 @@ class OrderServiceTest {
 
         assertEquals(saved, result);
         verify(productClient).addReview(1L, new ReviewSubmission("Bob", 9876543210L, 4, "Good"));
+    }
+
+    @Test
+    void getGalleryImagesDelegatesToProductClient() {
+        ProductGalleryImage image = new ProductGalleryImage(1, 1, "https://example.com/gallery1.jpg");
+        when(productClient.getGalleryImages(1)).thenReturn(List.of(image));
+
+        List<ProductGalleryImage> result = service.getGalleryImages(1);
+
+        assertEquals(List.of(image), result);
     }
 
     @Test

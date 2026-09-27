@@ -5,6 +5,7 @@ import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
+import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
@@ -215,6 +216,12 @@ public class OrderService {
     // are mutually exclusive by status, never overlapping windows. Otherwise the same fail-safe refund-then-
     // restore-stock shape as cancel(): a declined refund leaves the order exactly DELIVERED, nothing rolled back.
     public Cart returnOrder(long orderId, String authorization, String idempotencyKey, String reason) {
+        return returnOrder(orderId, authorization, idempotencyKey, reason, null, null);
+    }
+
+    // payerPhno/payerPin mirror cancel()'s storefront path - the customer-facing return button has no stored
+    // session token either, only a phone+PIN entered fresh for this one call (see resolveBuyerToken).
+    public Cart returnOrder(long orderId, String authorization, String idempotencyKey, String reason, Long payerPhno, String payerPin) {
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A return reason is required");
         }
@@ -239,7 +246,8 @@ public class OrderService {
         }
 
         if (cart.getPaymentMethod() != PaymentMethod.CASH) {
-            refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
+            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
+            refund(token, cart.getPaymentTransactionId(), idempotencyKey);
         }
 
         for (OrderItem orderItem : cart.getOrderItems()) {
@@ -753,6 +761,12 @@ public class OrderService {
 
     public ProductReview addProductReview(long productId, String reviewerName, long reviewerPhno, int rating, String comment) {
         return productClient.addReview(productId, new ReviewSubmission(reviewerName, reviewerPhno, rating, comment));
+    }
+
+    // Straight proxy to ProductService's own public gallery listing - same "shop.html only calls its own
+    // origin" reasoning as getProductReviews() above.
+    public List<ProductGalleryImage> getGalleryImages(long productId) {
+        return productClient.getGalleryImages(productId);
     }
 
     private static final int DEFAULT_FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 5;

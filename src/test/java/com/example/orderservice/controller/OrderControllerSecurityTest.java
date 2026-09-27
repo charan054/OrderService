@@ -135,6 +135,13 @@ class OrderControllerSecurityTest {
         mockMvc.perform(get("/cart/notifications").param("phno", "9876543210")).andExpect(status().isOk());
     }
 
+    // Straight proxy to ProductService's own public gallery listing - same catalog-browsing trust level as
+    // /cart/display.
+    @Test
+    void productGalleryIsPublic() throws Exception {
+        mockMvc.perform(get("/cart/gallery").param("productId", "1")).andExpect(status().isOk());
+    }
+
     @Test
     void lookingUpOwnPriceDropAlertsByPhoneIsPublic() throws Exception {
         mockMvc.perform(get("/wishlist/pricedrops").param("phno", "9876543210")).andExpect(status().isOk());
@@ -386,16 +393,11 @@ class OrderControllerSecurityTest {
                 .andExpect(status().isNotFound());
     }
 
+    // /cart/*/return is now the storefront's own self-service return request - no X-Service-Key required, same
+// as /cart/*/cancel above. An unknown order id 404s regardless of whether a key was supplied.
     @Test
-    void returnOrderWithoutKeyIsUnauthorized() throws Exception {
-        mockMvc.perform(post("/cart/42/return").param("reason", "damaged")).andExpect(status().isUnauthorized());
-    }
-
-    // Same reasoning as cancelOrderWithValidKeyAndNoBuyerTokenOfAnUnknownOrderReturns404 above.
-    @Test
-    void returnOrderWithValidKeyAndNoBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
-        mockMvc.perform(post("/cart/42/return").param("reason", "damaged").header("X-Service-Key", VALID_KEY))
-                .andExpect(status().isNotFound());
+    void returnOrderWithoutKeyOrBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/return").param("reason", "damaged")).andExpect(status().isNotFound());
     }
 
     @Test

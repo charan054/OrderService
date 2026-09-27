@@ -447,6 +447,7 @@
                 <div class="grid-tabs">
                     <button class="active" id="tabAll" onclick="showTab('all')">All products</button>
                     <button id="tabWishlist" onclick="showTab('wishlist')">Wishlist (<span id="wishlistCount">0</span>)</button>
+                    <button id="tabRecent" onclick="showTab('recent')">Recently viewed</button>
                     <button id="tabAccount" onclick="showTab('account')">My account</button>
                     <button id="tabNotifications" onclick="showTab('notifications')">My notifications</button>
                 </div>
@@ -495,6 +496,8 @@
             <button class="modal-close" onclick="closeProductModal()">Close</button>
             <h2 id="modalProductName"></h2>
             <div id="modalRatingSummary" class="rating-row"></div>
+
+            <div id="modalGallery" class="fbt-strip hidden"></div>
 
             <h3>Frequently bought together</h3>
             <div id="modalFbt" class="fbt-strip"></div>
@@ -601,8 +604,24 @@
         <div class="cart-line"><span>Status</span><span>${escapeHtml(order.status)}</span></div>
         <div class="cart-line"><span>Total</span><span>₹${order.totalPrice.toFixed(2)}</span></div>
         <div class="cart-line"><span>Payment</span><span>${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span></div>
+        ${deliveryEtaLine(order.status, timeline)}
         ${timeline.map(event => `<div class="cart-line"><span>${escapeHtml(event.status)}</span><span>${new Date(event.timestamp).toLocaleString()}</span></div>`).join("")}
       `;
+    }
+
+    // A simple estimate, not a real carrier ETA - this system has no logistics/carrier integration to draw a
+    // real one from. Only shown once SHIPPED (an estimate before that would be pure guesswork), and no longer
+    // once the order has actually reached a final state (DELIVERED/CANCELLED/RETURNED) - the real event already
+    // says what happened by then, an estimate would be redundant or wrong.
+    const SHIPPING_ETA_DAYS = 3;
+
+    function deliveryEtaLine(status, timeline) {
+      if (status !== "SHIPPED") return "";
+      const shippedEvent = timeline.find(e => e.status === "SHIPPED");
+      if (!shippedEvent) return "";
+      const eta = new Date(shippedEvent.timestamp);
+      eta.setDate(eta.getDate() + SHIPPING_ETA_DAYS);
+      return `<div class="cart-line"><span>Estimated delivery</span><span>${eta.toLocaleDateString()}</span></div>`;
     }
 
     function enterShop() {
@@ -702,6 +721,7 @@
       document.getElementById("tabWishlist").classList.toggle("active", tab === "wishlist");
       document.getElementById("tabAccount").classList.toggle("active", tab === "account");
       document.getElementById("tabNotifications").classList.toggle("active", tab === "notifications");
+      document.getElementById("tabRecent").classList.toggle("active", tab === "recent");
       document.getElementById("productGrid").classList.toggle("hidden", tab === "account" || tab === "notifications");
       document.getElementById("accountView").classList.toggle("hidden", tab !== "account");
       document.getElementById("notificationsView").classList.toggle("hidden", tab !== "notifications");
@@ -765,6 +785,7 @@
           </div>
           <div class="price">₹${order.totalPrice.toFixed(2)}</div>
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
+          ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
         </div>
       `).join("") : `<p style="color:var(--muted);">No orders yet.</p>`;
 
@@ -813,6 +834,26 @@
       if (!response.ok) {
         const body = await response.text();
         alert(body || "Could not cancel this order.");
+        return;
+      }
+      loadAccountView();
+    }
+
+    async function returnMyOrder(orderId, paymentMethod) {
+      const reason = prompt("Why are you returning this order?");
+      if (!reason) return;
+
+      let query = `?reason=${encodeURIComponent(reason)}`;
+      if (paymentMethod !== "CASH") {
+        const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
+        if (!pin) return;
+        query += `&payerPhno=${encodeURIComponent(customerPhno)}&payerPin=${encodeURIComponent(pin)}`;
+      }
+
+      const response = await fetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/return${query}`, { method: "POST" });
+      if (!response.ok) {
+        const body = await response.text();
+        alert(body || "Could not return this order.");
         return;
       }
       loadAccountView();
@@ -881,11 +922,15 @@
       const grid = document.getElementById("productGrid");
       const visibleProducts = activeTab === "wishlist"
         ? products.filter(p => wishlistProductIds.has(p.productId))
+        : activeTab === "recent"
+        ? recentlyViewedIds().map(id => products.find(p => p.productId === id)).filter(Boolean)
         : products;
 
       if (!visibleProducts.length) {
         grid.innerHTML = activeTab === "wishlist"
           ? `<p style="color:var(--muted);">Nothing wishlisted yet - tap the heart on a product to save it here.</p>`
+          : activeTab === "recent"
+          ? `<p style="color:var(--muted);">No products viewed yet - open a product's details to see it here.</p>`
           : `<p style="color:var(--muted);">No products available right now.</p>`;
         return;
       }
@@ -922,7 +967,32 @@
       }).join("");
     }
 
+    // Per-browser only (localStorage), same as the phone-number login itself - no server-side storage, capped
+    // at the 10 most recent, most-recent-first, deduplicated (re-viewing a product moves it back to the front
+    // rather than creating a second entry).
+    const RECENTLY_VIEWED_LIMIT = 10;
+
+    function recentlyViewedIds() {
+      try {
+        return JSON.parse(localStorage.getItem("shopRecentlyViewed") || "[]");
+      } catch {
+        return [];
+      }
+    }
+
+    function recordRecentlyViewed(productId) {
+      const ids = recentlyViewedIds().filter(id => id !== productId);
+      ids.unshift(productId);
+      try {
+        localStorage.setItem("shopRecentlyViewed", JSON.stringify(ids.slice(0, RECENTLY_VIEWED_LIMIT)));
+      } catch {
+        // Private browsing / storage disabled - recently-viewed just won't persist, not worth failing the
+        // product view itself over.
+      }
+    }
+
     async function openProductModal(productId) {
+      recordRecentlyViewed(productId);
       modalProductId = productId;
       const product = products.find(p => p.productId === productId);
       document.getElementById("modalProductName").textContent = product ? product.productName : "";
@@ -936,7 +1006,7 @@
         ? `<span class="stars">${starsFor(rating.averageRating)}</span> ${rating.averageRating.toFixed(1)} (${rating.reviewCount} reviews)`
         : "No reviews yet";
 
-      await Promise.all([loadModalReviews(productId), loadModalFrequentlyBoughtTogether(productId)]);
+      await Promise.all([loadModalReviews(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
     }
 
     function closeProductModal() {
@@ -956,6 +1026,16 @@
           </div>
         `).join("")
         : `<p style="color:var(--muted); font-size:14px;">No reviews yet - be the first!</p>`;
+    }
+
+    async function loadModalGallery(productId) {
+      const box = document.getElementById("modalGallery");
+      const response = await fetch(`${BASE_URL}/cart/gallery?productId=${productId}`);
+      const images = response.ok ? await response.json() : [];
+      box.classList.toggle("hidden", images.length === 0);
+      box.innerHTML = images.map(img => `
+        <img src="${escapeHtml(img.imageUrl)}" alt="" style="width:100px; height:100px; object-fit:cover; border-radius:8px;" onerror="this.style.display='none'" />
+      `).join("");
     }
 
     async function loadModalFrequentlyBoughtTogether(productId) {
