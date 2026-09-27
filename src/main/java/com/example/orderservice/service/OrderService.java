@@ -171,6 +171,12 @@ public class OrderService {
     // a successful refund restores stock and marks the order CANCELLED - a declined/failed refund leaves the
     // order exactly as it was, the same fail-safe shape order() already uses for placing one.
     public Cart cancel(long orderId, String authorization, String idempotencyKey) {
+        return cancel(orderId, authorization, idempotencyKey, null, null);
+    }
+
+    // payerPhno/payerPin mirror order()'s storefront path - the customer-facing cancel button has no stored
+    // session token either, only a phone+PIN entered fresh for this one call (see resolveBuyerToken).
+    public Cart cancel(long orderId, String authorization, String idempotencyKey, Long payerPhno, String payerPin) {
         Cart cart = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
         if (cart.getStatus() == OrderStatus.CANCELLED) {
@@ -186,7 +192,8 @@ public class OrderService {
             if (cart.getPaymentTransactionId() == null) {
                 throw new ProductException("This order cannot be cancelled");
             }
-            refund(authorization, cart.getPaymentTransactionId(), idempotencyKey);
+            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
+            refund(token, cart.getPaymentTransactionId(), idempotencyKey);
         }
 
         for (OrderItem orderItem : cart.getOrderItems()) {

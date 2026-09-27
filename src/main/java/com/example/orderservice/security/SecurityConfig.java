@@ -41,6 +41,11 @@ public class SecurityConfig {
                         // The customer-facing storefront's own checkout - see OrderController.checkout for why
                         // this can't require the same X-Service-Key /cart/add does.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout").permitAll()
+                        // A customer cancelling their own order - same reasoning as checkout above. The only gate
+                        // is that a PHONEPE refund requires the real buyer token (see OrderController.cancelOrder);
+                        // a CASH order has no gate at all, same trust level the storefront's other self-service
+                        // writes already have.
+                        .requestMatchers(HttpMethod.POST, "/cart/*/cancel").permitAll()
                         // Same self-service trust level as /cart/byphno above - looking up your own wishlist (and
                         // its price-drop alerts) by your own phone number.
                         .requestMatchers(HttpMethod.GET, "/wishlist/byphno", "/wishlist/pricedrops").permitAll()

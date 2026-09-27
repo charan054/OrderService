@@ -726,6 +726,7 @@
             <span class="meta">${escapeHtml(order.status)} &middot; ${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span>
           </div>
           <div class="price">₹${order.totalPrice.toFixed(2)}</div>
+          ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
         </div>
       `).join("") : `<p style="color:var(--muted);">No orders yet.</p>`;
 
@@ -758,6 +759,25 @@
           <button onclick="addAddress()">Add address</button>
         </div>
       `;
+    }
+
+    async function cancelMyOrder(orderId, paymentMethod) {
+      if (!confirm(`Cancel order #${orderId}? This can't be undone.`)) return;
+
+      let query = "";
+      if (paymentMethod !== "CASH") {
+        const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
+        if (!pin) return;
+        query = `?payerPhno=${encodeURIComponent(customerPhno)}&payerPin=${encodeURIComponent(pin)}`;
+      }
+
+      const response = await fetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/cancel${query}`, { method: "POST" });
+      if (!response.ok) {
+        const body = await response.text();
+        alert(body || "Could not cancel this order.");
+        return;
+      }
+      loadAccountView();
     }
 
     async function addAddress() {
