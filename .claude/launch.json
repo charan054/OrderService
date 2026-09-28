@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "orderservice",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "D:\\charan\\OrderService\\run-dev.bat"],
+      "port": 8083
+    }
+  ]
+}
