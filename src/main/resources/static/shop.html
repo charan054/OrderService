@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Shop</title>
+    <title>Charan Mart</title>
 
     <style>
         :root {
-          --primary: #6d28d9;
+          --primary: #7c3aed;
           --primary-dark: #4c1d95;
+          --accent: #f97316;
           --green: #16a34a;
           --red: #dc2626;
           --dark: #0f172a;
@@ -27,21 +28,47 @@
 
         body {
           min-height: 100vh;
-          background: var(--bg);
+          background: radial-gradient(circle at top left, #ede9fe 0%, var(--bg) 45%);
           color: var(--dark);
         }
 
         header.topbar {
-          background: linear-gradient(135deg, #111827, #312e81, #6d28d9);
+          background: linear-gradient(120deg, #4c1d95, #7c3aed 55%, #f97316);
           color: white;
-          padding: 22px 24px;
+          padding: 20px 24px;
           display: flex;
           align-items: center;
           justify-content: space-between;
+          box-shadow: 0 8px 30px rgba(76, 29, 149, 0.35);
+        }
+
+        header.topbar .brand {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        header.topbar .brand .logo-mark {
+          width: 38px;
+          height: 38px;
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.18);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 20px;
         }
 
         header.topbar h1 {
           font-size: 22px;
+          font-weight: 800;
+          letter-spacing: -0.02em;
+        }
+
+        header.topbar .tagline {
+          font-size: 12px;
+          color: #ede9fe;
+          font-weight: 500;
         }
 
         #accountInfo {
@@ -104,12 +131,24 @@
           font-weight: 700;
           font-size: 15px;
           background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+          transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
         }
+
+        button:hover:not(:disabled) {
+          transform: translateY(-1px);
+          box-shadow: 0 8px 20px rgba(124, 58, 237, 0.28);
+        }
+
+        button:active:not(:disabled) { transform: translateY(0); }
+
+        button:disabled { opacity: 0.55; cursor: not-allowed; }
 
         button.secondary {
           background: #e2e8f0;
           color: var(--dark);
         }
+
+        button.secondary:hover:not(:disabled) { box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12); }
 
         button.red { background: linear-gradient(135deg, #ef4444, #b91c1c); }
 
@@ -134,6 +173,12 @@
           border-radius: 16px;
           overflow: hidden;
           box-shadow: var(--shadow);
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .product-card:hover {
+          transform: translateY(-4px);
+          box-shadow: 0 22px 50px rgba(124, 58, 237, 0.18);
         }
 
         .product-image {
@@ -161,7 +206,7 @@
           justify-content: space-between;
           margin-bottom: 10px;
         }
-        .product-body .price { font-weight: 800; font-size: 16px; }
+        .product-body .price { font-weight: 800; font-size: 16px; color: var(--accent); }
 
         .qty-row { display: flex; gap: 8px; margin-bottom: 10px; }
         .qty-row input { margin-bottom: 0; text-align: center; }
@@ -220,16 +265,24 @@
         .order-row .meta { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
         .order-row .price { font-weight: 800; }
 
-        .grid-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+        .grid-tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
         .grid-tabs button {
           width: auto;
-          background: none;
+          background: white;
           color: var(--muted);
-          border-bottom: 2px solid transparent;
-          border-radius: 0;
-          padding: 6px 4px;
+          border: 1px solid var(--border);
+          border-radius: 999px;
+          padding: 7px 14px;
+          font-size: 13px;
+          box-shadow: none;
         }
-        .grid-tabs button.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 800; }
+        .grid-tabs button:hover:not(:disabled) { transform: none; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08); }
+        .grid-tabs button.active {
+          color: white;
+          background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+          border-color: transparent;
+          font-weight: 800;
+        }
 
         .price-drop-badge {
           display: inline-block;
@@ -410,7 +463,13 @@
 <body>
 
 <header class="topbar">
-    <h1>Shop</h1>
+    <div class="brand">
+        <div class="logo-mark">&#128722;</div>
+        <div>
+            <h1>Charan Mart</h1>
+            <div class="tagline">Fresh picks, fast checkout</div>
+        </div>
+    </div>
     <div id="accountInfo"></div>
 </header>
 
@@ -440,8 +499,8 @@
             <div>
                 <div class="search-row">
                     <input type="text" id="searchName" placeholder="Search products" oninput="onSearchChange()" />
-                    <select id="searchCategory" onchange="onSearchChange()">
-                        <option value="">All categories</option>
+                    <select id="searchCategory" onchange="onSearchChange()" disabled>
+                        <option value="">Loading categories...</option>
                     </select>
                 </div>
                 <div class="grid-tabs">
@@ -530,6 +589,7 @@
     let products = [];
     let cart = []; // {productId, name, price, quantity, stock}
     let wishlistProductIds = new Set();
+    let waitlistProductIds = new Set();
     let priceDropsByProductId = new Map();
     let activeTab = "all";
     let allCategories = [];
@@ -709,10 +769,11 @@
     function refreshCategoryOptions() {
       allCategories = [...new Set(products.map(p => p.productCategory).filter(Boolean))].sort();
       const select = document.getElementById("searchCategory");
-      const current = select.value;
+      const current = select.disabled ? "" : select.value;
       select.innerHTML = `<option value="">All categories</option>` +
         allCategories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
       select.value = current;
+      select.disabled = false;
     }
 
     function onSearchChange() {
