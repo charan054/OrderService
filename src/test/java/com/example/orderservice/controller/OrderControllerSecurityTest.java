@@ -374,6 +374,13 @@ class OrderControllerSecurityTest {
         mockMvc.perform(get("/cart/42/tracking")).andExpect(status().isNotFound());
     }
 
+    // Polled by the storefront while a UPI-collect order sits PENDING_PAYMENT - same public trust level as
+    // tracking above (just the status of your own order, no X-Service-Key needed).
+    @Test
+    void paymentStatusOfAnUnknownOrderIsPublicButReturns404() throws Exception {
+        mockMvc.perform(get("/cart/42/paymentstatus")).andExpect(status().isNotFound());
+    }
+
     private static final String NEW_ADDRESS = """
             {"customerPhno":9876543210,"line1":"221B Baker Street","city":"London","state":"Greater London","pincode":"110001"}
             """;

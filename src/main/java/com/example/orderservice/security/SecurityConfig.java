@@ -62,6 +62,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/waitlist/byphno").permitAll()
                         .requestMatchers(HttpMethod.POST, "/waitlist/self/add").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/waitlist/self/remove").permitAll()
+                        // Polled by the storefront while a UPI-collect order sits PENDING_PAYMENT - same public,
+                        // self-service trust level as tracking below (just the status of your own order).
+                        .requestMatchers(HttpMethod.GET, "/cart/*/paymentstatus").permitAll()
                         // The tracking timeline is just a per-transition history of the same status field
                         // /cart/byphno already returns for every order - no additional exposure.
                         .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()

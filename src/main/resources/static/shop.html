@@ -532,6 +532,10 @@
                         <input type="radio" name="payMethod" value="PHONEPE" checked onchange="onPaymentMethodChange()" />
                         Pay with PhonePe
                     </label>
+                    <label class="pay-option" id="payUpiOption">
+                        <input type="radio" name="payMethod" value="UPI" onchange="onPaymentMethodChange()" />
+                        Pay via UPI ID
+                    </label>
                     <label class="pay-option" id="payCashOption">
                         <input type="radio" name="payMethod" value="CASH" onchange="onPaymentMethodChange()" />
                         Cash on delivery
@@ -541,6 +545,11 @@
                 <div id="phonepeFields">
                     <input type="tel" id="payerPhno" placeholder="PhonePe phone number" />
                     <input type="password" id="payerPin" placeholder="PhonePe PIN" />
+                </div>
+
+                <div id="upiFields" class="hidden">
+                    <input type="text" id="payerUpiId" placeholder="Your UPI ID (e.g. 9876543210@charanpe)" />
+                    <p style="font-size:12px; color:var(--muted); margin:-6px 0 12px;">We'll send a payment request to this UPI ID - approve it in PhonePe within 4 minutes.</p>
                 </div>
 
                 <div id="checkoutError" class="error-text hidden"></div>
@@ -1252,8 +1261,10 @@
     function onPaymentMethodChange() {
       const method = document.querySelector('input[name="payMethod"]:checked').value;
       document.getElementById("payPhonepeOption").classList.toggle("selected", method === "PHONEPE");
+      document.getElementById("payUpiOption").classList.toggle("selected", method === "UPI");
       document.getElementById("payCashOption").classList.toggle("selected", method === "CASH");
-      document.getElementById("phonepeFields").classList.toggle("hidden", method === "CASH");
+      document.getElementById("phonepeFields").classList.toggle("hidden", method !== "PHONEPE");
+      document.getElementById("upiFields").classList.toggle("hidden", method !== "UPI");
     }
 
     function setCheckoutError(message) {
@@ -1285,12 +1296,19 @@
       const method = document.querySelector('input[name="payMethod"]:checked').value;
       let payerPhno = null;
       let payerPin = null;
+      let payerUpiId = null;
 
       if (method === "PHONEPE") {
         payerPhno = document.getElementById("payerPhno").value.trim();
         payerPin = document.getElementById("payerPin").value.trim();
         if (!/^[6-9][0-9]{9}$/.test(payerPhno) || !payerPin) {
           setCheckoutError("Enter the PhonePe phone number and PIN, or switch to cash on delivery.");
+          return;
+        }
+      } else if (method === "UPI") {
+        payerUpiId = document.getElementById("payerUpiId").value.trim();
+        if (!payerUpiId.includes("@")) {
+          setCheckoutError("Enter a valid UPI ID, e.g. 9876543210@charanpe.");
           return;
         }
       }
@@ -1302,15 +1320,20 @@
       const cartPayload = {
         customerPhno: Number(customerPhno),
         orderItems: cart.map(item => ({ productId: item.productId, productQuantity: item.quantity })),
-        paymentMethod: method,
+        // The UPI-collect flow is still a PHONEPE order server-side (see OrderService.order()'s payerUpiId
+        // branch) - "UPI" above is only this form's own way of picking which payerXxx param to send below.
+        paymentMethod: method === "UPI" ? "PHONEPE" : method,
         couponCode: couponCode || null,
         pointsRedeemed: pointsRedeemed ? Number(pointsRedeemed) : null,
         shippingAddressId: shippingAddressId ? Number(shippingAddressId) : null
       };
 
-      const query = method === "PHONEPE"
-        ? `?payerPhno=${encodeURIComponent(payerPhno)}&payerPin=${encodeURIComponent(payerPin)}`
-        : "";
+      let query = "";
+      if (method === "PHONEPE") {
+        query = `?payerPhno=${encodeURIComponent(payerPhno)}&payerPin=${encodeURIComponent(payerPin)}`;
+      } else if (method === "UPI") {
+        query = `?payerUpiId=${encodeURIComponent(payerUpiId)}`;
+      }
 
       setCheckoutStatus("Placing your order...", "info");
       try {
@@ -1332,18 +1355,70 @@
         cart = [];
         renderCart();
         document.getElementById("payerPin").value = "";
+        document.getElementById("payerUpiId").value = "";
         document.getElementById("couponCode").value = "";
         document.getElementById("pointsRedeemed").value = "";
-        setCheckoutStatus(
-          `Order #${order.orderId} placed${method === "CASH" ? " - pay on delivery." : ", paid via PhonePe."}`,
-          "success"
-        );
+
+        if (order.status === "PENDING_PAYMENT") {
+          setCheckoutStatus(
+            `Order #${order.orderId} created - approve the payment request in PhonePe within 4 minutes.`,
+            "info"
+          );
+          pollUpiPayment(order.orderId);
+        } else {
+          setCheckoutStatus(
+            `Order #${order.orderId} placed${method === "CASH" ? " - pay on delivery." : ", paid via PhonePe."}`,
+            "success"
+          );
+        }
         loadProducts();
         loadLoyaltyBalance();
       } catch (error) {
         setCheckoutStatus("");
         setCheckoutError(error.message);
       }
+    }
+
+    // Polls GET /cart/{orderId}/paymentstatus (which itself lazily resolves the order against PhonepayService -
+    // see OrderService.checkPendingPayment()) every 5s until the order leaves PENDING_PAYMENT, or gives up after
+    // the same 4-minute window the backend enforces so this never polls forever on a dropped connection.
+    const UPI_POLL_INTERVAL_MS = 5000;
+    const UPI_POLL_TIMEOUT_MS = 4 * 60 * 1000 + 15000;
+
+    async function pollUpiPayment(orderId) {
+      const deadline = Date.now() + UPI_POLL_TIMEOUT_MS;
+
+      const poll = async () => {
+        if (Date.now() > deadline) {
+          setCheckoutStatus(`Order #${orderId}: payment window expired.`, "error");
+          loadProducts();
+          return;
+        }
+        try {
+          const response = await fetch(`${BASE_URL}/cart/${orderId}/paymentstatus`);
+          if (!response.ok) {
+            setTimeout(poll, UPI_POLL_INTERVAL_MS);
+            return;
+          }
+          const order = await response.json();
+          if (order.status === "PLACED") {
+            setCheckoutStatus(`Order #${orderId} paid and placed via UPI.`, "success");
+            loadProducts();
+            loadLoyaltyBalance();
+            return;
+          }
+          if (order.status === "CANCELLED") {
+            setCheckoutStatus(`Order #${orderId} was cancelled - payment declined or the approval window expired.`, "error");
+            loadProducts();
+            return;
+          }
+          setTimeout(poll, UPI_POLL_INTERVAL_MS);
+        } catch (error) {
+          setTimeout(poll, UPI_POLL_INTERVAL_MS);
+        }
+      };
+
+      setTimeout(poll, UPI_POLL_INTERVAL_MS);
     }
 
     const savedPhno = localStorage.getItem("shopCustomerPhno");

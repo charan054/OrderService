@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.CreateUpiCollectRequest;
 import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
@@ -16,6 +17,7 @@ import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.TopSellingProduct;
+import com.example.orderservice.dto.UpiCollectRequestResponse;
 import com.example.orderservice.dto.WaitlistStatus;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
@@ -103,14 +105,25 @@ public class OrderService {
     @Value("${internal.service.api-key}")
     private String serviceApiKey;
     public Cart order(Cart cart, String authorization, String idempotencyKey) {
-        return order(cart, authorization, idempotencyKey, null, null);
+        return order(cart, authorization, idempotencyKey, null, null, null);
     }
 
     // payerPhno/payerPin are only used for the CASH-free "storefront" checkout path, where the caller has no
     // PhonepayService session token yet - never persisted anywhere, only used in-memory to obtain one via
     // phonepeClient.login() below. A caller that already has a token (the admin dashboard, existing integrations)
     // keeps passing it directly through authorization, unchanged.
-    public Cart order(Cart cart, String authorization, String idempotencyKey, Long payerPhno, String payerPin)
+    public Cart order(Cart cart, String authorization, String idempotencyKey, Long payerPhno, String payerPin) {
+        return order(cart, authorization, idempotencyKey, payerPhno, payerPin, null);
+    }
+
+    // payerUpiId is a THIRD, mutually exclusive way to pay a PHONEPE order (alongside an already-supplied token
+    // and payerPhno/payerPin) - the storefront's newer checkout flow, where the buyer never types a PIN into
+    // OrderService at all. Instead of charging synchronously, this creates the order already reserved
+    // (PENDING_PAYMENT) and asks PhonepayService to collect the payment from that UPI ID; the buyer approves or
+    // declines it themselves, later, directly in PhonepayService - see createPendingUpiOrder()/
+    // checkPendingPayment(). Takes priority over authorization/payerPhno+payerPin when present, since it's the
+    // more specific signal of which flow the caller wants.
+    public Cart order(Cart cart, String authorization, String idempotencyKey, Long payerPhno, String payerPin, String payerUpiId)
     {
         validatePhno(cart.getCustomerPhno());
         if (cart.getPaymentMethod() == null) {
@@ -142,6 +155,11 @@ public class OrderService {
         // Same fail-fast reasoning as stock/coupon above: an address that doesn't exist, or belongs to someone
         // else's phone number, must reject the order before any payment is attempted.
         validateShippingAddress(cart);
+
+        if (cart.getPaymentMethod() == PaymentMethod.PHONEPE && payerUpiId != null && !payerUpiId.isBlank()) {
+            return createPendingUpiOrder(cart, finalPrice, discount, payerUpiId);
+        }
+
         // Cash on delivery never touches PhonepayService at all - nothing is charged now, so there is nothing to
         // refund later either (see cancel()/returnOrder()).
         PaymentResponse payment = null;
@@ -173,6 +191,119 @@ public class OrderService {
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Items: " + result.getOrderItems().size()
                 + " Total: " + result.getTotalPrice());
+        return result;
+    }
+
+    private static final long UPI_COLLECT_TIMEOUT_MINUTES = 4;
+
+    private String upiMerchantReference(long orderId) {
+        return "OrderService-" + orderId;
+    }
+
+    // Stock is reserved immediately, same as a normal order - the whole point of the payment window is that this
+    // stock is held while the buyer goes to approve it in PhonepayService, not left available for someone else
+    // to buy out from under them in the meantime. Coupon redemption and loyalty-point spending are deliberately
+    // NOT recorded here (unlike the synchronous path above) - those are real, hard-to-reverse side effects that
+    // must wait until the payment has actually gone through, in finalizePaidOrder() below.
+    private Cart createPendingUpiOrder(Cart cart, double finalPrice, double discount, String payerUpiId) {
+        cart.setTotalPrice(finalPrice);
+        cart.setDiscountAmount(discount);
+        cart.setStatus(OrderStatus.PENDING_PAYMENT);
+        cart.setPaid(false);
+        cart.setUpiId(payerUpiId);
+        cart.setPaymentDeadline(Instant.now().plus(UPI_COLLECT_TIMEOUT_MINUTES, ChronoUnit.MINUTES));
+        Cart saved = orderRepository.save(cart);
+        for (OrderItem orderItem : saved.getOrderItems()) {
+            orderItem.setOrderId(saved.getOrderId());
+            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), -orderItem.getProductQuantity());
+        }
+        Cart result = orderRepository.save(saved);
+
+        try {
+            phonepeClient.createUpiCollectRequest(serviceApiKey, new CreateUpiCollectRequest(
+                    upiMerchantReference(result.getOrderId()), payerUpiId,
+                    BigDecimal.valueOf(finalPrice).setScale(2, RoundingMode.HALF_UP), "Order payment"));
+        } catch (FeignException e) {
+            // Nothing should exist if the collect request itself couldn't even be created (a malformed UPI ID,
+            // PhonepayService unreachable) - restore the stock just reserved and remove the order, the same
+            // fail-safe shape a declined charge() already gives the synchronous path.
+            for (OrderItem orderItem : result.getOrderItems()) {
+                productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
+            }
+            orderRepository.delete(result);
+            HttpStatus status = HttpStatus.resolve(e.status());
+            throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
+        }
+        recordTracking(result.getOrderId(), OrderStatus.PENDING_PAYMENT);
+        sendNotification("Order awaiting UPI payment approval. OrderId: " + result.getOrderId()
+                + " Customer: " + mask(result.getCustomerPhno())
+                + " Total: " + result.getTotalPrice());
+        return result;
+    }
+
+    // Resolves a PENDING_PAYMENT order the moment anyone next asks about it (the storefront polling this while
+    // the buyer goes to approve in PhonepayService) - this system has no scheduler, same reasoning as
+    // OrderService's own loyalty-points-expiry. OrderService's OWN deadline is checked FIRST and is
+    // authoritative regardless of what PhonepayService's own collect-request expiry says (the two are set to
+    // the same duration, but this keeps OrderService in control of how long an order actually holds its
+    // reserved stock even if that ever changes independently on PhonepayService's side).
+    public Cart checkPendingPayment(long orderId) {
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() != OrderStatus.PENDING_PAYMENT) {
+            return cart;
+        }
+        if (Instant.now().isAfter(cart.getPaymentDeadline())) {
+            return cancelUnpaidOrder(cart, "payment window expired");
+        }
+
+        UpiCollectRequestResponse request;
+        try {
+            request = phonepeClient.getUpiCollectRequest(serviceApiKey, upiMerchantReference(orderId));
+        } catch (FeignException e) {
+            // PhonepayService being briefly unreachable shouldn't cancel a still-valid, still-within-window
+            // order - the next poll tries again. Only an explicit DECLINED/EXPIRED answer, or OrderService's
+            // own deadline above, ends it early.
+            return cart;
+        }
+
+        return switch (request.status()) {
+            case "APPROVED" -> finalizePaidOrder(cart, request.resultTransactionId());
+            case "DECLINED" -> cancelUnpaidOrder(cart, "payment declined");
+            case "EXPIRED" -> cancelUnpaidOrder(cart, "payment window expired");
+            default -> cart;   // still PENDING on PhonepayService's side - nothing to do yet
+        };
+    }
+
+    private Cart finalizePaidOrder(Cart cart, Long paymentTransactionId) {
+        recordCouponRedemption(cart.getCouponCode(), cart.getCustomerPhno());
+        cart.setStatus(OrderStatus.PLACED);
+        cart.setPaid(true);
+        cart.setPaymentTransactionId(paymentTransactionId);
+        cart.setPaymentDeadline(null);
+        Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.PLACED);
+        redeemLoyaltyPoints(result.getCustomerPhno(), result.getPointsRedeemed(), result.getOrderId());
+        sendNotification("Order placed successfully. OrderId: " + result.getOrderId()
+                + " Customer: " + mask(result.getCustomerPhno())
+                + " Items: " + result.getOrderItems().size()
+                + " Total: " + result.getTotalPrice());
+        return result;
+    }
+
+    // No refund call here (unlike cancel()) - a PENDING_PAYMENT order was never actually charged, so there is
+    // nothing PhonepayService needs to reverse.
+    private Cart cancelUnpaidOrder(Cart cart, String reason) {
+        for (OrderItem orderItem : cart.getOrderItems()) {
+            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
+        }
+        cart.setStatus(OrderStatus.CANCELLED);
+        cart.setPaymentDeadline(null);
+        Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
+        sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
+                + " Customer: " + mask(result.getCustomerPhno())
+                + " Reason: " + reason);
         return result;
     }
 

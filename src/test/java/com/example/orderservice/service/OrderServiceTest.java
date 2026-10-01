@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.CreateUpiCollectRequest;
 import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
@@ -18,6 +19,7 @@ import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.TopSellingProduct;
+import com.example.orderservice.dto.UpiCollectRequestResponse;
 import com.example.orderservice.dto.WaitlistStatus;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
@@ -1009,6 +1011,178 @@ class OrderServiceTest {
     void removeFromWaitlistDelegatesToTheRepository() {
         service.removeFromWaitlist(CUSTOMER, 1);
         verify(stockWaitlistRepository).deleteByCustomerPhnoAndProductId(CUSTOMER, 1);
+    }
+
+    // ---------- order() via UPI collect request ----------
+
+    private UpiCollectRequestResponse upiCollectResponse(String status) {
+        return upiCollectResponse(status, null);
+    }
+
+    private UpiCollectRequestResponse upiCollectResponse(String status, Long resultTransactionId) {
+        return new UpiCollectRequestResponse(1L, "OrderService-42", CUSTOMER, "9876543210@charanpe",
+                new BigDecimal("450.00"), "Order payment", status, Instant.parse("2026-09-25T10:00:00Z"),
+                Instant.parse("2026-09-25T10:04:00Z"), null, resultTransactionId);
+    }
+
+    @Test
+    void orderWithPayerUpiIdCreatesAPendingPaymentOrderAndReservesStock() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 450.0, 10));
+        stubCartSaveAssignsAnId();
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        Cart result = service.order(cart, null, null, null, null, "9876543210@charanpe");
+
+        assertEquals(OrderStatus.PENDING_PAYMENT, result.getStatus());
+        assertFalse(result.isPaid());
+        assertEquals("9876543210@charanpe", result.getUpiId());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, -1);
+        verify(phonepeClient).createUpiCollectRequest(eq(SERVICE_KEY),
+                eq(new CreateUpiCollectRequest("OrderService-42", "9876543210@charanpe",
+                        new BigDecimal("450.00"), "Order payment")));
+        // Coupon/points are never recorded for a still-unpaid order - only finalizePaidOrder() does that.
+        verifyNoInteractions(loyaltyAccountRepository);
+    }
+
+    // If PhonepayService refuses to even create the collect request, nothing should be left behind - same
+    // fail-safe shape a declined synchronous charge already gives.
+    @Test
+    void orderWithPayerUpiIdRollsBackStockAndDeletesOrderWhenCollectRequestFails() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 450.0, 10));
+        stubCartSaveAssignsAnId();
+        when(phonepeClient.createUpiCollectRequest(eq(SERVICE_KEY), any(CreateUpiCollectRequest.class)))
+                .thenThrow(declinedBy("upi/collect", 400, "Invalid UPI ID"));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        PaymentException ex = assertThrows(PaymentException.class,
+                () -> service.order(cart, null, null, null, null, "bad-upi-id"));
+
+        assertEquals("Invalid UPI ID", ex.getMessage());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, -1);
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 1);
+        verify(orderRepository).delete(any(Cart.class));
+    }
+
+    // ---------- checkPendingPayment() ----------
+
+    private Cart pendingUpiCart(Instant deadline) {
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setOrderId(42L);
+        cart.setStatus(OrderStatus.PENDING_PAYMENT);
+        cart.setTotalPrice(450.0);
+        cart.setUpiId("9876543210@charanpe");
+        cart.setPaymentDeadline(deadline);
+        return cart;
+    }
+
+    @Test
+    void checkPendingPaymentThrowsWhenOrderDoesNotExist() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.empty());
+        assertThrows(OrderNotFoundException.class, () -> service.checkPendingPayment(42L));
+    }
+
+    @Test
+    void checkPendingPaymentIsANoOpForAnOrderThatIsNotPendingPayment() {
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setOrderId(42L);
+        cart.setStatus(OrderStatus.PLACED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        Cart result = service.checkPendingPayment(42L);
+
+        assertEquals(OrderStatus.PLACED, result.getStatus());
+        verifyNoInteractions(phonepeClient);
+    }
+
+    // OrderService's own deadline is authoritative - checked BEFORE ever asking PhonepayService, so an expired
+    // order is cancelled even if PhonepayService's own collect-request expiry disagrees.
+    @Test
+    void checkPendingPaymentCancelsAndRestoresStockWhenOrderServiceDeadlineHasPassed() {
+        Cart cart = pendingUpiCart(Instant.now().minus(1, ChronoUnit.MINUTES));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Cart result = service.checkPendingPayment(42L);
+
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 1);
+        verify(phonepeClient, never()).getUpiCollectRequest(any(), any());
+        verify(phonepeClient, never()).refund(any(), anyLong(), any());
+    }
+
+    @Test
+    void checkPendingPaymentLeavesTheOrderUnchangedWhilePhonepayServiceStillShowsPending() {
+        Cart cart = pendingUpiCart(Instant.now().plus(2, ChronoUnit.MINUTES));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.getUpiCollectRequest(SERVICE_KEY, "OrderService-42"))
+                .thenReturn(upiCollectResponse("PENDING"));
+
+        Cart result = service.checkPendingPayment(42L);
+
+        assertEquals(OrderStatus.PENDING_PAYMENT, result.getStatus());
+        verify(orderRepository, never()).save(any());
+    }
+
+    // PhonepayService being briefly unreachable must not cancel a still-valid order - only an explicit
+    // DECLINED/EXPIRED answer, or OrderService's own deadline, ends it early.
+    @Test
+    void checkPendingPaymentLeavesTheOrderUnchangedWhenPhonepayServiceIsUnreachable() {
+        Cart cart = pendingUpiCart(Instant.now().plus(2, ChronoUnit.MINUTES));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.getUpiCollectRequest(SERVICE_KEY, "OrderService-42"))
+                .thenThrow(declinedBy("upi/collect/42", 503, "unreachable"));
+
+        Cart result = service.checkPendingPayment(42L);
+
+        assertEquals(OrderStatus.PENDING_PAYMENT, result.getStatus());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void checkPendingPaymentFinalizesTheOrderWhenApproved() {
+        Cart cart = pendingUpiCart(Instant.now().plus(2, ChronoUnit.MINUTES));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.getUpiCollectRequest(SERVICE_KEY, "OrderService-42"))
+                .thenReturn(upiCollectResponse("APPROVED", 777L));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Cart result = service.checkPendingPayment(42L);
+
+        assertEquals(OrderStatus.PLACED, result.getStatus());
+        assertTrue(result.isPaid());
+        assertEquals(777L, result.getPaymentTransactionId());
+        assertNull(result.getPaymentDeadline());
+        verify(productClient, never()).updateProductStock(any(), anyInt(), eq(1));
+    }
+
+    @Test
+    void checkPendingPaymentCancelsAndRestoresStockWhenDeclined() {
+        Cart cart = pendingUpiCart(Instant.now().plus(2, ChronoUnit.MINUTES));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.getUpiCollectRequest(SERVICE_KEY, "OrderService-42"))
+                .thenReturn(upiCollectResponse("DECLINED"));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Cart result = service.checkPendingPayment(42L);
+
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 1);
+        // Never actually charged, so there's nothing for a refund to reverse.
+        verify(phonepeClient, never()).refund(any(), anyLong(), any());
+    }
+
+    @Test
+    void checkPendingPaymentCancelsAndRestoresStockWhenExpiredOnPhonepayService() {
+        Cart cart = pendingUpiCart(Instant.now().plus(2, ChronoUnit.MINUTES));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.getUpiCollectRequest(SERVICE_KEY, "OrderService-42"))
+                .thenReturn(upiCollectResponse("EXPIRED"));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Cart result = service.checkPendingPayment(42L);
+
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 1);
     }
 
     // ---------- cancel() ----------
