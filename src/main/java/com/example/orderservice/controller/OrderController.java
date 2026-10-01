@@ -35,8 +35,9 @@ public class OrderController {
                          @RequestHeader(value = "Authorization", required = false) String authorization,
                          @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                          @RequestParam(required = false) Long payerPhno,
-                         @RequestParam(required = false) String payerPin){
-        return orderService.order(cart, authorization, idempotencyKey, payerPhno, payerPin);
+                         @RequestParam(required = false) String payerPin,
+                         @RequestParam(required = false) String payerUpiId){
+        return orderService.order(cart, authorization, idempotencyKey, payerPhno, payerPin, payerUpiId);
     }
     // Same as /add above, but without the X-Service-Key requirement - this is the one write endpoint a genuine
     // customer-facing storefront can call directly, since it has no way to know that internal secret (see
@@ -48,8 +49,9 @@ public class OrderController {
                          @RequestHeader(value = "Authorization", required = false) String authorization,
                          @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                          @RequestParam(required = false) Long payerPhno,
-                         @RequestParam(required = false) String payerPin){
-        return orderService.order(cart, authorization, idempotencyKey, payerPhno, payerPin);
+                         @RequestParam(required = false) String payerPin,
+                         @RequestParam(required = false) String payerUpiId){
+        return orderService.order(cart, authorization, idempotencyKey, payerPhno, payerPin, payerUpiId);
     }
     // Authorization must be the buyer's OWN PhonepayService session token for a PHONEPE order - PhonepayService
     // only refunds a payment back to the person who made it, so this can never cancel (and refund) someone
@@ -90,6 +92,14 @@ public class OrderController {
     @PostMapping("/{orderId}/markpaid")
     public Cart markPaid(@PathVariable long orderId){
         return orderService.markPaid(orderId);
+    }
+    // Polled by the storefront while a UPI-collect order sits PENDING_PAYMENT and the buyer goes to approve it in
+    // PhonepayService - each call lazily resolves the order against PhonepayService's own collect-request status
+    // (or OrderService's own deadline) before returning it, same "checked the moment anything next touches it"
+    // reasoning as the rest of this system's lazy expiry. A no-op for any order not currently PENDING_PAYMENT.
+    @GetMapping("/{orderId}/paymentstatus")
+    public Cart getPaymentStatus(@PathVariable long orderId){
+        return orderService.checkPendingPayment(orderId);
     }
     // Public, same self-service trust level as GET /cart/byphno - the timeline is just a history of the same
     // status field that /cart/byphno already exposes, one row per transition instead of a single current value.

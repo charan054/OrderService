@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonPropertyOrder;
 import jakarta.persistence.*;
 import lombok.Data;
 
+import java.time.Instant;
 import java.util.List;
 @Data
 @Table(name="cart")
@@ -68,5 +69,14 @@ public class Cart {
     // Set by OrderService.returnOrder() when a DELIVERED order is returned; null otherwise. Purely a record of
     // why, same role couponCode/shippingAddressId play - re-editing it after the fact has no effect.
     private String returnReason;
+    // Set only for a PHONEPE order placed via a UPI collect request (see OrderService.order()'s payerUpiId
+    // path) - the buyer's UPI ID as entered at checkout, purely a record like couponCode. Null for every other
+    // order, including a PHONEPE order paid the older synchronous way (an already-supplied token, or
+    // phone+PIN).
+    private String upiId;
+    // Set only while status is PENDING_PAYMENT - the deadline checkPendingPayment() enforces regardless of what
+    // PhonepayService's own collect-request expiry says, so OrderService stays authoritative for how long an
+    // order actually holds its reserved stock. Null once the order leaves PENDING_PAYMENT either way.
+    private Instant paymentDeadline;
 
 }
