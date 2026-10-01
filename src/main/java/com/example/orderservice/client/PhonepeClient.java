@@ -3,8 +3,10 @@ package com.example.orderservice.client;
 import com.example.orderservice.dto.CreateUpiCollectRequest;
 import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
+import com.example.orderservice.dto.PhonepeForgotPinRequest;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
+import com.example.orderservice.dto.PhonepeResetPinRequest;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.UpiCollectRequestResponse;
 import org.springframework.cloud.openfeign.FeignClient;
@@ -32,6 +34,15 @@ public interface PhonepeClient {
     // here.
     @PostMapping("/phonepe/login")
     PhonepeLoginResponse login(@RequestBody PhonepeLoginRequest request);
+
+    // Both public on PhonepayService's side (no token/key needed) - same reasoning as login: shop.html has no
+    // way to call Bankapplication (or even PhonepayService's forgot-PIN endpoints) directly, so this is a pure
+    // proxy, same shape as the login passthrough above.
+    @PostMapping("/phonepe/forgotpin/request")
+    void forgotPinRequest(@RequestBody PhonepeForgotPinRequest request);
+
+    @PostMapping("/phonepe/forgotpin/reset")
+    void forgotPinReset(@RequestBody PhonepeResetPinRequest request);
 
     // Merchant-only on PhonepayService's side (X-Service-Key, not a buyer token) - OrderService asking to
     // collect a payment from a buyer's UPI ID, rather than charging a token OrderService itself never holds.

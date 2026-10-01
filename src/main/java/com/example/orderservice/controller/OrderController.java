@@ -1,10 +1,12 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.dto.ForgotPinRequest;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
+import com.example.orderservice.dto.ResetPinRequest;
 import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.entity.Cart;
@@ -14,6 +16,7 @@ import com.example.orderservice.service.OrderService;
 import jakarta.transaction.Transactional;
 import jakarta.websocket.server.ServerEndpoint;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -52,6 +55,19 @@ public class OrderController {
                          @RequestParam(required = false) String payerPin,
                          @RequestParam(required = false) String payerUpiId){
         return orderService.order(cart, authorization, idempotencyKey, payerPhno, payerPin, payerUpiId);
+    }
+    // Pure proxy to PhonepayService's own forgot-PIN flow (which itself proxies to Bankapplication) - shop.html
+    // has no way to call either origin directly. See OrderService.forgotPinRequest/resetPin.
+    @PostMapping("/forgotpin/request")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void forgotPinRequest(@RequestBody ForgotPinRequest request) {
+        orderService.forgotPinRequest(request.phno());
+    }
+
+    @PostMapping("/forgotpin/reset")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void forgotPinReset(@RequestBody ResetPinRequest request) {
+        orderService.resetPin(request.phno(), request.otp(), request.newPin());
     }
     // Authorization must be the buyer's OWN PhonepayService session token for a PHONEPE order - PhonepayService
     // only refunds a payment back to the person who made it, so this can never cancel (and refund) someone
