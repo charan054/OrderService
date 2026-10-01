@@ -41,6 +41,10 @@ public class SecurityConfig {
                         // The customer-facing storefront's own checkout - see OrderController.checkout for why
                         // this can't require the same X-Service-Key /cart/add does.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout").permitAll()
+                        // Pure proxy to PhonepayService's forgot-PIN flow - see OrderController.forgotPinRequest/
+                        // forgotPinReset. No X-Service-Key, same reasoning as checkout above: a real customer
+                        // has no way to know that internal secret.
+                        .requestMatchers(HttpMethod.POST, "/cart/forgotpin/request", "/cart/forgotpin/reset").permitAll()
                         // A customer cancelling their own order - same reasoning as checkout above. The only gate
                         // is that a PHONEPE refund requires the real buyer token (see OrderController.cancelOrder);
                         // a CASH order has no gate at all, same trust level the storefront's other self-service

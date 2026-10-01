@@ -8,8 +8,10 @@ import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.PaymentResponse;
+import com.example.orderservice.dto.PhonepeForgotPinRequest;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
+import com.example.orderservice.dto.PhonepeResetPinRequest;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
@@ -805,6 +807,26 @@ public class OrderService {
             throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
         }
         return "Bearer " + login.token();
+    }
+
+    // Pure proxy to PhonepayService (which itself proxies to Bankapplication) - shop.html has no way to call
+    // either of those origins directly. Same FeignException translation as resolveBuyerToken above.
+    public void forgotPinRequest(long phno) {
+        try {
+            phonepeClient.forgotPinRequest(new PhonepeForgotPinRequest(phno));
+        } catch (FeignException e) {
+            HttpStatus status = HttpStatus.resolve(e.status());
+            throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
+        }
+    }
+
+    public void resetPin(long phno, String otp, String newPin) {
+        try {
+            phonepeClient.forgotPinReset(new PhonepeResetPinRequest(phno, otp, newPin));
+        } catch (FeignException e) {
+            HttpStatus status = HttpStatus.resolve(e.status());
+            throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
+        }
     }
 
     private PaymentResponse charge(String authorization, double price, String idempotencyKey) {
