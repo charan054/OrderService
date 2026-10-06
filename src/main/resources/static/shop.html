@@ -256,6 +256,11 @@
         .search-row input { margin-bottom: 0; flex: 2; }
         .search-row select { margin-bottom: 0; flex: 1; }
 
+        .filter-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+        .filter-row select { margin-bottom: 0; flex: 1; max-width: 240px; }
+        .in-stock-toggle { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); white-space: nowrap; cursor: pointer; }
+        .in-stock-toggle input { width: auto; margin: 0; }
+
         .account-summary {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
@@ -580,6 +585,7 @@
           .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
           .product-body { padding: 10px; }
           .search-row { flex-direction: column; gap: 0; }
+          .filter-row select { max-width: none; }
           .grid-tabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
           .grid-tabs button { flex: 0 0 auto; white-space: nowrap; }
           .order-row { flex-wrap: wrap; gap: 8px; }
@@ -640,6 +646,16 @@
                     <select id="searchCategory" onchange="onSearchChange()" disabled>
                         <option value="">Loading categories...</option>
                     </select>
+                </div>
+                <div class="filter-row">
+                    <select id="sortBy" onchange="renderProducts()" aria-label="Sort products">
+                        <option value="">Sort: Default</option>
+                        <option value="priceAsc">Price: low to high</option>
+                        <option value="priceDesc">Price: high to low</option>
+                        <option value="rating">Top rated</option>
+                        <option value="name">Name A-Z</option>
+                    </select>
+                    <label class="in-stock-toggle"><input type="checkbox" id="inStockOnly" onchange="renderProducts()" /> In stock only</label>
                 </div>
                 <div class="grid-tabs">
                     <button class="active" id="tabAll" onclick="showTab('all')">All products</button>
@@ -1079,6 +1095,7 @@
       document.getElementById("accountView").classList.toggle("hidden", tab !== "account");
       document.getElementById("notificationsView").classList.toggle("hidden", tab !== "notifications");
       document.querySelector(".search-row").classList.toggle("hidden", tab === "account" || tab === "notifications");
+      document.querySelector(".filter-row").classList.toggle("hidden", tab === "account" || tab === "notifications");
       if (tab === "account") {
         loadAccountView();
       } else if (tab === "notifications") {
@@ -1301,8 +1318,21 @@
         ? recentlyViewedIds().map(id => products.find(p => p.productId === id)).filter(Boolean)
         : products;
 
-      if (!visibleProducts.length) {
-        grid.innerHTML = activeTab === "wishlist"
+      // Client-side sort/filter on whatever the active tab/search produced (the hide-in-account-tabs logic in
+      // showTab() hides this row there too, since it only applies to the product grid).
+      const sortBy = document.getElementById("sortBy").value;
+      const inStockOnly = document.getElementById("inStockOnly").checked;
+      let shownProducts = inStockOnly ? visibleProducts.filter(p => p.productStock > 0) : visibleProducts.slice();
+      const ratingOf = p => { const r = ratingsByProductId.get(p.productId); return r && r.reviewCount > 0 ? r.averageRating : -1; };
+      if (sortBy === "priceAsc") shownProducts.sort((a, b) => a.productPrice - b.productPrice);
+      else if (sortBy === "priceDesc") shownProducts.sort((a, b) => b.productPrice - a.productPrice);
+      else if (sortBy === "rating") shownProducts.sort((a, b) => ratingOf(b) - ratingOf(a));
+      else if (sortBy === "name") shownProducts.sort((a, b) => a.productName.localeCompare(b.productName));
+
+      if (!shownProducts.length) {
+        grid.innerHTML = visibleProducts.length
+          ? `<p style="color:var(--muted);">No products match your filters.</p>`
+          : activeTab === "wishlist"
           ? `<p style="color:var(--muted);">Nothing wishlisted yet - tap the heart on a product to save it here.</p>`
           : activeTab === "recent"
           ? `<p style="color:var(--muted);">No products viewed yet - open a product's details to see it here.</p>`
@@ -1310,7 +1340,7 @@
         return;
       }
 
-      grid.innerHTML = visibleProducts.map(p => {
+      grid.innerHTML = shownProducts.map(p => {
         const isWishlisted = wishlistProductIds.has(p.productId);
         const isWaitlisted = waitlistProductIds.has(p.productId);
         const priceDrop = priceDropsByProductId.get(p.productId);
