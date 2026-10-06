@@ -402,6 +402,29 @@
           padding: 0 4px;
         }
 
+        .coupon-chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          margin: -6px 0 12px;
+        }
+
+        .coupon-chips button {
+          width: auto;
+          padding: 4px 10px;
+          font-size: 12px;
+          border-radius: 999px;
+          background: #eef2ff;
+          color: var(--dark);
+          border: 1px dashed #818cf8;
+        }
+
+        .coupon-chips button.applied {
+          background: #818cf8;
+          color: #fff;
+          border-style: solid;
+        }
+
         .qty-stepper {
           display: flex;
           align-items: center;
@@ -523,7 +546,8 @@
                 <select id="shippingAddressId">
                     <option value="">No saved address selected</option>
                 </select>
-                <input type="text" id="couponCode" placeholder="Coupon code (optional)" />
+                <input type="text" id="couponCode" placeholder="Coupon code (optional)" oninput="renderCouponSuggestions()" />
+                <div id="couponSuggestions" class="coupon-chips"></div>
                 <input type="number" id="pointsRedeemed" min="0" placeholder="Loyalty points to redeem (optional)" />
                 <p id="loyaltyHint" style="font-size:12px; color:var(--muted); margin:-6px 0 12px;"></p>
 
@@ -715,6 +739,7 @@
       loadWishlist();
       loadWaitlist();
       loadLoyaltyBalance();
+      loadCouponSuggestions();
       loadAddressOptions();
     }
 
@@ -744,6 +769,38 @@
         addresses.map(a => `<option value="${a.id}">${escapeHtml(a.label || a.city)} - ${escapeHtml(a.line1)}${a.isDefault ? " (default)" : ""}</option>`).join("");
       const defaultAddress = addresses.find(a => a.isDefault);
       if (defaultAddress) select.value = defaultAddress.id;
+    }
+
+    let couponSuggestions = [];
+
+    // Coupons this customer could use right now (server-side filtered: active, unexpired, not used up). Shown as
+    // tap-to-apply chips under the coupon field, each with the estimated saving on the current cart.
+    async function loadCouponSuggestions() {
+      try {
+        const response = await fetch(`${BASE_URL}/coupons/available?phno=${encodeURIComponent(customerPhno)}`);
+        couponSuggestions = response.ok ? await response.json() : [];
+      } catch (e) {
+        couponSuggestions = [];
+      }
+      renderCouponSuggestions();
+    }
+
+    function renderCouponSuggestions() {
+      const box = document.getElementById("couponSuggestions");
+      if (!box) return;
+      const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      const applied = document.getElementById("couponCode").value.trim().toUpperCase();
+      box.innerHTML = couponSuggestions.map(c => {
+        const saving = total > 0 ? ` (save ₹${(total * c.discountPercent / 100).toFixed(2)})` : "";
+        const expiry = c.expiryDate ? `, until ${new Date(c.expiryDate).toLocaleDateString()}` : "";
+        return `<button type="button" class="${applied === c.code ? "applied" : ""}" onclick="applySuggestedCoupon('${escapeHtml(c.code)}')" title="${c.discountPercent}% off${expiry}">${escapeHtml(c.code)} &middot; ${c.discountPercent}% off${saving}</button>`;
+      }).join("");
+    }
+
+    function applySuggestedCoupon(code) {
+      const input = document.getElementById("couponCode");
+      input.value = input.value.trim().toUpperCase() === code ? "" : code;
+      renderCouponSuggestions();
     }
 
     async function loadLoyaltyBalance() {
@@ -1336,6 +1393,7 @@
       }
       const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
       document.getElementById("cartTotal").textContent = `₹${total.toFixed(2)}`;
+      renderCouponSuggestions();
     }
 
     function onPaymentMethodChange() {
@@ -1529,6 +1587,7 @@
         }
         loadProducts();
         loadLoyaltyBalance();
+      loadCouponSuggestions();
       } catch (error) {
         setCheckoutStatus("");
         setCheckoutError(error.message);
@@ -1561,6 +1620,7 @@
             setCheckoutStatus(`Order #${orderId} paid and placed via UPI.`, "success");
             loadProducts();
             loadLoyaltyBalance();
+      loadCouponSuggestions();
             return;
           }
           if (order.status === "CANCELLED") {

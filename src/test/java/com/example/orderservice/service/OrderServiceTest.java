@@ -17,6 +17,7 @@ import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.CouponSuggestion;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.SalesAnalytics;
@@ -2024,6 +2025,52 @@ class OrderServiceTest {
         when(productClient.getProductById(2)).thenThrow(declinedBy("byId", 404, "Product not found"));
 
         assertTrue(service.getFrequentlyBoughtTogether(1, null).isEmpty());
+    }
+
+    // ---------- getAvailableCoupons ----------
+
+    @Test
+    void availableCouponsSkipsInactiveExpiredAndExhaustedAndSortsBestFirst() {
+        Coupon fine = coupon("SAVE10", 10, true);
+        Coupon better = coupon("BIG20", 20, true);
+        Coupon inactive = coupon("OFF50", 50, false);
+        Coupon expired = coupon("OLD30", 30, true);
+        expired.setExpiryDate(Instant.now().minusSeconds(60));
+        Coupon exhausted = coupon("FULL40", 40, true);
+        exhausted.setMaxRedemptions(5);
+        exhausted.setRedemptionCount(5);
+        when(couponRepository.findAll()).thenReturn(List.of(fine, better, inactive, expired, exhausted));
+
+        List<CouponSuggestion> result = service.getAvailableCoupons(CUSTOMER);
+
+        assertEquals(List.of("BIG20", "SAVE10"), result.stream().map(CouponSuggestion::code).toList());
+        assertNull(result.get(0).usesLeft());
+    }
+
+    @Test
+    void availableCouponsHidesOneTheCustomerHasAlreadyUsedUpAndReportsUsesLeft() {
+        Coupon used = coupon("ONCE", 10, true);
+        used.setPerCustomerLimit(1);
+        Coupon twice = coupon("TWICE", 15, true);
+        twice.setPerCustomerLimit(2);
+        CouponRedemption usedRedemption = new CouponRedemption();
+        usedRedemption.setCount(1);
+        when(couponRepository.findAll()).thenReturn(List.of(used, twice));
+        when(couponRedemptionRepository.findByCouponCodeAndCustomerPhno("ONCE", CUSTOMER))
+                .thenReturn(Optional.of(usedRedemption));
+        when(couponRedemptionRepository.findByCouponCodeAndCustomerPhno("TWICE", CUSTOMER))
+                .thenReturn(Optional.of(usedRedemption));
+
+        List<CouponSuggestion> result = service.getAvailableCoupons(CUSTOMER);
+
+        assertEquals(1, result.size());
+        assertEquals("TWICE", result.get(0).code());
+        assertEquals(1, result.get(0).usesLeft());
+    }
+
+    @Test
+    void availableCouponsRejectsAnInvalidPhoneNumber() {
+        assertThrows(RuntimeException.class, () -> service.getAvailableCoupons(123));
     }
 
     // ---------- getLowStockReport ----------
