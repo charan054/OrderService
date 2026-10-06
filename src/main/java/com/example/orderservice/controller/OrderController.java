@@ -1,5 +1,6 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.ForgotPinRequest;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.Product;
@@ -197,6 +198,25 @@ public class OrderController {
     @GetMapping("/analytics")
     public SalesAnalytics getSalesAnalytics(){
         return orderService.getSalesAnalytics();
+    }
+    // Admin orders table + CSV download (X-Service-Key gated by default). Dates are yyyy-MM-dd, inclusive.
+    @GetMapping("/orders/search")
+    public List<AdminOrderRow> searchOrders(@RequestParam(required = false) String status,
+                                            @RequestParam(required = false) String paymentMethod,
+                                            @RequestParam(required = false) Long phno,
+                                            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+                                            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to){
+        return orderService.searchOrders(status, paymentMethod, phno, from, to);
+    }
+    @GetMapping(value = "/orders/export", produces = "text/csv")
+    public org.springframework.http.ResponseEntity<String> exportOrders(@RequestParam(required = false) String status,
+                                            @RequestParam(required = false) String paymentMethod,
+                                            @RequestParam(required = false) Long phno,
+                                            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+                                            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to){
+        return org.springframework.http.ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=\"orders.csv\"")
+                .body(orderService.exportOrdersCsv(status, paymentMethod, phno, from, to));
     }
     // Admin-only restock report (X-Service-Key gated by default, like /analytics) - see OrderService.getLowStockReport().
     @GetMapping("/lowstock")

@@ -17,6 +17,7 @@ import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.CouponSuggestion;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
@@ -2071,6 +2072,82 @@ class OrderServiceTest {
     @Test
     void availableCouponsRejectsAnInvalidPhoneNumber() {
         assertThrows(RuntimeException.class, () -> service.getAvailableCoupons(123));
+    }
+
+    // ---------- searchOrders / exportOrdersCsv ----------
+
+    private Cart adminOrder(long id, long phno, OrderStatus status, PaymentMethod method, String name) {
+        Cart c = cart(phno, item(1, 2));
+        c.setOrderId(id);
+        c.setCustomerName(name);
+        c.setStatus(status);
+        c.setPaymentMethod(method);
+        c.setTotalPrice(100.0);
+        return c;
+    }
+
+    private TrackingEvent trackedAt(long orderId, String instant) {
+        TrackingEvent e = new TrackingEvent();
+        e.setOrderId(orderId);
+        e.setTimestamp(Instant.parse(instant));
+        return e;
+    }
+
+    @Test
+    void searchOrdersFiltersByStatusMethodAndPhoneNewestFirst() {
+        when(orderRepository.findAll()).thenReturn(List.of(
+                adminOrder(1, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "A"),
+                adminOrder(2, CUSTOMER, OrderStatus.DELIVERED, PaymentMethod.CASH, "B"),
+                adminOrder(3, CUSTOMER, OrderStatus.PLACED, PaymentMethod.PHONEPE, "C"),
+                adminOrder(4, CUSTOMER + 1, OrderStatus.PLACED, PaymentMethod.CASH, "D"),
+                adminOrder(5, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "E")));
+        when(trackingEventRepository.findAll()).thenReturn(List.of());
+
+        List<AdminOrderRow> rows = service.searchOrders("placed", "cash", CUSTOMER, null, null);
+
+        assertEquals(List.of(5L, 1L), rows.stream().map(AdminOrderRow::orderId).toList());
+        assertEquals("1 x 2", rows.get(0).items());
+    }
+
+    @Test
+    void searchOrdersDateRangeUsesFirstTrackingEventAndExcludesUndatedOrders() {
+        when(orderRepository.findAll()).thenReturn(List.of(
+                adminOrder(1, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "A"),
+                adminOrder(2, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "B"),
+                adminOrder(3, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "C"),
+                adminOrder(4, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "D")));
+        when(trackingEventRepository.findAll()).thenReturn(List.of(
+                trackedAt(1, "2026-10-01T23:59:59Z"),
+                trackedAt(1, "2026-10-05T00:00:00Z"),
+                trackedAt(2, "2026-10-02T00:00:00Z"),
+                trackedAt(3, "2026-10-03T23:59:59Z")));
+
+        List<AdminOrderRow> rows = service.searchOrders(null, null, null,
+                java.time.LocalDate.parse("2026-10-02"), java.time.LocalDate.parse("2026-10-03"));
+
+        assertEquals(List.of(3L, 2L), rows.stream().map(AdminOrderRow::orderId).toList());
+    }
+
+    @Test
+    void searchOrdersRejectsAnUnknownStatusOrPaymentMethod() {
+        assertThrows(ProductException.class, () -> service.searchOrders("bogus", null, null, null, null));
+        assertThrows(ProductException.class, () -> service.searchOrders(null, "bitcoin", null, null, null));
+    }
+
+    @Test
+    void exportOrdersCsvQuotesCellsAndNeutralisesFormulas() {
+        Cart tricky = adminOrder(7, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "Smith, \"Bob\"");
+        Cart formula = adminOrder(8, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "=HYPERLINK(\"x\")");
+        when(orderRepository.findAll()).thenReturn(List.of(tricky, formula));
+        when(trackingEventRepository.findAll()).thenReturn(List.of());
+
+        String csv = service.exportOrdersCsv(null, null, null, null, null);
+        String[] lines = csv.split("\r\n");
+
+        assertTrue(lines[0].startsWith("orderId,placedAt,customerName"));
+        assertEquals(3, lines.length);
+        assertTrue(lines[1].startsWith("8,,\"'=HYPERLINK(\"\"x\"\")\","));
+        assertTrue(lines[2].startsWith("7,,\"Smith, \"\"Bob\"\"\","));
     }
 
     // ---------- getLowStockReport ----------

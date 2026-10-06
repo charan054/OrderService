@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.CouponSuggestion;
 import com.example.orderservice.dto.CreateUpiCollectRequest;
 import com.example.orderservice.dto.CustomerProfile;
@@ -1251,6 +1252,85 @@ public class OrderService {
                     waitlist.setProductId(productId);
                     return stockWaitlistRepository.save(waitlist);
                 });
+    }
+
+    // Admin orders table / CSV source: every order, newest first, optionally narrowed by status, payment method,
+    // customer phone and a placed-on date range (inclusive, UTC days - an order's date is its first tracking
+    // event). Orders with no tracking event (placed before tracking existed) have no date, so any date filter
+    // excludes them.
+    public List<AdminOrderRow> searchOrders(String status, String paymentMethod, Long phno,
+                                            java.time.LocalDate from, java.time.LocalDate to) {
+        OrderStatus wantedStatus = parseEnumFilter(OrderStatus.class, status, "status");
+        PaymentMethod wantedMethod = parseEnumFilter(PaymentMethod.class, paymentMethod, "paymentMethod");
+        Map<Long, Instant> placedAtByOrder = new HashMap<>();
+        for (TrackingEvent event : trackingEventRepository.findAll()) {
+            placedAtByOrder.merge(event.getOrderId(), event.getTimestamp(),
+                    (a, b) -> a.isBefore(b) ? a : b);
+        }
+        Instant fromInstant = from == null ? null : from.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        Instant toExclusive = to == null ? null : to.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+
+        List<AdminOrderRow> rows = new ArrayList<>();
+        for (Cart order : orderRepository.findAll()) {
+            if (wantedStatus != null && order.getStatus() != wantedStatus) continue;
+            if (wantedMethod != null && order.getPaymentMethod() != wantedMethod) continue;
+            if (phno != null && order.getCustomerPhno() != phno) continue;
+            Instant placedAt = placedAtByOrder.get(order.getOrderId());
+            if (fromInstant != null && (placedAt == null || placedAt.isBefore(fromInstant))) continue;
+            if (toExclusive != null && (placedAt == null || !placedAt.isBefore(toExclusive))) continue;
+            String items = order.getOrderItems() == null ? "" : order.getOrderItems().stream()
+                    .map(i -> i.getProductId() + " x " + i.getProductQuantity())
+                    .collect(Collectors.joining("; "));
+            rows.add(new AdminOrderRow(order.getOrderId(), placedAt, order.getCustomerName(),
+                    order.getCustomerPhno(), String.valueOf(order.getStatus()),
+                    String.valueOf(order.getPaymentMethod()), order.isPaid(), items, order.getCouponCode(),
+                    order.getDiscountAmount(), order.getPointsRedeemed() == null ? 0 : order.getPointsRedeemed(),
+                    order.getTotalPrice()));
+        }
+        rows.sort(Comparator.comparingLong(AdminOrderRow::orderId).reversed());
+        return rows;
+    }
+
+    // Same filters as searchOrders(), rendered as CSV (RFC 4180 quoting). Free-text cells starting with =, +, -
+    // or @ are prefixed with an apostrophe so a hostile customer name can't run as a spreadsheet formula.
+    public String exportOrdersCsv(String status, String paymentMethod, Long phno,
+                                  java.time.LocalDate from, java.time.LocalDate to) {
+        StringBuilder csv = new StringBuilder(
+                "orderId,placedAt,customerName,customerPhno,status,paymentMethod,paid,items,couponCode,"
+                        + "discountAmount,pointsRedeemed,totalPrice\r\n");
+        for (AdminOrderRow r : searchOrders(status, paymentMethod, phno, from, to)) {
+            csv.append(r.orderId()).append(',')
+                    .append(r.placedAt() == null ? "" : r.placedAt()).append(',')
+                    .append(csvCell(r.customerName())).append(',')
+                    .append(r.customerPhno()).append(',')
+                    .append(r.status()).append(',')
+                    .append(r.paymentMethod()).append(',')
+                    .append(r.paid()).append(',')
+                    .append(csvCell(r.items())).append(',')
+                    .append(csvCell(r.couponCode())).append(',')
+                    .append(r.discountAmount()).append(',')
+                    .append(r.pointsRedeemed()).append(',')
+                    .append(r.totalPrice()).append("\r\n");
+        }
+        return csv.toString();
+    }
+
+    private static String csvCell(String value) {
+        if (value == null) return "";
+        if (!value.isEmpty() && "=+-@".indexOf(value.charAt(0)) >= 0) value = "'" + value;
+        if (value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")) {
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        }
+        return value;
+    }
+
+    private static <E extends Enum<E>> E parseEnumFilter(Class<E> type, String value, String name) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return Enum.valueOf(type, value.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            throw new ProductException("Invalid " + name + " filter");
+        }
     }
 
     // Admin-only restock report: every catalog product whose stock is at or below its own lowStockThreshold, with
