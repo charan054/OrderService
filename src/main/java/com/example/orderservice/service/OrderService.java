@@ -12,6 +12,7 @@ import com.example.orderservice.dto.PhonepeForgotPinRequest;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.PhonepeResetPinRequest;
+import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
@@ -736,6 +737,43 @@ public class OrderService {
         } catch (RuntimeException e) {
             log.error("Failed to record tracking event for order {}: {}", orderId, e.getMessage());
         }
+    }
+
+    // Receipt for one order. The caller must supply the phone number the order was placed under - a mismatch is
+    // reported as "not found" (same as an unknown id) so an order id alone can't be used to read someone else's
+    // receipt. A product whose catalog lookup fails (removed since) is shown as "Product #id" at price 0.
+    public Invoice getInvoice(long orderId, long phno) {
+        Cart order = orderRepository.findById(orderId)
+                .filter(o -> o.getCustomerPhno() == phno)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        List<Invoice.Line> lines = new ArrayList<>();
+        for (OrderItem item : order.getOrderItems()) {
+            String name = "Product #" + item.getProductId();
+            double unitPrice = 0;
+            try {
+                Product p = productClient.getProductById(item.getProductId());
+                if (p != null) {
+                    name = p.getProductName();
+                    unitPrice = p.getProductPrice();
+                }
+            } catch (FeignException e) {
+                // removed from the catalog - keep the fallback name/price rather than failing the whole receipt
+            }
+            lines.add(new Invoice.Line(item.getProductId(), name, item.getProductQuantity(), unitPrice,
+                    unitPrice * item.getProductQuantity()));
+        }
+        Instant placedAt = trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId).stream()
+                .map(TrackingEvent::getTimestamp).findFirst().orElse(null);
+        String address = null;
+        if (order.getShippingAddressId() != null) {
+            address = shippingAddressRepository.findById(order.getShippingAddressId())
+                    .map(a -> String.join(", ", a.getLine1(), a.getCity(), a.getState(), a.getPincode()))
+                    .orElse(null);
+        }
+        return new Invoice(orderId, placedAt, order.getCustomerName(), order.getCustomerPhno(), lines,
+                order.getCouponCode(), order.getDiscountAmount(),
+                order.getPointsRedeemed() == null ? 0 : order.getPointsRedeemed(), order.getTotalPrice(),
+                String.valueOf(order.getPaymentMethod()), order.isPaid(), String.valueOf(order.getStatus()), address);
     }
 
     public List<TrackingEvent> getTracking(long orderId) {

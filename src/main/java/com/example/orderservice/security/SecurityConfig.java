@@ -72,6 +72,8 @@ public class SecurityConfig {
                         // The tracking timeline is just a per-transition history of the same status field
                         // /cart/byphno already returns for every order - no additional exposure.
                         .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()
+                        // Receipt: public but ownership-checked by phone number in the service (mismatch -> 404).
+                        .requestMatchers(HttpMethod.GET, "/cart/*/invoice").permitAll()
                         // The notification audit trail is derived from the same status field as tracking above -
                         // same public trust level. /cart/notifications (no order id) backs the storefront's "My
                         // notifications" panel - same self-service trust level as /cart/byphno.

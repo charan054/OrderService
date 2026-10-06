@@ -481,4 +481,14 @@ class OrderControllerSecurityTest {
     void lowStockReportWithValidKeySucceeds() throws Exception {
         mockMvc.perform(get("/cart/lowstock").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
     }
+
+    @Test
+    void invoiceOfAnUnknownOrderIsPublicButReturns404() throws Exception {
+        mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210")).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void invoiceWithoutPhoneNumberIsABadRequest() throws Exception {
+        mockMvc.perform(get("/cart/42/invoice")).andExpect(status().isBadRequest());
+    }
 }
