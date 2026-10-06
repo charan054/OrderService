@@ -1262,10 +1262,7 @@
       });
       renderCart();
       alert((added ? `Added ${added} item(s) from order #${orderId} to your cart.` : `Nothing from order #${orderId} could be added.`)
-        + (notes.length ? "
-
-" + notes.join("
-") : ""));
+        + (notes.length ? "\n\n" + notes.join("\n") : ""));
     }
 
     function removeFromCart(productId) {
