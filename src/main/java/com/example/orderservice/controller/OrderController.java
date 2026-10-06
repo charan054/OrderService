@@ -12,6 +12,7 @@ import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.SalesAnalytics;
+import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
@@ -168,7 +169,7 @@ public class OrderController {
     // Public, same catalog-browsing trust level as /cart/display - straight proxy to ProductService's own
     // public review listing (see OrderService.getProductReviews for why this exists at all).
     @GetMapping("/reviews")
-    public List<ProductReview> getReviews(@RequestParam long productId,
+    public List<StorefrontReview> getReviews(@RequestParam long productId,
                                            @RequestParam(required = false) Integer page,
                                            @RequestParam(required = false) Integer size) {
         return orderService.getProductReviews(productId, page, size);
@@ -176,7 +177,7 @@ public class OrderController {
     // Public, same self-service trust level as posting to your own wishlist/addresses - a customer reviewing a
     // product they browsed needs no X-Service-Key, mirrors ProductService's own review posting being public too.
     @PostMapping("/reviews")
-    public ProductReview addReview(@RequestParam long productId, @RequestBody ReviewSubmission review) {
+    public StorefrontReview addReview(@RequestParam long productId, @RequestBody ReviewSubmission review) {
         return orderService.addProductReview(productId, review.reviewerName(), review.reviewerPhno(), review.rating(), review.comment());
     }
     // Public, same catalog-browsing trust level as /cart/display - straight proxy to ProductService's own

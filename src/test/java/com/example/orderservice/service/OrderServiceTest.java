@@ -22,6 +22,7 @@ import com.example.orderservice.dto.CouponSuggestion;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.SalesAnalytics;
+import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.dto.TopSellingProduct;
 import com.example.orderservice.dto.UpiCollectRequestResponse;
 import com.example.orderservice.dto.WaitlistStatus;
@@ -1924,7 +1925,7 @@ class OrderServiceTest {
         when(productClient.getReviews(1, 0, 20))
                 .thenReturn(new ProductReviewsResult(List.of(new ProductReview(1, "Alice", 9876543210L, 5, "Great!", LocalDateTime.now()))));
 
-        List<ProductReview> result = service.getProductReviews(1, null, null);
+        List<StorefrontReview> result = service.getProductReviews(1, null, null);
 
         assertEquals(1, result.size());
         assertEquals("Alice", result.get(0).reviewerName());
@@ -1939,13 +1940,49 @@ class OrderServiceTest {
     }
 
     @Test
-    void addProductReviewDelegatesToProductClient() {
+    void getProductReviewsMarksOnlyRealKeptBuyersAsVerified() {
+        long buyer = 9876543210L, cancelledBuyer = 9876543211L, pendingBuyer = 9876543212L,
+                otherProductBuyer = 9876543213L, stranger = 9876543214L;
+        when(productClient.getReviews(1, 0, 20)).thenReturn(new ProductReviewsResult(List.of(
+                new ProductReview(1, "Buyer", buyer, 5, "a", LocalDateTime.now()),
+                new ProductReview(2, "Cancelled", cancelledBuyer, 5, "b", LocalDateTime.now()),
+                new ProductReview(3, "Pending", pendingBuyer, 5, "c", LocalDateTime.now()),
+                new ProductReview(4, "Other", otherProductBuyer, 5, "d", LocalDateTime.now()),
+                new ProductReview(5, "Stranger", stranger, 5, "e", LocalDateTime.now()),
+                new ProductReview(6, "Buyer again", buyer, 4, "f", LocalDateTime.now()))));
+        Cart kept = cart(buyer, item(1, 1));
+        kept.setStatus(OrderStatus.RETURNED);
+        Cart cancelled = cart(cancelledBuyer, item(1, 1));
+        cancelled.setStatus(OrderStatus.CANCELLED);
+        Cart pending = cart(pendingBuyer, item(1, 1));
+        pending.setStatus(OrderStatus.PENDING_PAYMENT);
+        Cart otherProduct = cart(otherProductBuyer, item(2, 1));
+        otherProduct.setStatus(OrderStatus.DELIVERED);
+        when(orderRepository.findBycustomerPhno(buyer)).thenReturn(List.of(kept));
+        when(orderRepository.findBycustomerPhno(cancelledBuyer)).thenReturn(List.of(cancelled));
+        when(orderRepository.findBycustomerPhno(pendingBuyer)).thenReturn(List.of(pending));
+        when(orderRepository.findBycustomerPhno(otherProductBuyer)).thenReturn(List.of(otherProduct));
+        when(orderRepository.findBycustomerPhno(stranger)).thenReturn(List.of());
+
+        List<StorefrontReview> result = service.getProductReviews(1, null, null);
+
+        assertEquals(List.of(true, false, false, false, false, true),
+                result.stream().map(StorefrontReview::verifiedPurchase).toList());
+        verify(orderRepository, times(1)).findBycustomerPhno(buyer);
+    }
+
+    @Test
+    void addProductReviewDelegatesToProductClientAndFlagsVerification() {
         ProductReview saved = new ProductReview(1, "Bob", 9876543210L, 4, "Good", LocalDateTime.now());
         when(productClient.addReview(eq(1L), any())).thenReturn(saved);
+        Cart bought = cart(9876543210L, item(1, 1));
+        bought.setStatus(OrderStatus.DELIVERED);
+        when(orderRepository.findBycustomerPhno(9876543210L)).thenReturn(List.of(bought));
 
-        ProductReview result = service.addProductReview(1, "Bob", 9876543210L, 4, "Good");
+        StorefrontReview result = service.addProductReview(1, "Bob", 9876543210L, 4, "Good");
 
-        assertEquals(saved, result);
+        assertEquals("Bob", result.reviewerName());
+        assertTrue(result.verifiedPurchase());
         verify(productClient).addReview(1L, new ReviewSubmission("Bob", 9876543210L, 4, "Good"));
     }
 

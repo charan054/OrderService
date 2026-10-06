@@ -22,6 +22,7 @@ import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.SalesAnalytics;
+import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.dto.TopSellingProduct;
 import com.example.orderservice.dto.UpiCollectRequestResponse;
 import com.example.orderservice.dto.WaitlistStatus;
@@ -979,14 +980,33 @@ public class OrderService {
 
     // Straight proxy to ProductService's own public review listing/posting - shop.html only ever calls its own
     // origin (see searchProducts()/getRatingSummaries() above for the same reasoning), so OrderService fronts it.
-    public List<ProductReview> getProductReviews(long productId, Integer page, Integer size) {
+    // Each review is annotated with verifiedPurchase (see StorefrontReview) and stripped of the reviewer's phone.
+    public List<StorefrontReview> getProductReviews(long productId, Integer page, Integer size) {
         int effectivePage = (page == null || page < 0) ? 0 : page;
         int effectiveSize = (size == null || size <= 0) ? DEFAULT_REVIEWS_PAGE_SIZE : size;
-        return productClient.getReviews(productId, effectivePage, effectiveSize).content();
+        Map<Long, Boolean> verifiedByPhno = new HashMap<>();
+        return productClient.getReviews(productId, effectivePage, effectiveSize).content().stream()
+                .map(r -> toStorefrontReview(r, productId,
+                        verifiedByPhno.computeIfAbsent(r.reviewerPhno(), phno -> hasKeptPurchase(phno, productId))))
+                .toList();
     }
 
-    public ProductReview addProductReview(long productId, String reviewerName, long reviewerPhno, int rating, String comment) {
-        return productClient.addReview(productId, new ReviewSubmission(reviewerName, reviewerPhno, rating, comment));
+    public StorefrontReview addProductReview(long productId, String reviewerName, long reviewerPhno, int rating, String comment) {
+        ProductReview saved = productClient.addReview(productId, new ReviewSubmission(reviewerName, reviewerPhno, rating, comment));
+        return toStorefrontReview(saved, productId, hasKeptPurchase(saved.reviewerPhno(), productId));
+    }
+
+    private static StorefrontReview toStorefrontReview(ProductReview r, long productId, boolean verified) {
+        return new StorefrontReview(r.reviewId(), r.reviewerName(), r.rating(), r.comment(), r.createdAt(), verified);
+    }
+
+    // "Kept" = an order that was actually placed and not later cancelled; a returned order still counts (they did
+    // buy and use it). PENDING_PAYMENT never completed, so it doesn't.
+    private boolean hasKeptPurchase(long phno, long productId) {
+        return orderRepository.findBycustomerPhno(phno).stream()
+                .filter(o -> o.getStatus() != OrderStatus.CANCELLED && o.getStatus() != OrderStatus.PENDING_PAYMENT)
+                .filter(o -> o.getOrderItems() != null)
+                .anyMatch(o -> o.getOrderItems().stream().anyMatch(i -> i.getProductId() == productId));
     }
 
     // Straight proxy to ProductService's own public gallery listing - same "shop.html only calls its own
