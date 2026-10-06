@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Charan Mart</title>
+    <script>
+      // Apply a saved theme choice before first paint so a dark-mode visitor doesn't see a white flash.
+      try { const t = localStorage.getItem("theme"); if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+    </script>
 
     <style>
         :root {
@@ -17,6 +21,21 @@
           --border: #e2e8f0;
           --bg: #f8fafc;
           --shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+          --bg-glow: #ede9fe;
+          --surface: #ffffff;
+          --surface-glass: rgba(255, 255, 255, 0.9);
+          --surface-2: #f1f5f9;
+          --surface-3: #f5f3ff;
+          --input-border: #cbd5e1;
+          --chip: #e2e8f0;
+          --chip-accent: #eef2ff;
+          --ok-bg: #dcfce7;
+          --ok-fg: #15803d;
+          --err-bg: #fee2e2;
+          --err-fg: #b91c1c;
+          --info-bg: #ede9fe;
+          --info-fg: #4c1d95;
+          color-scheme: light;
         }
 
         * {
@@ -28,7 +47,7 @@
 
         body {
           min-height: 100vh;
-          background: radial-gradient(circle at top left, #ede9fe 0%, var(--bg) 45%);
+          background: radial-gradient(circle at top left, var(--bg-glow) 0%, var(--bg) 45%);
           color: var(--dark);
         }
 
@@ -95,7 +114,7 @@
         .center-card {
           max-width: 380px;
           margin: 60px auto;
-          background: white;
+          background: var(--surface);
           border-radius: 20px;
           padding: 28px;
           box-shadow: var(--shadow);
@@ -107,13 +126,14 @@
 
         input, select {
           width: 100%;
-          border: 1px solid #cbd5e1;
+          border: 1px solid var(--input-border);
+          color: var(--dark);
           border-radius: 12px;
           padding: 12px 14px;
           font-size: 15px;
           margin-bottom: 12px;
           outline: none;
-          background: #fbfdff;
+          background: var(--surface-2);
         }
 
         input:focus, select:focus {
@@ -144,7 +164,7 @@
         button:disabled { opacity: 0.55; cursor: not-allowed; }
 
         button.secondary {
-          background: #e2e8f0;
+          background: var(--chip);
           color: var(--dark);
         }
 
@@ -168,7 +188,7 @@
         }
 
         .product-card {
-          background: white;
+          background: var(--surface);
           border: 1px solid var(--border);
           border-radius: 16px;
           overflow: hidden;
@@ -183,7 +203,7 @@
 
         .product-image {
           height: 120px;
-          background: #f1f5f9;
+          background: var(--surface-2);
           display: flex;
           align-items: center;
           justify-content: center;
@@ -220,7 +240,7 @@
           width: 32px;
           height: 32px;
           border-radius: 50%;
-          background: rgba(255, 255, 255, 0.9);
+          background: var(--surface-glass);
           color: var(--muted);
           font-size: 16px;
           line-height: 1;
@@ -243,7 +263,7 @@
           margin-bottom: 16px;
         }
         .account-summary > div {
-          background: white;
+          background: var(--surface);
           border: 1px solid var(--border);
           border-radius: 12px;
           padding: 12px;
@@ -256,7 +276,7 @@
           display: flex;
           justify-content: space-between;
           align-items: center;
-          background: white;
+          background: var(--surface);
           border: 1px solid var(--border);
           border-radius: 12px;
           padding: 12px 14px;
@@ -268,7 +288,7 @@
         .grid-tabs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
         .grid-tabs button {
           width: auto;
-          background: white;
+          background: var(--surface);
           color: var(--muted);
           border: 1px solid var(--border);
           border-radius: 999px;
@@ -286,8 +306,8 @@
 
         .price-drop-badge {
           display: inline-block;
-          background: #dcfce7;
-          color: #15803d;
+          background: var(--ok-bg);
+          color: var(--ok-fg);
           font-size: 11px;
           font-weight: 700;
           padding: 2px 8px;
@@ -331,7 +351,7 @@
         }
 
         .modal-box {
-          background: white;
+          background: var(--surface);
           border-radius: 20px;
           padding: 24px;
           width: min(560px, 100%);
@@ -345,7 +365,7 @@
 
         .modal-close {
           width: auto;
-          background: #e2e8f0;
+          background: var(--chip);
           color: var(--dark);
           padding: 6px 12px;
           font-size: 13px;
@@ -359,7 +379,7 @@
           border-radius: 12px;
           padding: 8px 12px;
           font-size: 13px;
-          background: #fbfdff;
+          background: var(--surface-2);
         }
         .fbt-chip .fbt-count { color: var(--muted); font-size: 11px; }
 
@@ -375,7 +395,7 @@
         .review-form select, .review-form input { margin-bottom: 10px; }
 
         .panel {
-          background: white;
+          background: var(--surface);
           border: 1px solid var(--border);
           border-radius: 16px;
           box-shadow: var(--shadow);
@@ -391,7 +411,7 @@
           justify-content: space-between;
           font-size: 14px;
           padding: 8px 0;
-          border-bottom: 1px solid #edf2f7;
+          border-bottom: 1px solid var(--border);
         }
 
         .cart-line button {
@@ -414,7 +434,7 @@
           padding: 4px 10px;
           font-size: 12px;
           border-radius: 999px;
-          background: #eef2ff;
+          background: var(--chip-accent);
           color: var(--dark);
           border: 1px dashed #818cf8;
         }
@@ -460,7 +480,7 @@
 
         .pay-option.selected {
           border-color: var(--primary);
-          background: #f5f3ff;
+          background: var(--surface-3);
         }
 
         .pay-option input { width: auto; margin: 0; }
@@ -473,13 +493,105 @@
           border-radius: 10px;
         }
 
-        .status-banner.success { background: #dcfce7; color: #15803d; }
-        .status-banner.error { background: #fee2e2; color: #b91c1c; }
-        .status-banner.info { background: #ede9fe; color: var(--primary-dark); }
+        .status-banner.success { background: var(--ok-bg); color: var(--ok-fg); }
+        .status-banner.error { background: var(--err-bg); color: var(--err-fg); }
+        .status-banner.info { background: var(--info-bg); color: var(--info-fg); }
+
+        /* Dark theme: follows the OS setting unless the visitor picked one with the header toggle
+           (stored as data-theme on <html>). */
+        @media (prefers-color-scheme: dark) {
+          :root:not([data-theme="light"]) {
+            --dark: #e2e8f0;
+            --muted: #94a3b8;
+            --border: #2a3350;
+            --bg: #0b1020;
+            --bg-glow: #1e1b4b;
+            --shadow: 0 18px 45px rgba(0, 0, 0, 0.5);
+            --surface: #151b2e;
+            --surface-glass: rgba(21, 27, 46, 0.92);
+            --surface-2: #1c2438;
+            --surface-3: #231f3d;
+            --input-border: #3a4566;
+            --chip: #2a3350;
+            --chip-accent: #26294d;
+            --ok-bg: #052e1b;
+            --ok-fg: #4ade80;
+            --err-bg: #3b1219;
+            --err-fg: #fca5a5;
+            --info-bg: #2e1d5b;
+            --info-fg: #c4b5fd;
+            color-scheme: dark;
+          }
+        }
+        :root[data-theme="dark"] {
+          --dark: #e2e8f0;
+          --muted: #94a3b8;
+          --border: #2a3350;
+          --bg: #0b1020;
+          --bg-glow: #1e1b4b;
+          --shadow: 0 18px 45px rgba(0, 0, 0, 0.5);
+          --surface: #151b2e;
+          --surface-glass: rgba(21, 27, 46, 0.92);
+          --surface-2: #1c2438;
+          --surface-3: #231f3d;
+          --input-border: #3a4566;
+          --chip: #2a3350;
+          --chip-accent: #26294d;
+          --ok-bg: #052e1b;
+          --ok-fg: #4ade80;
+          --err-bg: #3b1219;
+          --err-fg: #fca5a5;
+          --info-bg: #2e1d5b;
+          --info-fg: #c4b5fd;
+          color-scheme: dark;
+        }
+
+        .theme-toggle {
+          width: 38px;
+          height: 38px;
+          padding: 0;
+          border-radius: 12px;
+          background: rgba(255, 255, 255, 0.18);
+          box-shadow: none;
+          font-size: 18px;
+          line-height: 1;
+        }
+        .topbar-actions { display: flex; align-items: center; gap: 12px; }
+        img { max-width: 100%; }
 
         @media (max-width: 800px) {
-          .layout { grid-template-columns: 1fr; }
+          .layout { grid-template-columns: minmax(0, 1fr); }
+          .layout > * { min-width: 0; }
           .panel { position: static; }
+        }
+
+        @media (max-width: 600px) {
+          main { width: calc(100% - 24px); margin: 16px auto 40px; }
+          header.topbar { padding: 14px 12px; gap: 10px; flex-wrap: wrap; }
+          header.topbar h1 { font-size: 18px; }
+          .topbar-actions { gap: 8px; flex-wrap: wrap; }
+          #accountInfo { font-size: 12px; gap: 8px; flex-wrap: wrap; }
+          .center-card { padding: 20px 16px; }
+          /* 16px+ inputs stop iOS Safari zooming the page on focus; taller targets for thumbs */
+          input, select { font-size: 16px; }
+          button { min-height: 42px; }
+          .qty-stepper button, .cart-line button, .coupon-chips button, .modal-close, .wishlist-btn { min-height: 0; }
+          .qty-stepper button { padding: 4px 10px; font-size: 16px; }
+          .product-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+          .product-body { padding: 10px; }
+          .search-row { flex-direction: column; gap: 0; }
+          .grid-tabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+          .grid-tabs button { flex: 0 0 auto; white-space: nowrap; }
+          .order-row { flex-wrap: wrap; gap: 8px; }
+          .order-row > div:first-child { flex: 1 1 100%; }
+          .order-row button { flex: 1 1 auto; min-width: 90px; }
+          .account-summary { grid-template-columns: repeat(3, 1fr); }
+          .modal-overlay { padding: 0; align-items: flex-end; }
+          .modal-box { width: 100%; max-height: 92vh; border-radius: 20px 20px 0 0; padding: 18px 16px; }
+          .fbt-chip { flex: 0 0 auto; }
+        }
+        @media (max-width: 360px) {
+          .product-grid { grid-template-columns: 1fr; }
         }
     </style>
 </head>
@@ -493,7 +605,10 @@
             <div class="tagline">Fresh picks, fast checkout</div>
         </div>
     </div>
-    <div id="accountInfo"></div>
+    <div class="topbar-actions">
+        <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Switch between light and dark theme" title="Switch theme">&#9790;</button>
+        <div id="accountInfo"></div>
+    </div>
 </header>
 
 <main>
@@ -771,6 +886,26 @@
       if (defaultAddress) select.value = defaultAddress.id;
     }
 
+    // Header toggle: flips between light and dark, remembering the choice (falls back to the OS setting until
+    // the visitor has chosen once).
+    function currentTheme() {
+      const explicit = document.documentElement.getAttribute("data-theme");
+      if (explicit) return explicit;
+      return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function updateThemeIcon() {
+      const btn = document.getElementById("themeToggle");
+      if (btn) btn.innerHTML = currentTheme() === "dark" ? "&#9728;" : "&#9790;";
+    }
+
+    function toggleTheme() {
+      const next = currentTheme() === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("theme", next); } catch (e) {}
+      updateThemeIcon();
+    }
+
     let couponSuggestions = [];
 
     // Coupons this customer could use right now (server-side filtered: active, unexpired, not used up). Shown as
@@ -802,6 +937,8 @@
       input.value = input.value.trim().toUpperCase() === code ? "" : code;
       renderCouponSuggestions();
     }
+
+    updateThemeIcon();
 
     async function loadLoyaltyBalance() {
       const response = await fetch(`${BASE_URL}/loyalty/byphno?phno=${encodeURIComponent(customerPhno)}`);
