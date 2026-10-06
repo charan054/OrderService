@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.dto.CouponSuggestion;
 import com.example.orderservice.dto.CreateUpiCollectRequest;
 import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
@@ -666,6 +667,32 @@ public class OrderService {
         couponRepository.findById(normalizedCode)
                 .ifPresent(existing -> coupon.setRedemptionCount(existing.getRedemptionCount()));
         return couponRepository.save(coupon);
+    }
+
+    // Coupons this customer could apply at checkout right now, best discount first: active, not expired, not at
+    // the global redemption cap, and not already at this customer's own per-customer limit - i.e. exactly the
+    // checks resolveDiscount() would pass. Note this makes every active coupon code visible to anyone who knows
+    // a phone number, same self-service trust level as /cart/byphno.
+    public List<CouponSuggestion> getAvailableCoupons(long phno) {
+        validatePhno(phno);
+        Instant now = Instant.now();
+        List<CouponSuggestion> suggestions = new ArrayList<>();
+        for (Coupon c : couponRepository.findAll()) {
+            if (!c.isActive()) continue;
+            if (c.getExpiryDate() != null && now.isAfter(c.getExpiryDate())) continue;
+            if (c.getMaxRedemptions() != null && c.getRedemptionCount() >= c.getMaxRedemptions()) continue;
+            Integer usesLeft = null;
+            if (c.getPerCustomerLimit() != null) {
+                int used = couponRedemptionRepository.findByCouponCodeAndCustomerPhno(c.getCode(), phno)
+                        .map(CouponRedemption::getCount).orElse(0);
+                if (used >= c.getPerCustomerLimit()) continue;
+                usesLeft = c.getPerCustomerLimit() - used;
+            }
+            suggestions.add(new CouponSuggestion(c.getCode(), c.getDiscountPercent(), c.getExpiryDate(), usesLeft));
+        }
+        suggestions.sort(Comparator.comparingDouble(CouponSuggestion::discountPercent).reversed()
+                .thenComparing(CouponSuggestion::code));
+        return suggestions;
     }
 
     public List<Coupon> getCoupons() {

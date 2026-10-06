@@ -491,4 +491,14 @@ class OrderControllerSecurityTest {
     void invoiceWithoutPhoneNumberIsABadRequest() throws Exception {
         mockMvc.perform(get("/cart/42/invoice")).andExpect(status().isBadRequest());
     }
+
+    @Test
+    void availableCouponsLookupIsPublic() throws Exception {
+        mockMvc.perform(get("/coupons/available").param("phno", "9876543210")).andExpect(status().isOk());
+    }
+
+    @Test
+    void allCouponsListingStillRequiresTheKey() throws Exception {
+        mockMvc.perform(get("/coupons/all")).andExpect(status().isUnauthorized());
+    }
 }
