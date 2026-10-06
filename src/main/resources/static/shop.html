@@ -868,6 +868,7 @@
       const profile = profileResponse.ok ? await profileResponse.json() : null;
       const orders = ordersResponse.ok ? await ordersResponse.json() : [];
       orders.sort((a, b) => b.orderId - a.orderId);
+      accountOrders = orders;
       const addresses = addressesResponse.ok ? await addressesResponse.json() : [];
       const waitlist = waitlistResponse.ok ? await waitlistResponse.json() : [];
 
@@ -888,6 +889,7 @@
             <span class="meta">${escapeHtml(order.status)} &middot; ${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span>
           </div>
           <div class="price">₹${order.totalPrice.toFixed(2)}</div>
+          <button class="secondary" style="width:auto;" onclick="reorderMyOrder(${order.orderId})">Buy again</button>
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
           ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
         </div>
@@ -1227,6 +1229,40 @@
         cart.push({ productId, name: product.productName, price: product.productPrice, quantity });
       }
       renderCart();
+    }
+
+    // "Buy again": copies a past order's lines back into the cart using the CURRENT catalog price/stock (not what
+    // was paid then). Lines whose product is gone or out of stock are skipped, and quantities are capped at
+    // current stock; the customer is told exactly what was adjusted. Purely client-side - checkout still
+    // revalidates everything server-side.
+    let accountOrders = [];
+    async function reorderMyOrder(orderId) {
+      const order = accountOrders.find(o => o.orderId === orderId);
+      if (!order || !order.orderItems || !order.orderItems.length) return;
+      // The grid's `products` may be narrowed by a search/category filter, so look prices/stock up in the full catalog.
+      const catalogResponse = await fetch(`${BASE_URL}/cart/search`);
+      if (!catalogResponse.ok) { alert("Couldn't load the catalog - please try again."); return; }
+      const catalog = await catalogResponse.json();
+      const notes = [];
+      let added = 0;
+      order.orderItems.forEach(line => {
+        const product = catalog.find(p => p.productId === line.productId);
+        if (!product) { notes.push(`Product #${line.productId} is no longer available.`); return; }
+        const existing = cart.find(i => i.productId === product.productId);
+        const room = product.productStock - (existing ? existing.quantity : 0);
+        if (room <= 0) { notes.push(`${product.productName} is out of stock.`); return; }
+        const qty = Math.min(line.productQuantity, room);
+        if (qty < line.productQuantity) notes.push(`${product.productName}: only ${qty} of ${line.productQuantity} available.`);
+        if (existing) {
+          existing.quantity += qty;
+        } else {
+          cart.push({ productId: product.productId, name: product.productName, price: product.productPrice, quantity: qty });
+        }
+        added++;
+      });
+      renderCart();
+      alert((added ? `Added ${added} item(s) from order #${orderId} to your cart.` : `Nothing from order #${orderId} could be added.`)
+        + (notes.length ? "\n\n" + notes.join("\n") : ""));
     }
 
     function removeFromCart(productId) {

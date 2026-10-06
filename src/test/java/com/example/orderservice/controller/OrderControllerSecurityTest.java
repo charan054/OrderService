@@ -471,4 +471,14 @@ class OrderControllerSecurityTest {
                         .header("X-Service-Key", VALID_KEY))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    void lowStockReportWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(get("/cart/lowstock")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void lowStockReportWithValidKeySucceeds() throws Exception {
+        mockMvc.perform(get("/cart/lowstock").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
 }

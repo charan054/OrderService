@@ -9,7 +9,8 @@ import lombok.Data;
         "productCategory",
         "productPrice",
         "productStock",
-        "productImageUrl"
+        "productImageUrl",
+        "lowStockThreshold"
 })
 @Data
 public class Product {
@@ -19,4 +20,6 @@ public class Product {
     private double productPrice;
     private int productStock;
     private String productImageUrl;
+    // Mirrors ProductService's per-product threshold (default 5 there too); used by OrderService.getLowStockReport().
+    private int lowStockThreshold = 5;
 }

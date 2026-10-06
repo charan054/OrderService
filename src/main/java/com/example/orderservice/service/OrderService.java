@@ -12,6 +12,7 @@ import com.example.orderservice.dto.PhonepeForgotPinRequest;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.PhonepeResetPinRequest;
+import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
@@ -66,6 +67,7 @@ import java.math.RoundingMode;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -1184,6 +1186,22 @@ public class OrderService {
                     waitlist.setProductId(productId);
                     return stockWaitlistRepository.save(waitlist);
                 });
+    }
+
+    // Admin-only restock report: every catalog product whose stock is at or below its own lowStockThreshold, with
+    // OUT (stock 0) listed before LOW, lowest stock first, plus how many customers are waiting on it. Computed live
+    // from the catalog on each call (no scheduler/push provider exists here).
+    public List<LowStockItem> getLowStockReport() {
+        List<LowStockItem> items = new ArrayList<>();
+        for (Product p : productClient.findAll()) {
+            if (p.getProductStock() <= p.getLowStockThreshold()) {
+                items.add(new LowStockItem(p.getProductId(), p.getProductName(), p.getProductStock(),
+                        p.getLowStockThreshold(), p.getProductStock() <= 0 ? "OUT" : "LOW",
+                        stockWaitlistRepository.countByProductId(p.getProductId())));
+            }
+        }
+        items.sort(Comparator.comparingInt(LowStockItem::productStock).thenComparingInt(LowStockItem::productId));
+        return items;
     }
 
     // Computed on demand, same "no scheduler/push provider exists here" reasoning as getPriceDropAlerts() - live

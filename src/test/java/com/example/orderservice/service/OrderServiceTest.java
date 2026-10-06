@@ -17,6 +17,7 @@ import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.TopSellingProduct;
 import com.example.orderservice.dto.UpiCollectRequestResponse;
@@ -84,6 +85,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -1960,6 +1962,36 @@ class OrderServiceTest {
         when(productClient.getProductById(2)).thenThrow(declinedBy("byId", 404, "Product not found"));
 
         assertTrue(service.getFrequentlyBoughtTogether(1, null).isEmpty());
+    }
+
+    // ---------- getLowStockReport ----------
+
+    @Test
+    void lowStockReportListsOnlyProductsAtOrBelowTheirThresholdOutFirstWithWaitlistCounts() {
+        Product plenty = product(1, 10.0, 50);
+        Product low = product(2, 10.0, 3);
+        Product out = product(3, 10.0, 0);
+        Product boundary = product(4, 10.0, 5);
+        Product customThreshold = product(5, 10.0, 8);
+        customThreshold.setLowStockThreshold(10);
+        when(productClient.findAll()).thenReturn(List.of(plenty, low, out, boundary, customThreshold));
+        lenient().when(stockWaitlistRepository.countByProductId(anyInt())).thenReturn(0L);
+        when(stockWaitlistRepository.countByProductId(3)).thenReturn(4L);
+
+        List<LowStockItem> report = service.getLowStockReport();
+
+        assertEquals(List.of(3, 2, 4, 5), report.stream().map(LowStockItem::productId).toList());
+        assertEquals("OUT", report.get(0).level());
+        assertEquals(4L, report.get(0).waitlistCount());
+        assertEquals("LOW", report.get(1).level());
+        assertEquals(0L, report.get(1).waitlistCount());
+    }
+
+    @Test
+    void lowStockReportIsEmptyWhenEverythingIsWellStocked() {
+        when(productClient.findAll()).thenReturn(List.of(product(1, 10.0, 50)));
+
+        assertTrue(service.getLowStockReport().isEmpty());
     }
 
     // ---------- getSalesAnalytics ----------

@@ -8,6 +8,7 @@ import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ResetPinRequest;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
@@ -190,6 +191,11 @@ public class OrderController {
     @GetMapping("/analytics")
     public SalesAnalytics getSalesAnalytics(){
         return orderService.getSalesAnalytics();
+    }
+    // Admin-only restock report (X-Service-Key gated by default, like /analytics) - see OrderService.getLowStockReport().
+    @GetMapping("/lowstock")
+    public List<LowStockItem> getLowStock(){
+        return orderService.getLowStockReport();
     }
     @Transactional
     @DeleteMapping("/deleteproduct")
