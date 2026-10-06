@@ -134,6 +134,7 @@ public class OrderService {
     public Cart order(Cart cart, String authorization, String idempotencyKey, Long payerPhno, String payerPin, String payerUpiId)
     {
         validatePhno(cart.getCustomerPhno());
+        normalizeDeliveryNote(cart);
         if (cart.getPaymentMethod() == null) {
             cart.setPaymentMethod(PaymentMethod.PHONEPE);
         }
@@ -412,6 +413,22 @@ public class OrderService {
     // No code, no discount - the common case. A code that doesn't match any Coupon, or matches one that's been
     // deactivated, must fail loudly rather than silently charging full price (a buyer trusting a "10% off"
     // banner should never find out only after being charged in full).
+    static final int MAX_DELIVERY_NOTE_LENGTH = 200;
+
+    // Blank -> null; anything longer than the limit is rejected up front (before any payment), not truncated.
+    private void normalizeDeliveryNote(Cart cart) {
+        String note = cart.getDeliveryNote();
+        if (note == null || note.isBlank()) {
+            cart.setDeliveryNote(null);
+            return;
+        }
+        note = note.trim();
+        if (note.length() > MAX_DELIVERY_NOTE_LENGTH) {
+            throw new ProductException("Delivery instructions must be at most " + MAX_DELIVERY_NOTE_LENGTH + " characters");
+        }
+        cart.setDeliveryNote(note);
+    }
+
     private double resolveDiscount(Cart cart, double price) {
         String code = cart.getCouponCode();
         if (code == null || code.isBlank()) {
@@ -802,7 +819,8 @@ public class OrderService {
         return new Invoice(orderId, placedAt, order.getCustomerName(), order.getCustomerPhno(), lines,
                 order.getCouponCode(), order.getDiscountAmount(),
                 order.getPointsRedeemed() == null ? 0 : order.getPointsRedeemed(), order.getTotalPrice(),
-                String.valueOf(order.getPaymentMethod()), order.isPaid(), String.valueOf(order.getStatus()), address);
+                String.valueOf(order.getPaymentMethod()), order.isPaid(), String.valueOf(order.getStatus()), address,
+                order.getDeliveryNote());
     }
 
     public List<TrackingEvent> getTracking(long orderId) {
@@ -1305,7 +1323,7 @@ public class OrderService {
                     order.getCustomerPhno(), String.valueOf(order.getStatus()),
                     String.valueOf(order.getPaymentMethod()), order.isPaid(), items, order.getCouponCode(),
                     order.getDiscountAmount(), order.getPointsRedeemed() == null ? 0 : order.getPointsRedeemed(),
-                    order.getTotalPrice()));
+                    order.getTotalPrice(), order.getDeliveryNote()));
         }
         rows.sort(Comparator.comparingLong(AdminOrderRow::orderId).reversed());
         return rows;
@@ -1317,7 +1335,7 @@ public class OrderService {
                                   java.time.LocalDate from, java.time.LocalDate to) {
         StringBuilder csv = new StringBuilder(
                 "orderId,placedAt,customerName,customerPhno,status,paymentMethod,paid,items,couponCode,"
-                        + "discountAmount,pointsRedeemed,totalPrice\r\n");
+                        + "discountAmount,pointsRedeemed,totalPrice,deliveryNote\r\n");
         for (AdminOrderRow r : searchOrders(status, paymentMethod, phno, from, to)) {
             csv.append(r.orderId()).append(',')
                     .append(r.placedAt() == null ? "" : r.placedAt()).append(',')
@@ -1330,7 +1348,8 @@ public class OrderService {
                     .append(csvCell(r.couponCode())).append(',')
                     .append(r.discountAmount()).append(',')
                     .append(r.pointsRedeemed()).append(',')
-                    .append(r.totalPrice()).append("\r\n");
+                    .append(r.totalPrice()).append(',')
+                    .append(csvCell(r.deliveryNote())).append("\r\n");
         }
         return csv.toString();
     }

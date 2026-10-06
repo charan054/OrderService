@@ -679,6 +679,7 @@
                 <select id="shippingAddressId">
                     <option value="">No saved address selected</option>
                 </select>
+                <input type="text" id="deliveryNote" maxlength="200" placeholder="Delivery instructions (optional)" />
                 <input type="text" id="couponCode" placeholder="Coupon code (optional)" oninput="renderCouponSuggestions()" />
                 <div id="couponSuggestions" class="coupon-chips"></div>
                 <input type="number" id="pointsRedeemed" min="0" placeholder="Loyalty points to redeem (optional)" />
@@ -1533,6 +1534,7 @@
         ${inv.placedAt ? "Date: " + new Date(inv.placedAt).toLocaleString() + "<br>" : ""}
         Customer: ${escapeHtml(inv.customerName || "")} (${inv.customerPhno})<br>
         ${inv.shippingAddress ? "Ship to: " + escapeHtml(inv.shippingAddress) + "<br>" : ""}
+        ${inv.deliveryNote ? "Delivery instructions: " + escapeHtml(inv.deliveryNote) + "<br>" : ""}
         Payment: ${escapeHtml(inv.paymentMethod)} &middot; ${inv.paid ? "Paid" : "Unpaid"} &middot; Status: ${escapeHtml(inv.status)}</div>
         <table><tr><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr>${rows}${adj.join("")}
         <tr class="total"><td colspan="3" class="r">Total charged</td><td class="r">${money(inv.totalPrice)}</td></tr></table>
@@ -1765,7 +1767,8 @@
         paymentMethod: method === "UPI" ? "PHONEPE" : method,
         couponCode: couponCode || null,
         pointsRedeemed: pointsRedeemed ? Number(pointsRedeemed) : null,
-        shippingAddressId: shippingAddressId ? Number(shippingAddressId) : null
+        shippingAddressId: shippingAddressId ? Number(shippingAddressId) : null,
+        deliveryNote: document.getElementById("deliveryNote").value.trim() || null
       };
 
       let query = "";
@@ -1797,6 +1800,7 @@
         document.getElementById("payerPin").value = "";
         document.getElementById("payerUpiId").value = "";
         document.getElementById("couponCode").value = "";
+        document.getElementById("deliveryNote").value = "";
         document.getElementById("pointsRedeemed").value = "";
 
         if (order.status === "PENDING_PAYMENT") {

@@ -1015,13 +1015,13 @@
       } else {
         const total = rows.reduce((sum, r) => sum + r.totalPrice, 0);
         wrap.innerHTML = `<table class="orders-table"><thead><tr>
-            <th>Order</th><th>Placed</th><th>Customer</th><th>Phone</th><th>Status</th><th>Payment</th><th>Paid</th><th>Items</th><th>Coupon</th><th>Total</th>
+            <th>Order</th><th>Placed</th><th>Customer</th><th>Phone</th><th>Status</th><th>Payment</th><th>Paid</th><th>Items</th><th>Coupon</th><th>Note</th><th>Total</th>
           </tr></thead><tbody>${rows.map(r => `<tr>
             <td>#${r.orderId}</td><td>${r.placedAt ? new Date(r.placedAt).toLocaleString() : "-"}</td>
             <td>${escapeCell(r.customerName)}</td><td>${r.customerPhno}</td><td>${escapeCell(r.status)}</td>
             <td>${escapeCell(r.paymentMethod)}</td><td>${r.paid ? "Yes" : "No"}</td><td>${escapeCell(r.items)}</td>
-            <td>${escapeCell(r.couponCode || "")}</td><td class="num">₹${r.totalPrice.toFixed(2)}</td></tr>`).join("")}
-          </tbody><tfoot><tr><td colspan="9"><strong>${rows.length} order(s)</strong></td><td class="num"><strong>₹${total.toFixed(2)}</strong></td></tr></tfoot></table>`;
+            <td>${escapeCell(r.couponCode || "")}</td><td>${escapeCell(r.deliveryNote || "")}</td><td class="num">₹${r.totalPrice.toFixed(2)}</td></tr>`).join("")}
+          </tbody><tfoot><tr><td colspan="10"><strong>${rows.length} order(s)</strong></td><td class="num"><strong>₹${total.toFixed(2)}</strong></td></tr></tfoot></table>`;
       }
       showStatus(`${rows.length} order(s) loaded.`, "success");
     }

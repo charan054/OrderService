@@ -2187,6 +2187,49 @@ class OrderServiceTest {
         assertTrue(lines[2].startsWith("7,,\"Smith, \"\"Bob\"\"\","));
     }
 
+    // ---------- delivery note ----------
+
+    @Test
+    void orderRejectsAnOverlongDeliveryNoteBeforeAnyPayment() {
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setDeliveryNote("x".repeat(201));
+
+        assertThrows(ProductException.class, () -> service.order(cart, "Bearer t", "key"));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void orderTrimsTheDeliveryNoteAndTurnsABlankOneIntoNull() {
+        Cart noted = cart(CUSTOMER, item(1, 1));
+        noted.setPaymentMethod(PaymentMethod.CASH);
+        noted.setDeliveryNote("  leave with security  ");
+        Cart blank = cart(CUSTOMER, item(1, 1));
+        blank.setPaymentMethod(PaymentMethod.CASH);
+        blank.setDeliveryNote("   ");
+        when(productClient.getProductById(1)).thenReturn(product(1, 10.0, 5));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(inv -> {
+            Cart saved = inv.getArgument(0);
+            saved.setOrderId(1L);
+            return saved;
+        });
+
+        assertEquals("leave with security", service.order(noted, null, "k1").getDeliveryNote());
+        assertNull(service.order(blank, null, "k2").getDeliveryNote());
+    }
+
+    @Test
+    void exportOrdersCsvIncludesTheDeliveryNote() {
+        Cart order = adminOrder(7, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "Ann");
+        order.setDeliveryNote("Call, don't ring");
+        when(orderRepository.findAll()).thenReturn(List.of(order));
+        when(trackingEventRepository.findAll()).thenReturn(List.of());
+
+        String csv = service.exportOrdersCsv(null, null, null, null, null);
+
+        assertTrue(csv.split("\r\n")[0].endsWith(",deliveryNote"));
+        assertTrue(csv.split("\r\n")[1].endsWith(",\"Call, don't ring\""));
+    }
+
     // ---------- getLowStockReport ----------
 
     @Test
