@@ -476,6 +476,18 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">📉</div>
+                <div class="title-wrap">
+                    <h2>Low Stock Report</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Products at or below their low-stock threshold (out-of-stock first), with how many customers are waiting on each. Requires the Service Key above.</p>
+            <button onclick="getLowStockReport()">View Low Stock</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">🚚</div>
                 <div class="title-wrap">
                     <h2>Ship Order</h2>
@@ -931,6 +943,17 @@
       });
       showStatus("Sales analytics loaded successfully. Result opened in new tab.", "success");
       openResultTab("Sales Analytics", data);
+    }
+
+    async function getLowStockReport() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`${BASE_URL}/lowstock`, {
+        headers: { "X-Service-Key": serviceKey }
+      });
+      showStatus(data.length ? `${data.length} product(s) need restocking. Result opened in new tab.` : "Everything is well stocked.", "success");
+      openResultTab("Low Stock Report", data);
     }
 
     async function deleteProductFromCart() {

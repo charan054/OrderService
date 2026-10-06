@@ -11,5 +11,6 @@ import java.util.Optional;
 public interface StockWaitlistRepository extends JpaRepository<StockWaitlist, Long> {
     List<StockWaitlist> findByCustomerPhno(long phno);
     Optional<StockWaitlist> findByCustomerPhnoAndProductId(long phno, int productId);
+    long countByProductId(int productId);
     void deleteByCustomerPhnoAndProductId(long phno, int productId);
 }
