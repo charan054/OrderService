@@ -889,6 +889,7 @@
             <span class="meta">${escapeHtml(order.status)} &middot; ${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span>
           </div>
           <div class="price">₹${order.totalPrice.toFixed(2)}</div>
+          <button class="secondary" style="width:auto;" onclick="showInvoice(${order.orderId})">Invoice</button>
           <button class="secondary" style="width:auto;" onclick="reorderMyOrder(${order.orderId})">Buy again</button>
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
           ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
@@ -1229,6 +1230,36 @@
         cart.push({ productId, name: product.productName, price: product.productPrice, quantity });
       }
       renderCart();
+    }
+
+    // Opens a print-friendly receipt for one of the logged-in customer's own orders in a new window (Print / Save
+    // as PDF via the browser). Data comes from GET /cart/{id}/invoice, which checks the phone number matches.
+    async function showInvoice(orderId) {
+      const response = await fetch(`${BASE_URL}/cart/${orderId}/invoice?phno=${encodeURIComponent(customerPhno)}`);
+      if (!response.ok) { alert("Couldn't load the invoice for order #" + orderId + "."); return; }
+      const inv = await response.json();
+      const money = n => "₹" + Number(n).toFixed(2);
+      const rows = inv.lines.map(l => `<tr><td>${escapeHtml(l.productName)}</td><td class="r">${l.quantity}</td><td class="r">${money(l.unitPrice)}</td><td class="r">${money(l.lineTotal)}</td></tr>`).join("");
+      const adj = [];
+      if (inv.discountAmount > 0) adj.push(`<tr><td colspan="3" class="r">Coupon${inv.couponCode ? " (" + escapeHtml(inv.couponCode) + ")" : ""}</td><td class="r">-${money(inv.discountAmount)}</td></tr>`);
+      if (inv.pointsRedeemed > 0) adj.push(`<tr><td colspan="3" class="r">Loyalty points redeemed</td><td class="r">-${money(inv.pointsRedeemed)}</td></tr>`);
+      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Invoice #${inv.orderId}</title>
+        <style>body{font-family:Arial,sans-serif;max-width:640px;margin:30px auto;color:#222}h1{margin:0}table{width:100%;border-collapse:collapse;margin-top:16px}
+        th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left}.r{text-align:right}.total td{font-weight:bold;border-top:2px solid #222}
+        .meta{color:#555;font-size:14px;line-height:1.6}button{margin-top:20px;padding:8px 16px}@media print{button{display:none}}</style></head><body>
+        <h1>Charan Mart</h1><div class="meta">Invoice for order #${inv.orderId}<br>
+        ${inv.placedAt ? "Date: " + new Date(inv.placedAt).toLocaleString() + "<br>" : ""}
+        Customer: ${escapeHtml(inv.customerName || "")} (${inv.customerPhno})<br>
+        ${inv.shippingAddress ? "Ship to: " + escapeHtml(inv.shippingAddress) + "<br>" : ""}
+        Payment: ${escapeHtml(inv.paymentMethod)} &middot; ${inv.paid ? "Paid" : "Unpaid"} &middot; Status: ${escapeHtml(inv.status)}</div>
+        <table><tr><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr>${rows}${adj.join("")}
+        <tr class="total"><td colspan="3" class="r">Total charged</td><td class="r">${money(inv.totalPrice)}</td></tr></table>
+        <p class="meta">Item prices show today's catalog price; the total is what this order was actually charged.</p>
+        <button onclick="window.print()">Print / Save as PDF</button></body></html>`;
+      const w = window.open("", "_blank");
+      if (!w) { alert("Please allow pop-ups to view the invoice."); return; }
+      w.document.write(html);
+      w.document.close();
     }
 
     // "Buy again": copies a past order's lines back into the cart using the CURRENT catalog price/stock (not what

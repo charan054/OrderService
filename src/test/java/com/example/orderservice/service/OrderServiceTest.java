@@ -17,6 +17,7 @@ import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.TopSellingProduct;
@@ -1480,6 +1481,67 @@ class OrderServiceTest {
 
         assertTrue(result.isPaid());
         verify(orderKafkaProducer).sendMessage(contains("Order marked paid"));
+    }
+
+    // ---------- getInvoice() ----------
+
+    @Test
+    void getInvoiceThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.empty());
+        assertThrows(OrderNotFoundException.class, () -> service.getInvoice(42L, CUSTOMER));
+    }
+
+    @Test
+    void getInvoiceHidesAnotherCustomersOrderAsNotFound() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart(CUSTOMER, item(1, 1))));
+        assertThrows(OrderNotFoundException.class, () -> service.getInvoice(42L, CUSTOMER + 1));
+    }
+
+    @Test
+    void getInvoiceBuildsLinesTotalsAndAddress() {
+        Cart order = cart(CUSTOMER, item(1, 2), item(2, 1));
+        order.setCouponCode("WELCOME10");
+        order.setDiscountAmount(10.0);
+        order.setPointsRedeemed(5);
+        order.setTotalPrice(85.0);
+        order.setShippingAddressId(7L);
+        order.setPaymentMethod(PaymentMethod.CASH);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(order));
+        when(productClient.getProductById(1)).thenReturn(product(1, 40.0, 5));
+        when(productClient.getProductById(2)).thenReturn(product(2, 20.0, 5));
+        TrackingEvent placed = new TrackingEvent();
+        placed.setTimestamp(java.time.Instant.parse("2026-10-01T10:00:00Z"));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of(placed));
+        ShippingAddress address = new ShippingAddress();
+        address.setLine1("1 Main St");
+        address.setCity("Pune");
+        address.setState("MH");
+        address.setPincode("411001");
+        when(shippingAddressRepository.findById(7L)).thenReturn(Optional.of(address));
+
+        Invoice invoice = service.getInvoice(42L, CUSTOMER);
+
+        assertEquals(2, invoice.lines().size());
+        assertEquals(80.0, invoice.lines().get(0).lineTotal());
+        assertEquals(85.0, invoice.totalPrice());
+        assertEquals(5, invoice.pointsRedeemed());
+        assertEquals("CASH", invoice.paymentMethod());
+        assertEquals(java.time.Instant.parse("2026-10-01T10:00:00Z"), invoice.placedAt());
+        assertEquals("1 Main St, Pune, MH, 411001", invoice.shippingAddress());
+    }
+
+    @Test
+    void getInvoiceFallsBackWhenAProductIsGoneFromTheCatalog() {
+        Cart order = cart(CUSTOMER, item(9, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(order));
+        when(productClient.getProductById(9)).thenThrow(declinedBy("byId", 404, "Product not found"));
+
+        Invoice invoice = service.getInvoice(42L, CUSTOMER);
+
+        assertEquals("Product #9", invoice.lines().get(0).productName());
+        assertEquals(0, invoice.pointsRedeemed());
+        assertNull(invoice.placedAt());
+        assertNull(invoice.shippingAddress());
     }
 
     // ---------- getTracking() ----------

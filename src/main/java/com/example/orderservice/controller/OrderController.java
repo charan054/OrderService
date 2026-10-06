@@ -8,6 +8,7 @@ import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ResetPinRequest;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.entity.Cart;
@@ -123,6 +124,11 @@ public class OrderController {
     @GetMapping("/{orderId}/tracking")
     public List<TrackingEvent> getTracking(@PathVariable long orderId){
         return orderService.getTracking(orderId);
+    }
+    // Public like /byphno, but the phone number must match the order's owner (see OrderService.getInvoice).
+    @GetMapping("/{orderId}/invoice")
+    public Invoice getInvoice(@PathVariable long orderId, @RequestParam long phno){
+        return orderService.getInvoice(orderId, phno);
     }
     // Same public trust level as tracking above - the audit trail of customer notifications OrderKafkaConsumer
     // has dispatched for this order so far.
