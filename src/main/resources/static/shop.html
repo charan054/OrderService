@@ -655,6 +655,7 @@
 
             <div class="panel">
                 <h2>Your cart</h2>
+                <p id="cartNote" class="hidden" style="font-size:12px; color:var(--muted); margin:-6px 0 10px;"></p>
                 <div id="cartLines"><p style="color:var(--muted); font-size:14px;">Your cart is empty.</p></div>
                 <div class="total-row"><span>Total</span><span id="cartTotal">₹0</span></div>
 
@@ -764,8 +765,63 @@
         : "";
     }
 
+    // ---- Cart persistence ----
+    // The cart is saved per phone number in localStorage on every change, so a refresh, accidental tab close or
+    // logout/login doesn't empty it. Saving only starts once the saved copy has been restored (cartPersistReady),
+    // otherwise the first empty render after a page load would overwrite it.
+    let cartPersistReady = false;
+    const cartStorageKey = () => `shopCart_${customerPhno}`;
+
+    function saveCart() {
+      if (!cartPersistReady || !customerPhno) return;
+      try {
+        if (cart.length) localStorage.setItem(cartStorageKey(), JSON.stringify(cart));
+        else localStorage.removeItem(cartStorageKey());
+      } catch (e) { /* storage full/blocked - the cart just won't persist */ }
+    }
+
+    // Re-validates the saved lines against the live catalog (current price; dropped if gone or out of stock;
+    // quantity capped at stock) and tells the customer what changed.
+    async function restoreSavedCart() {
+      cartPersistReady = false;
+      let saved = [];
+      try { saved = JSON.parse(localStorage.getItem(cartStorageKey()) || "[]"); } catch (e) { saved = []; }
+      const note = document.getElementById("cartNote");
+      note.classList.add("hidden");
+      if (!Array.isArray(saved) || !saved.length) { cartPersistReady = true; return; }
+      const notes = [];
+      try {
+        const response = await fetch(`${BASE_URL}/cart/search`);
+        if (!response.ok) throw new Error("catalog unavailable");
+        const catalog = await response.json();
+        const restored = [];
+        saved.forEach(line => {
+          const product = catalog.find(p => p.productId === line.productId);
+          if (!product) { notes.push(`${line.name} is no longer available`); return; }
+          if (product.productStock <= 0) { notes.push(`${product.productName} is out of stock`); return; }
+          const quantity = Math.min(Math.max(1, Number(line.quantity) || 1), product.productStock);
+          if (quantity < line.quantity) notes.push(`${product.productName} reduced to ${quantity} (stock)`);
+          if (product.productPrice !== line.price) notes.push(`${product.productName} price is now ₹${product.productPrice}`);
+          restored.push({ productId: product.productId, name: product.productName, price: product.productPrice, quantity });
+        });
+        cart = restored;
+      } catch (e) {
+        cart = saved; // catalog unreachable: keep the saved lines as-is, checkout re-validates server-side anyway
+      }
+      cartPersistReady = true;
+      renderCart();
+      if (cart.length) notes.unshift("Your saved cart was restored");
+      if (notes.length) {
+        note.textContent = notes.join(" · ");
+        note.classList.remove("hidden");
+      }
+    }
+
     function logout() {
       localStorage.removeItem("shopCustomerPhno");
+      // The saved cart stays in localStorage under this phone number so it is still there at the next login;
+      // only the in-memory copy is dropped (and saving is paused until the next restore).
+      cartPersistReady = false;
       customerPhno = null;
       cart = [];
       document.getElementById("loginSection").classList.remove("hidden");
@@ -846,6 +902,7 @@
     }
 
     function enterShop() {
+      restoreSavedCart();
       document.getElementById("loginSection").classList.add("hidden");
       document.getElementById("shopSection").classList.remove("hidden");
       document.getElementById("payerPhno").value = customerPhno;
@@ -1531,6 +1588,7 @@
       const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
       document.getElementById("cartTotal").textContent = `₹${total.toFixed(2)}`;
       renderCouponSuggestions();
+      saveCart();
     }
 
     function onPaymentMethodChange() {
