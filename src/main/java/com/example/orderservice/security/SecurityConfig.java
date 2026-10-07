@@ -1,5 +1,6 @@
 package com.example.orderservice.security;
 
+import com.example.orderservice.repository.AuditLogRepository;
 import com.example.orderservice.service.CustomerAuthService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -12,6 +13,8 @@ import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+import java.time.Clock;
 
 /**
  * Three trust levels:
@@ -30,11 +33,16 @@ public class SecurityConfig {
 
     private final String serviceApiKey;
     private final CustomerAuthService customerAuthService;
+    private final AuditLogRepository auditLogRepository;
+    private final Clock clock;
 
     public SecurityConfig(@Value("${internal.service.api-key}") String serviceApiKey,
-                          CustomerAuthService customerAuthService) {
+                          CustomerAuthService customerAuthService,
+                          AuditLogRepository auditLogRepository, Clock clock) {
         this.serviceApiKey = serviceApiKey;
         this.customerAuthService = customerAuthService;
+        this.auditLogRepository = auditLogRepository;
+        this.clock = clock;
     }
 
     @Bean
@@ -84,6 +92,7 @@ public class SecurityConfig {
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .addFilterBefore(new ServiceKeyAuthenticationFilter(serviceApiKey), UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(new CustomerTokenAuthenticationFilter(customerAuthService), ServiceKeyAuthenticationFilter.class)
+                .addFilterAfter(new AuditLogFilter(auditLogRepository, clock), CustomerTokenAuthenticationFilter.class)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable);
         return http.build();

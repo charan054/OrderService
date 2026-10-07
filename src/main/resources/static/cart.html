@@ -840,6 +840,21 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128221;</div>
+                <div class="title-wrap">
+                    <h2>Admin Audit Log</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Every change made with the Service Key (shipping, coupons, pincodes, answers, ...): when, what, and whether it succeeded. Only the endpoint is recorded, never the data. Requires the Service Key above.</p>
+            <input type="text" id="auditFilter" placeholder="Filter by path, e.g. /cart/bulk (optional)" />
+            <div class="orders-actions">
+                <button onclick="loadAuditLog()">Load Recent Actions</button>
+            </div>
+            <div id="auditTableWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
                     <h2>Review Moderation</h2>
@@ -1320,6 +1335,22 @@
           <tr><td>#${o.orderId}</td><td>${escapeHtml(o.status)}</td><td>${escapeHtml(o.paymentMethod)}${o.paymentMethod === "CASH" ? (o.paid ? " (paid)" : " (unpaid)") : ""}</td><td>${money(o.totalPrice)}</td><td>${money(o.refundedAmount)}</td></tr>`).join("")}</tbody></table>` : "<p>No orders.</p>"}
         ${c.addresses.length ? "<p>Addresses:</p><ul>" + c.addresses.map(a => `<li>${escapeHtml(a.label || "Address")}${a.isDefault ? " (default)" : ""}: ${escapeHtml(a.address)}</li>`).join("") + "</ul>" : "<p>No saved addresses.</p>"}`;
       showStatus("Customer found.", "success");
+    }
+
+    // ---------- audit log ----------
+    async function loadAuditLog() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const filter = document.getElementById("auditFilter").value.trim();
+      const rows = await apiCall(`http://localhost:8083/audit/recent?limit=200${filter ? "&pathContains=" + encodeURIComponent(filter) : ""}`,
+        { headers: { "X-Service-Key": serviceKey } });
+      const wrap = document.getElementById("auditTableWrap");
+      wrap.innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>When</th><th>Action</th><th>Result</th><th>From</th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>${new Date(r.timestamp).toLocaleString()}</td><td>${escapeHtml(r.method)} ${escapeHtml(r.path)}</td>
+            <td>${r.status}</td><td>${escapeHtml(r.remoteAddr || "")}</td></tr>`).join("")}</tbody></table>`
+        : "<p>No recorded actions yet.</p>";
+      showStatus(`${rows.length} recorded action(s).`, "success");
     }
 
     // ---------- review moderation ----------

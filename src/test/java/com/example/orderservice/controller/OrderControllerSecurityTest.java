@@ -694,6 +694,20 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void auditLogIsServiceOnlyAndRecordsServiceKeyWrites() throws Exception {
+        mockMvc.perform(get("/audit/recent")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/audit/recent").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/audit/recent").param("limit", "0").header("X-Service-Key", VALID_KEY)).andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/cart/bulk/ship").contentType("application/json").content("[424242]").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/audit/recent").param("pathContains", "bulk/ship").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].path").value("/cart/bulk/ship"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].status").value(200));
+    }
+
+    @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
     }
