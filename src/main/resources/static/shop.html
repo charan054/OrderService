@@ -1262,19 +1262,58 @@
       }
     }
 
+    // Order-history filter/paging state; the server does the filtering (GET /cart/history).
+    let orderFilter = { status: "", from: "", to: "", page: 0 };
+    const ORDER_PAGE_SIZE = 10;
+
+    function setOrderFilter(change) {
+      orderFilter = { ...orderFilter, page: 0, ...change };
+      loadAccountView();
+    }
+
+    function orderHistoryQuery() {
+      let q = `phno=${encodeURIComponent(customerPhno)}&page=${orderFilter.page}&size=${ORDER_PAGE_SIZE}`;
+      if (orderFilter.status) q += `&status=${encodeURIComponent(orderFilter.status)}`;
+      if (orderFilter.from) q += `&from=${orderFilter.from}`;
+      if (orderFilter.to) q += `&to=${orderFilter.to}`;
+      return q;
+    }
+
+    function orderFilterBarHtml(historyPage) {
+      const statuses = ["", "PLACED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"];
+      const f = orderFilter;
+      const pager = historyPage && historyPage.totalPages > 1 ? `
+        <div class="order-row" style="justify-content:center; gap:12px;">
+          <button class="secondary" style="width:auto;" ${f.page <= 0 ? "disabled" : ""} onclick="setOrderFilter({page: ${f.page - 1}})">Previous</button>
+          <span class="meta">Page ${f.page + 1} of ${historyPage.totalPages}</span>
+          <button class="secondary" style="width:auto;" ${f.page + 1 >= historyPage.totalPages ? "disabled" : ""} onclick="setOrderFilter({page: ${f.page + 1}})">Next</button>
+        </div>` : "";
+      return `
+        <div class="order-row" style="gap:8px; flex-wrap:wrap;">
+          <select onchange="setOrderFilter({status: this.value})" style="width:auto;">
+            ${statuses.map(st => `<option value="${st}" ${f.status === st ? "selected" : ""}>${st ? st.charAt(0) + st.slice(1).toLowerCase() : "All statuses"}</option>`).join("")}
+          </select>
+          <label class="meta">From <input type="date" value="${f.from}" onchange="setOrderFilter({from: this.value})" style="width:auto;" /></label>
+          <label class="meta">To <input type="date" value="${f.to}" onchange="setOrderFilter({to: this.value})" style="width:auto;" /></label>
+          ${f.status || f.from || f.to ? `<button class="secondary" style="width:auto;" onclick="setOrderFilter({status: '', from: '', to: ''})">Clear</button>` : ""}
+          ${historyPage ? `<span class="meta">${historyPage.totalElements} order(s)</span>` : ""}
+        </div>
+        ${pager}`;
+    }
+
     async function loadAccountView() {
       const view = document.getElementById("accountView");
       view.innerHTML = `<p style="color:var(--muted);">Loading your account...</p>`;
 
       const [profileResponse, ordersResponse, addressesResponse, waitlistResponse] = await Promise.all([
         authFetch(`${BASE_URL}/customer/profile?phno=${encodeURIComponent(customerPhno)}`),
-        authFetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(customerPhno)}`),
+        authFetch(`${BASE_URL}/cart/history?${orderHistoryQuery()}`),
         authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`),
         authFetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`)
       ]);
       const profile = profileResponse.ok ? await profileResponse.json() : null;
-      const orders = ordersResponse.ok ? await ordersResponse.json() : [];
-      orders.sort((a, b) => b.orderId - a.orderId);
+      const historyPage = ordersResponse.ok ? await ordersResponse.json() : null;
+      const orders = historyPage ? historyPage.orders : [];
       accountOrders = orders;
       const addresses = addressesResponse.ok ? await addressesResponse.json() : [];
       const waitlist = waitlistResponse.ok ? await waitlistResponse.json() : [];
@@ -1304,7 +1343,7 @@
           ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
         </div>
         ${orderItemsHtml(order)}
-      `).join("") : `<p style="color:var(--muted);">No orders yet.</p>`;
+      `).join("") : `<p style="color:var(--muted);">${orderFilter.status || orderFilter.from || orderFilter.to ? "No orders match these filters." : "No orders yet."}</p>`;
 
       const addressesHtml = addresses.map(a => `
         <div class="order-row">
@@ -1330,6 +1369,7 @@
         ${profileHtml}
         ${referralHtml(referral)}
         <h3 style="margin:16px 0 10px;">Order history</h3>
+        ${orderFilterBarHtml(historyPage)}
         ${ordersHtml}
         <h3 style="margin:20px 0 10px;">Waiting for restock</h3>
         ${waitlistHtml || `<p style="color:var(--muted);">Nothing on your restock waitlist - tap "Notify me" on an out-of-stock product to add it here.</p>`}

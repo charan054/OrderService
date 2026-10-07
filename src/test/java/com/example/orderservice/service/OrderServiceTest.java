@@ -41,6 +41,7 @@ import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.PaymentMethod;
+import com.example.orderservice.dto.OrderHistoryPage;
 import com.example.orderservice.entity.ShippingAddress;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.StockWaitlist;
@@ -3240,5 +3241,62 @@ class OrderServiceTest {
 
         assertEquals(30, result.points().size());
         assertEquals("day", result.bucket());
+    }
+
+    // ---------- getOrderHistory ----------
+
+    private void stubHistory() {
+        when(orderRepository.findBycustomerPhno(CUSTOMER)).thenReturn(List.of(
+                adminOrder(1, CUSTOMER, OrderStatus.DELIVERED, PaymentMethod.CASH, "A"),
+                adminOrder(2, CUSTOMER, OrderStatus.CANCELLED, PaymentMethod.CASH, "A"),
+                adminOrder(3, CUSTOMER, OrderStatus.DELIVERED, PaymentMethod.CASH, "A")));
+    }
+
+    @Test
+    void orderHistoryIsNewestFirstAndPaged() {
+        stubHistory();
+
+        OrderHistoryPage first = service.getOrderHistory(CUSTOMER, null, null, null, 0, 2);
+        OrderHistoryPage second = service.getOrderHistory(CUSTOMER, null, null, null, 1, 2);
+        OrderHistoryPage beyond = service.getOrderHistory(CUSTOMER, null, null, null, 5, 2);
+
+        assertEquals(List.of(3L, 2L), first.orders().stream().map(Cart::getOrderId).toList());
+        assertEquals(List.of(1L), second.orders().stream().map(Cart::getOrderId).toList());
+        assertEquals(3, first.totalElements());
+        assertEquals(2, first.totalPages());
+        assertTrue(beyond.orders().isEmpty());
+    }
+
+    @Test
+    void orderHistoryFiltersByStatus() {
+        stubHistory();
+
+        OrderHistoryPage page = service.getOrderHistory(CUSTOMER, "delivered", null, null, 0, 10);
+
+        assertEquals(List.of(3L, 1L), page.orders().stream().map(Cart::getOrderId).toList());
+    }
+
+    @Test
+    void orderHistoryFiltersByPlacedDateRange() {
+        stubHistory();
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(1L)).thenReturn(List.of(trackedAt(1, "2026-09-01T10:00:00Z")));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(2L)).thenReturn(List.of(trackedAt(2, "2026-10-05T23:59:00Z")));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(3L)).thenReturn(List.of());
+
+        OrderHistoryPage page = service.getOrderHistory(CUSTOMER, null,
+                java.time.LocalDate.of(2026, 10, 1), java.time.LocalDate.of(2026, 10, 5), 0, 10);
+
+        assertEquals(List.of(2L), page.orders().stream().map(Cart::getOrderId).toList());
+    }
+
+    @Test
+    void orderHistoryRejectsBadArguments() {
+        assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, null, null, null, -1, 10));
+        assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, null, null, null, 0, 0));
+        assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, null, null, null, 0, 51));
+        assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, "BOGUS", null, null, 0, 10));
+        assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, null,
+                java.time.LocalDate.of(2026, 10, 5), java.time.LocalDate.of(2026, 10, 1), 0, 10));
+        assertThrows(ProductException.class, () -> service.getOrderHistory(123L, null, null, null, 0, 10));
     }
 }

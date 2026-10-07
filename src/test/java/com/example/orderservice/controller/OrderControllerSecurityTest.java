@@ -628,6 +628,13 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void orderHistoryNeedsOwnSessionOrServiceKey() throws Exception {
+        mockMvc.perform(get("/cart/history").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/history").param("phno", "9000000009").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/cart/history").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
+    }
+
+    @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
     }
