@@ -844,6 +844,25 @@
         if (cart.length) localStorage.setItem(cartStorageKey(), JSON.stringify(cart));
         else localStorage.removeItem(cartStorageKey());
       } catch (e) { /* storage full/blocked - the cart just won't persist */ }
+      scheduleServerCartSave();
+    }
+
+    // The same cart also goes to the server (just product ids + quantities) so it follows the customer to another
+    // browser or device. Debounced so a burst of +/- clicks is one request; failures are ignored because the
+    // localStorage copy above still works on its own.
+    let serverCartTimer = null;
+    function scheduleServerCartSave() {
+      clearTimeout(serverCartTimer);
+      const phno = customerPhno;
+      const lines = cart.map(item => ({ productId: item.productId, quantity: item.quantity }));
+      serverCartTimer = setTimeout(() => {
+        if (!customerToken) return;
+        authFetch(`${BASE_URL}/savedcart?phno=${encodeURIComponent(phno)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(lines)
+        }).catch(() => {});
+      }, 600);
     }
 
     // Re-validates the saved lines against the live catalog (current price; dropped if gone or out of stock;
@@ -852,6 +871,17 @@
       cartPersistReady = false;
       let saved = [];
       try { saved = JSON.parse(localStorage.getItem(cartStorageKey()) || "[]"); } catch (e) { saved = []; }
+      // The server's copy wins when it has one (it is what the customer last changed on any device); the browser's
+      // own copy is only used for a customer with nothing saved on the server yet, or if the server is unreachable.
+      try {
+        const serverResponse = await authFetch(`${BASE_URL}/savedcart?phno=${encodeURIComponent(customerPhno)}`);
+        if (serverResponse.ok) {
+          const serverCart = await serverResponse.json();
+          if (serverCart.lines && serverCart.lines.length) {
+            saved = serverCart.lines.map(l => ({ productId: l.productId, name: "Item #" + l.productId, quantity: l.quantity }));
+          }
+        }
+      } catch (e) { /* fall back to the browser copy */ }
       const note = document.getElementById("cartNote");
       note.classList.add("hidden");
       if (!Array.isArray(saved) || !saved.length) { cartPersistReady = true; return; }
@@ -867,12 +897,12 @@
           if (product.productStock <= 0) { notes.push(`${product.productName} is out of stock`); return; }
           const quantity = Math.min(Math.max(1, Number(line.quantity) || 1), product.productStock);
           if (quantity < line.quantity) notes.push(`${product.productName} reduced to ${quantity} (stock)`);
-          if (product.productPrice !== line.price) notes.push(`${product.productName} price is now ₹${product.productPrice}`);
+          if (line.price !== undefined && product.productPrice !== line.price) notes.push(`${product.productName} price is now ₹${product.productPrice}`);
           restored.push({ productId: product.productId, name: product.productName, price: product.productPrice, quantity });
         });
         cart = restored;
       } catch (e) {
-        cart = saved; // catalog unreachable: keep the saved lines as-is, checkout re-validates server-side anyway
+        cart = saved.filter(l => l.price !== undefined); // catalog unreachable: keep lines that carry a price (browser copy); checkout re-validates server-side anyway
       }
       cartPersistReady = true;
       renderCart();
