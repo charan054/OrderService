@@ -1974,7 +1974,7 @@ class OrderServiceTest {
 
     @Test
     void searchProductsDelegatesToTheProductClient() {
-        when(productClient.search("mug", "home", 200))
+        when(productClient.search("mug", "home", 0, 200))
                 .thenReturn(new ProductSearchResult(List.of(product(1, 9.99, 10))));
 
         List<Product> result = service.searchProducts("mug", "home");
@@ -1982,11 +1982,37 @@ class OrderServiceTest {
         assertEquals(1, result.size());
     }
 
+    // The storefront used to silently stop at the first 200 products - every page must now be fetched.
+    @Test
+    void searchProductsWalksEveryPageUntilTheLastOne() {
+        when(productClient.search(null, null, 0, 200))
+                .thenReturn(new ProductSearchResult(List.of(product(1, 9.99, 10)), false));
+        when(productClient.search(null, null, 1, 200))
+                .thenReturn(new ProductSearchResult(List.of(product(2, 9.99, 10)), false));
+        when(productClient.search(null, null, 2, 200))
+                .thenReturn(new ProductSearchResult(List.of(product(3, 9.99, 10)), true));
+
+        List<Product> result = service.searchProducts(null, null);
+
+        assertEquals(List.of(1, 2, 3), result.stream().map(Product::getProductId).toList());
+    }
+
+    // A downstream that never reports "last" but runs dry must not loop forever.
+    @Test
+    void searchProductsStopsOnAnEmptyPage() {
+        when(productClient.search(null, null, 0, 200))
+                .thenReturn(new ProductSearchResult(List.of(product(1, 9.99, 10)), false));
+        when(productClient.search(null, null, 1, 200))
+                .thenReturn(new ProductSearchResult(List.of(), false));
+
+        assertEquals(1, service.searchProducts(null, null).size());
+    }
+
     // Blank/empty search fields are normalized to null before reaching ProductService, so an empty text box
     // means "no filter" rather than a literal empty-string match.
     @Test
     void searchProductsTreatsBlankFiltersAsNoFilter() {
-        when(productClient.search(null, null, 200))
+        when(productClient.search(null, null, 0, 200))
                 .thenReturn(new ProductSearchResult(List.of(product(1, 9.99, 10))));
 
         List<Product> result = service.searchProducts("  ", "");

@@ -117,7 +117,7 @@ class OrderControllerSecurityTest {
 
     @Test
     void searchIsPublic() throws Exception {
-        when(productClient.search(any(), any(), anyInt())).thenReturn(new ProductSearchResult(List.of()));
+        when(productClient.search(any(), any(), anyInt(), anyInt())).thenReturn(new ProductSearchResult(List.of()));
         mockMvc.perform(get("/cart/search").param("name", "mug")).andExpect(status().isOk());
     }
 

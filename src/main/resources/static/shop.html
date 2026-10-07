@@ -181,6 +181,10 @@
           align-items: start;
         }
 
+        .pager { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 16px 0 4px; flex-wrap: wrap; }
+        .pager button { width: auto; padding: 8px 14px; }
+        .pager button:disabled { opacity: 0.45; cursor: not-allowed; }
+        .pager .pager-info { color: var(--muted); font-size: 0.9rem; }
         .product-grid {
           display: grid;
           grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -661,14 +665,14 @@
                     </select>
                 </div>
                 <div class="filter-row">
-                    <select id="sortBy" onchange="renderProducts()" aria-label="Sort products">
+                    <select id="sortBy" onchange="resetPageAndRender()" aria-label="Sort products">
                         <option value="">Sort: Default</option>
                         <option value="priceAsc">Price: low to high</option>
                         <option value="priceDesc">Price: high to low</option>
                         <option value="rating">Top rated</option>
                         <option value="name">Name A-Z</option>
                     </select>
-                    <label class="in-stock-toggle"><input type="checkbox" id="inStockOnly" onchange="renderProducts()" /> In stock only</label>
+                    <label class="in-stock-toggle"><input type="checkbox" id="inStockOnly" onchange="resetPageAndRender()" /> In stock only</label>
                 </div>
                 <div class="grid-tabs">
                     <button class="active" id="tabAll" onclick="showTab('all')">All products</button>
@@ -678,6 +682,7 @@
                     <button id="tabNotifications" onclick="showTab('notifications')">My notifications</button>
                 </div>
                 <div id="productGrid" class="product-grid"></div>
+                <div id="productPager" class="pager hidden"></div>
                 <div id="accountView" class="hidden"></div>
                 <div id="notificationsView" class="hidden"></div>
             </div>
@@ -783,6 +788,8 @@
     let waitlistProductIds = new Set();
     let priceDropsByProductId = new Map();
     let activeTab = "all";
+    const PRODUCTS_PER_PAGE = 12;
+    let currentPage = 1;
     let allCategories = [];
     let searchDebounceTimer = null;
     let modalProductId = null;
@@ -1109,6 +1116,7 @@
 
       const response = await authFetch(`${BASE_URL}/cart/search?${query.toString()}`);
       products = response.ok ? await response.json() : [];
+      currentPage = 1;
       renderProducts();
 
       if (!name && !category) {
@@ -1119,10 +1127,16 @@
 
     async function loadRatings() {
       if (!products.length) return;
-      const idsQuery = products.map(p => `productIds=${p.productId}`).join("&");
-      const response = await authFetch(`${BASE_URL}/cart/ratings?${idsQuery}`);
-      const ratings = response.ok ? await response.json() : [];
-      ratingsByProductId = new Map(ratings.map(r => [r.productId, r]));
+      // Chunked: a big catalog would otherwise put thousands of ids in one query string (URLs have a length limit).
+      const RATINGS_CHUNK = 50;
+      const chunks = [];
+      for (let i = 0; i < products.length; i += RATINGS_CHUNK) chunks.push(products.slice(i, i + RATINGS_CHUNK));
+      const results = await Promise.all(chunks.map(async chunk => {
+        const idsQuery = chunk.map(p => `productIds=${p.productId}`).join("&");
+        const response = await authFetch(`${BASE_URL}/cart/ratings?${idsQuery}`);
+        return response.ok ? await response.json() : [];
+      }));
+      ratingsByProductId = new Map(results.flat().map(r => [r.productId, r]));
       renderProducts();
     }
 
@@ -1168,6 +1182,8 @@
       document.getElementById("tabNotifications").classList.toggle("active", tab === "notifications");
       document.getElementById("tabRecent").classList.toggle("active", tab === "recent");
       document.getElementById("productGrid").classList.toggle("hidden", tab === "account" || tab === "notifications");
+      if (tab === "account" || tab === "notifications") document.getElementById("productPager").classList.add("hidden");
+      currentPage = 1;
       document.getElementById("accountView").classList.toggle("hidden", tab !== "account");
       document.getElementById("notificationsView").classList.toggle("hidden", tab !== "notifications");
       document.querySelector(".search-row").classList.toggle("hidden", tab === "account" || tab === "notifications");
@@ -1447,6 +1463,34 @@
         .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
     }
 
+    function resetPageAndRender() {
+      currentPage = 1;
+      renderProducts();
+    }
+
+    function goToPage(page) {
+      currentPage = page;
+      renderProducts();
+      document.getElementById("productGrid").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function renderPager(totalItems) {
+      const pager = document.getElementById("productPager");
+      const totalPages = Math.max(1, Math.ceil(totalItems / PRODUCTS_PER_PAGE));
+      if (totalPages <= 1 || activeTab === "account" || activeTab === "notifications") {
+        pager.classList.add("hidden");
+        pager.innerHTML = "";
+        return;
+      }
+      const first = (currentPage - 1) * PRODUCTS_PER_PAGE + 1;
+      const last = Math.min(totalItems, currentPage * PRODUCTS_PER_PAGE);
+      pager.innerHTML = `
+        <button class="secondary" ${currentPage <= 1 ? "disabled" : ""} onclick="goToPage(${currentPage - 1})">&larr; Previous</button>
+        <span class="pager-info">Page ${currentPage} of ${totalPages} &middot; ${first}-${last} of ${totalItems}</span>
+        <button class="secondary" ${currentPage >= totalPages ? "disabled" : ""} onclick="goToPage(${currentPage + 1})">Next &rarr;</button>`;
+      pager.classList.remove("hidden");
+    }
+
     function renderProducts() {
       const grid = document.getElementById("productGrid");
       const visibleProducts = activeTab === "wishlist"
@@ -1474,10 +1518,17 @@
           : activeTab === "recent"
           ? `<p style="color:var(--muted);">No products viewed yet - open a product's details to see it here.</p>`
           : `<p style="color:var(--muted);">No products available right now.</p>`;
+        renderPager(0);
         return;
       }
 
-      grid.innerHTML = shownProducts.map(p => {
+      // Clamp: a wishlist removal or a new filter can leave the current page past the end.
+      const totalPages = Math.max(1, Math.ceil(shownProducts.length / PRODUCTS_PER_PAGE));
+      if (currentPage > totalPages) currentPage = totalPages;
+      const pageStart = (currentPage - 1) * PRODUCTS_PER_PAGE;
+      renderPager(shownProducts.length);
+
+      grid.innerHTML = shownProducts.slice(pageStart, pageStart + PRODUCTS_PER_PAGE).map(p => {
         const isWishlisted = wishlistProductIds.has(p.productId);
         const isWaitlisted = waitlistProductIds.has(p.productId);
         const priceDrop = priceDropsByProductId.get(p.productId);
