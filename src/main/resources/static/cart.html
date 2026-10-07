@@ -886,6 +886,20 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128101;</div>
+                <div class="title-wrap">
+                    <h2>Customer Insights</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>New vs repeat customers, average order value and your top customers by net spend (orders that still stand, minus refunds). Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadCustomerInsights()">Load Insights</button>
+            </div>
+            <div id="insightsWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
                     <h2>Review Moderation</h2>
@@ -1438,6 +1452,22 @@
       if (!confirm("Delete this note?")) return;
       await apiCall(`${NOTES_URL}/${noteId}`, { method: "DELETE", headers: { "X-Service-Key": serviceKey } });
       await loadOrderNotes();
+    }
+
+    // ---------- customer insights ----------
+    async function loadCustomerInsights() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const r = await apiCall(`${BASE_URL}/analytics/customers?top=10`, { headers: { "X-Service-Key": serviceKey } });
+      const money = v => v === null ? "-" : "₹" + Number(v).toFixed(2);
+      document.getElementById("insightsWrap").innerHTML = r.totalCustomers === 0 ? "<p>No orders yet.</p>" : `
+        <p><strong>${r.totalCustomers}</strong> customers &middot; <strong>${r.newCustomers}</strong> new (one order) &middot;
+           <strong>${r.repeatCustomers}</strong> repeat (${r.repeatRate}%)</p>
+        <p>${r.totalOrders} orders &middot; net revenue ${money(r.netRevenue)} &middot; average order ${money(r.averageOrderValue)}
+           &middot; ${r.averageOrdersPerCustomer} orders per customer</p>
+        <table class="orders-table"><thead><tr><th>#</th><th>Customer</th><th>Phone</th><th>Orders</th><th>Net spend</th></tr></thead><tbody>${r.topCustomers.map((c, i) => `
+          <tr><td>${i + 1}</td><td>${escapeHtml(c.name || "")}</td><td>${c.phno}</td><td>${c.orders}</td><td class="num">${money(c.netSpend)}</td></tr>`).join("")}</tbody></table>`;
+      showStatus("Customer insights loaded.", "success");
     }
 
     // ---------- review moderation ----------
