@@ -144,6 +144,9 @@ class OrderServiceTest {
     @Mock
     private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
+    @Mock
+    private CodRiskService codRiskService;
+
     @InjectMocks
     private OrderService service;
 
@@ -374,6 +377,34 @@ class OrderServiceTest {
         assertEquals(500.0, result.getTotalPrice());
         verifyNoInteractions(phonepeClient);
         verify(orderKafkaProducer).sendMessage(contains("Order placed successfully"));
+        verify(codRiskService).assertCashAllowed(CUSTOMER, 500.0);
+    }
+
+    // COD risk limits are checked against the final total before the order exists or any stock moves.
+    @Test
+    void aCashOrderRefusedByTheCodRulesCreatesNothing() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        doThrow(new ProductException("Cash on delivery isn't available for this account. Please pay online."))
+                .when(codRiskService).assertCashAllowed(CUSTOMER, 500.0);
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+
+        assertThrows(ProductException.class, () -> service.order(cart, null, null));
+
+        verify(orderRepository, never()).save(any(Cart.class));
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void anOnlineOrderIsNotSubjectToCodRules() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+
+        service.order(cart(CUSTOMER, item(1, 1)), AUTH, null);
+
+        verifyNoInteractions(codRiskService);
     }
 
     // The storefront checkout path: no Authorization token yet, only the buyer's own phone+PIN - OrderService
