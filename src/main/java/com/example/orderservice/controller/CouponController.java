@@ -1,5 +1,6 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.security.CustomerAccess;
 import com.example.orderservice.dto.CouponSuggestion;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.service.OrderService;
@@ -8,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-// Every endpoint here except /available falls under SecurityConfig's default "anyRequest().authenticated()" rule, so managing
+// Every endpoint here except /available falls under SecurityConfig's default service-only rule, so managing
 // coupons already requires the same X-Service-Key as every other trusted-caller action - no security config
 // changes needed for this controller.
 @RestController
@@ -22,9 +23,10 @@ public class CouponController {
         return orderService.saveCoupon(coupon);
     }
 
-    // Public (see SecurityConfig): lets the storefront suggest coupons the customer can actually use at checkout.
+    // Signed-in customer (own phone number only) or service key: coupons this customer can still use at checkout.
     @GetMapping("/available")
     public List<CouponSuggestion> getAvailable(@RequestParam long phno) {
+        CustomerAccess.requireSelfOrService(phno);
         return orderService.getAvailableCoupons(phno);
     }
 

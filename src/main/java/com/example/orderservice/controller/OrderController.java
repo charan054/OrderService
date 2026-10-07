@@ -1,5 +1,6 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.security.CustomerAccess;
 import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.ForgotPinRequest;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
@@ -9,6 +10,7 @@ import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ResetPinRequest;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.GuestOrderSummary;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.SalesAnalytics;
@@ -16,6 +18,7 @@ import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
+import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.service.OrderService;
 import jakarta.transaction.Transactional;
 import jakarta.websocket.server.ServerEndpoint;
@@ -46,11 +49,8 @@ public class OrderController {
                          @RequestParam(required = false) String payerUpiId){
         return orderService.order(cart, authorization, idempotencyKey, payerPhno, payerPin, payerUpiId);
     }
-    // Same as /add above, but without the X-Service-Key requirement - this is the one write endpoint a genuine
-    // customer-facing storefront can call directly, since it has no way to know that internal secret (see
-    // SecurityConfig). The only gate against abuse is the same one /add already has for a PHONEPE order: a real
-    // successful debit through PhonepayService. A CASH order has no such gate, same trust level /cart/byphno
-    // already extends to "anyone who knows a phone number" elsewhere in this system.
+    // Same as /add above, but for the storefront: a signed-in customer may only place an order under their own
+    // phone number (or the service key, for any). A PHONEPE order additionally needs a real successful debit.
     @PostMapping("/checkout")
     public Cart checkout(@RequestBody Cart cart,
                          @RequestHeader(value = "Authorization", required = false) String authorization,
@@ -58,6 +58,7 @@ public class OrderController {
                          @RequestParam(required = false) Long payerPhno,
                          @RequestParam(required = false) String payerPin,
                          @RequestParam(required = false) String payerUpiId){
+        CustomerAccess.requireSelfOrService(cart.getCustomerPhno());
         return orderService.order(cart, authorization, idempotencyKey, payerPhno, payerPin, payerUpiId);
     }
     // Pure proxy to PhonepayService's own forgot-PIN flow (which itself proxies to Bankapplication) - shop.html
@@ -76,14 +77,15 @@ public class OrderController {
     // Authorization must be the buyer's OWN PhonepayService session token for a PHONEPE order - PhonepayService
     // only refunds a payment back to the person who made it, so this can never cancel (and refund) someone
     // else's order. Not required for a CASH order, which was never charged and so has nothing to refund.
-    // payerPhno/payerPin are the same storefront-only fallback checkout has (see OrderController.checkout) - the
-    // customer-facing cancel button has no stored session token, only a phone+PIN entered fresh for this call.
+    // payerPhno/payerPin are the same storefront-only fallback checkout has (see OrderController.checkout). The
+    // caller must also be the order's owner (signed-in session) or the service key - see requireOrderAccess.
     @PostMapping("/{orderId}/cancel")
     public Cart cancelOrder(@PathVariable long orderId,
                             @RequestHeader(value = "Authorization", required = false) String authorization,
                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                             @RequestParam(required = false) Long payerPhno,
                             @RequestParam(required = false) String payerPin){
+        requireOrderAccess(orderId);
         return orderService.cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin);
     }
     // Same buyer-token requirement as cancel above (waived for CASH, same reasoning), but only usable once an
@@ -95,6 +97,7 @@ public class OrderController {
                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                             @RequestParam(required = false) Long payerPhno,
                             @RequestParam(required = false) String payerPin){
+        requireOrderAccess(orderId);
         return orderService.returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin);
     }
     // Operational actions (warehouse/ops moving an order along), not something the buyer's own token gates -
@@ -119,28 +122,35 @@ public class OrderController {
     // reasoning as the rest of this system's lazy expiry. A no-op for any order not currently PENDING_PAYMENT.
     @GetMapping("/{orderId}/paymentstatus")
     public Cart getPaymentStatus(@PathVariable long orderId){
+        requireOrderAccess(orderId);
         return orderService.checkPendingPayment(orderId);
     }
-    // Public, same self-service trust level as GET /cart/byphno - the timeline is just a history of the same
-    // status field that /cart/byphno already exposes, one row per transition instead of a single current value.
+    // Public by order id - status + timestamps only, no customer details. Backs the logged-out order tracker.
     @GetMapping("/{orderId}/tracking")
     public List<TrackingEvent> getTracking(@PathVariable long orderId){
         return orderService.getTracking(orderId);
     }
-    // Public like /byphno, but the phone number must match the order's owner (see OrderService.getInvoice).
+    // Public: the logged-out "Track an order" box. Needs the matching phone number (mismatch -> 404) and returns
+    // status/totals only - no address, items, or anything else /byphno would show a signed-in customer.
+    @GetMapping("/{orderId}/summary")
+    public GuestOrderSummary getGuestSummary(@PathVariable long orderId, @RequestParam long phno){
+        return orderService.getGuestSummary(orderId, phno);
+    }
+    // Signed-in customer (own order only) or service; the service also checks phno matches the order's owner.
     @GetMapping("/{orderId}/invoice")
     public Invoice getInvoice(@PathVariable long orderId, @RequestParam long phno){
+        CustomerAccess.requireSelfOrService(phno);
         return orderService.getInvoice(orderId, phno);
     }
-    // Same public trust level as tracking above - the audit trail of customer notifications OrderKafkaConsumer
-    // has dispatched for this order so far.
+    // Public by order id like tracking above - the audit trail of notifications dispatched for this order.
     @GetMapping("/{orderId}/notifications")
     public List<NotificationLog> getNotifications(@PathVariable long orderId){
         return orderService.getNotifications(orderId);
     }
-    // Backs the storefront's "My notifications" panel - same public, self-service trust level as /cart/byphno.
+    // Backs the storefront's "My notifications" panel - signed-in customer (own phone number only) or service key.
     @GetMapping("/notifications")
     public List<NotificationLog> getNotificationsForCustomer(@RequestParam long phno){
+        CustomerAccess.requireSelfOrService(phno);
         return orderService.getNotificationsForCustomer(phno);
     }
     @GetMapping("/display")
@@ -174,10 +184,10 @@ public class OrderController {
                                            @RequestParam(required = false) Integer size) {
         return orderService.getProductReviews(productId, page, size);
     }
-    // Public, same self-service trust level as posting to your own wishlist/addresses - a customer reviewing a
-    // product they browsed needs no X-Service-Key, mirrors ProductService's own review posting being public too.
+    // Signed-in customer, posting only under their own phone number (or the service key).
     @PostMapping("/reviews")
     public StorefrontReview addReview(@RequestParam long productId, @RequestBody ReviewSubmission review) {
+        CustomerAccess.requireSelfOrService(review.reviewerPhno());
         return orderService.addProductReview(productId, review.reviewerName(), review.reviewerPhno(), review.rating(), review.comment());
     }
     // Public, same catalog-browsing trust level as /cart/display - straight proxy to ProductService's own
@@ -188,6 +198,7 @@ public class OrderController {
     }
     @GetMapping("/byphno")
     public List<Cart> findByPhno(long phno){
+        CustomerAccess.requireSelfOrService(phno);
         return orderService.ordersOfPhno(phno);
     }
     @GetMapping("/all")
@@ -228,5 +239,13 @@ public class OrderController {
     @DeleteMapping("/deleteproduct")
     public List<Cart> deleteProduct(@RequestParam long phno,@RequestParam long productId){
         return orderService.deleteProduct(phno,productId);
+    }
+
+    // A customer may only act on their own order; anyone else's order id answers 404 exactly like a nonexistent
+    // one, so ids can't be probed. A service-key caller may act on any order.
+    private void requireOrderAccess(long orderId) {
+        if (!CustomerAccess.canAccess(orderService.ownerPhnoOf(orderId))) {
+            throw new OrderNotFoundException("Order not found");
+        }
     }
 }

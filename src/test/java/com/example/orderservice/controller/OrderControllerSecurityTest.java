@@ -8,7 +8,11 @@ import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
+import com.example.orderservice.entity.Cart;
+import com.example.orderservice.entity.PaymentMethod;
 import com.example.orderservice.kafka.OrderKafkaProducer;
+import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.service.CustomerAuthService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -17,6 +21,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.RequestPostProcessor;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -32,12 +37,15 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * Browsing the catalog and looking up one's own orders by phone are public; placing/removing an order and
- * listing EVERY customer's orders need the right X-Service-Key. Real SecurityFilterChain, real (in-memory)
+ * Browsing the catalog is public; one customer's own data needs that customer's signed-in session
+ * (X-Customer-Token) or the X-Service-Key; everything else (listing EVERY customer's orders, ship/deliver, ...)
+ * needs the X-Service-Key. Real SecurityFilterChain, real (in-memory)
  * database - ProductClient (the Feign call to the real ProductService) and OrderKafkaProducer are stubbed out
  * (the latter only to keep the test fast: a real KafkaTemplate blocks for up to max.block.ms trying to reach a
  * broker that isn't running here - see OrderServiceTest for the actual notification behavior coverage).
@@ -53,6 +61,12 @@ class OrderControllerSecurityTest {
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private CustomerAuthService customerAuthService;
+
+    @Autowired
+    private CartRepository cartRepository;
+
     @MockitoBean
     private ProductClient productClient;
 
@@ -66,6 +80,22 @@ class OrderControllerSecurityTest {
             {"customerName":"Buyer","customerPhno":9876543210,"orderItems":[{"productId":1,"productQuantity":1}]}
             """;
 
+    private static final long CUSTOMER = 9876543210L;
+    private static final long OTHER_CUSTOMER = 9123456789L;
+
+    // A real signed-in storefront session for CUSTOMER (the phone number the fixtures below use).
+    private RequestPostProcessor customer() {
+        return sessionOf(CUSTOMER);
+    }
+
+    private RequestPostProcessor sessionOf(long phno) {
+        String token = customerAuthService.issueSession(phno).token();
+        return request -> {
+            request.addHeader("X-Customer-Token", token);
+            return request;
+        };
+    }
+
     @Test
     void catalogBrowsingIsPublic() throws Exception {
         when(productClient.findAll()).thenReturn(List.of());
@@ -75,9 +105,9 @@ class OrderControllerSecurityTest {
     // Regression: the static dashboard was 401ing before Spring Security's static-resource handler ever got to
     // serve it, because nothing explicitly permitted it.
     @Test
-    void customerProfileIsPublic() throws Exception {
+    void customerProfileWithOwnSessionSucceeds() throws Exception {
         when(productClient.getReviewCount(9876543210L)).thenReturn(0L);
-        mockMvc.perform(get("/customer/profile").param("phno", "9876543210")).andExpect(status().isOk());
+        mockMvc.perform(get("/customer/profile").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
 
     @Test
@@ -104,14 +134,14 @@ class OrderControllerSecurityTest {
     }
 
     @Test
-    void postingAReviewWithoutKeySucceeds() throws Exception {
+    void postingAReviewWithOwnSessionSucceeds() throws Exception {
         when(productClient.addReview(eq(1L), any()))
                 .thenReturn(new ProductReview(1, "Alice", 9876543210L, 5, "Great!", LocalDateTime.now()));
         mockMvc.perform(post("/cart/reviews").param("productId", "1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"reviewerName":"Alice","reviewerPhno":9876543210,"rating":5,"comment":"Great!"}
-                                """))
+                                """).with(customer()))
                 .andExpect(status().isOk());
     }
 
@@ -121,19 +151,19 @@ class OrderControllerSecurityTest {
     }
 
     @Test
-    void lookingUpOwnOrdersByPhoneIsPublic() throws Exception {
-        mockMvc.perform(get("/cart/byphno").param("phno", "9876543210")).andExpect(status().isOk());
+    void lookingUpOwnOrdersWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(get("/cart/byphno").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
 
     @Test
-    void lookingUpOwnWishlistByPhoneIsPublic() throws Exception {
-        mockMvc.perform(get("/wishlist/byphno").param("phno", "9876543210")).andExpect(status().isOk());
+    void lookingUpOwnWishlistWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(get("/wishlist/byphno").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
 
     // Backs the storefront's "My notifications" panel - same public trust level as byphno above.
     @Test
-    void lookingUpOwnNotificationsByPhoneIsPublic() throws Exception {
-        mockMvc.perform(get("/cart/notifications").param("phno", "9876543210")).andExpect(status().isOk());
+    void lookingUpOwnNotificationsWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(get("/cart/notifications").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
 
     // Straight proxy to ProductService's own public gallery listing - same catalog-browsing trust level as
@@ -144,8 +174,8 @@ class OrderControllerSecurityTest {
     }
 
     @Test
-    void lookingUpOwnPriceDropAlertsByPhoneIsPublic() throws Exception {
-        mockMvc.perform(get("/wishlist/pricedrops").param("phno", "9876543210")).andExpect(status().isOk());
+    void lookingUpOwnPriceDropAlertsWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(get("/wishlist/pricedrops").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
 
     @Test
@@ -176,45 +206,45 @@ class OrderControllerSecurityTest {
     // The storefront's own wishlist add/remove - public, no X-Service-Key, same self-service trust level as
     // GET /wishlist/byphno (see SecurityConfig).
     @Test
-    void addToOwnWishlistWithoutKeySucceeds() throws Exception {
+    void addToOwnWishlistWithOwnSessionSucceeds() throws Exception {
         Product widget = new Product();
         widget.setProductId(1);
         widget.setProductPrice(9.99);
         widget.setProductStock(10);
         when(productClient.getProductById(1)).thenReturn(widget);
 
-        mockMvc.perform(post("/wishlist/self/add").param("phno", "9876543210").param("productId", "1"))
+        mockMvc.perform(post("/wishlist/self/add").param("phno", "9876543210").param("productId", "1").with(customer()))
                 .andExpect(status().isOk());
     }
 
     @Test
-    void removeFromOwnWishlistWithoutKeySucceeds() throws Exception {
-        mockMvc.perform(delete("/wishlist/self/remove").param("phno", "9876543210").param("productId", "1"))
+    void removeFromOwnWishlistWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(delete("/wishlist/self/remove").param("phno", "9876543210").param("productId", "1").with(customer()))
                 .andExpect(status().isOk());
     }
 
     // The back-in-stock waitlist is entirely self-service - no admin/X-Service-Key pair exists for it (unlike
     // Wishlist), same public trust level as /wishlist/self/add and /wishlist/byphno.
     @Test
-    void addToOwnWaitlistWithoutKeySucceeds() throws Exception {
+    void addToOwnWaitlistWithOwnSessionSucceeds() throws Exception {
         Product widget = new Product();
         widget.setProductId(1);
         widget.setProductPrice(9.99);
         widget.setProductStock(0);
         when(productClient.getProductById(1)).thenReturn(widget);
 
-        mockMvc.perform(post("/waitlist/self/add").param("phno", "9876543210").param("productId", "1"))
+        mockMvc.perform(post("/waitlist/self/add").param("phno", "9876543210").param("productId", "1").with(customer()))
                 .andExpect(status().isOk());
     }
 
     @Test
-    void lookingUpOwnWaitlistByPhoneIsPublic() throws Exception {
-        mockMvc.perform(get("/waitlist/byphno").param("phno", "9876543210")).andExpect(status().isOk());
+    void lookingUpOwnWaitlistWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(get("/waitlist/byphno").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
 
     @Test
-    void removeFromOwnWaitlistWithoutKeySucceeds() throws Exception {
-        mockMvc.perform(delete("/waitlist/self/remove").param("phno", "9876543210").param("productId", "1"))
+    void removeFromOwnWaitlistWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(delete("/waitlist/self/remove").param("phno", "9876543210").param("productId", "1").with(customer()))
                 .andExpect(status().isOk());
     }
 
@@ -265,14 +295,14 @@ class OrderControllerSecurityTest {
             """;
 
     @Test
-    void checkoutWithCashPaymentMethodNeedsNoKeyOrBuyerToken() throws Exception {
+    void checkoutWithCashPaymentMethodNeedsOnlyOwnSession() throws Exception {
         Product widget = new Product();
         widget.setProductId(1);
         widget.setProductPrice(9.99);
         widget.setProductStock(10);
         when(productClient.getProductById(1)).thenReturn(widget);
 
-        mockMvc.perform(post("/cart/checkout").contentType(MediaType.APPLICATION_JSON).content(CASH_CHECKOUT))
+        mockMvc.perform(post("/cart/checkout").contentType(MediaType.APPLICATION_JSON).content(CASH_CHECKOUT).with(customer()))
                 .andExpect(status().isOk());
         verifyNoInteractions(phonepeClient);
     }
@@ -283,8 +313,8 @@ class OrderControllerSecurityTest {
 // cancelOrderOfAnUnknownOrderIdReturns404 below. See OrderServiceTest for the case that does exercise a
 // missing token against a real PHONEPE order.
     @Test
-    void cancelOrderWithoutKeyOrBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
-        mockMvc.perform(post("/cart/42/cancel")).andExpect(status().isNotFound());
+    void cancelOrderWithOwnSessionOfAnUnknownOrderReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/cancel").with(customer())).andExpect(status().isNotFound());
     }
     @Test
     void cancelOrderWithValidKeyAndNoBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
@@ -378,8 +408,8 @@ class OrderControllerSecurityTest {
     // Polled by the storefront while a UPI-collect order sits PENDING_PAYMENT - same public trust level as
     // tracking above (just the status of your own order, no X-Service-Key needed).
     @Test
-    void paymentStatusOfAnUnknownOrderIsPublicButReturns404() throws Exception {
-        mockMvc.perform(get("/cart/42/paymentstatus")).andExpect(status().isNotFound());
+    void paymentStatusOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
+        mockMvc.perform(get("/cart/42/paymentstatus").with(customer())).andExpect(status().isNotFound());
     }
 
     private static final String NEW_ADDRESS = """
@@ -387,8 +417,8 @@ class OrderControllerSecurityTest {
             """;
 
     @Test
-    void lookingUpOwnAddressesByPhoneIsPublic() throws Exception {
-        mockMvc.perform(get("/addresses/byphno").param("phno", "9876543210")).andExpect(status().isOk());
+    void lookingUpOwnAddressesWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(get("/addresses/byphno").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
 
     @Test
@@ -413,24 +443,24 @@ class OrderControllerSecurityTest {
     // The storefront's own address add/remove - public, no X-Service-Key, same self-service trust level as
     // GET /addresses/byphno (see SecurityConfig).
     @Test
-    void addOwnAddressWithoutKeySucceeds() throws Exception {
-        mockMvc.perform(post("/addresses/self/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ADDRESS))
+    void addOwnAddressWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(post("/addresses/self/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ADDRESS).with(customer()))
                 .andExpect(status().isOk());
     }
 
     // Public and reachable with no key at all - a non-existent address id still 404s the same way
     // /addresses/remove (X-Service-Key gated) already does, it just doesn't need the key to get there.
     @Test
-    void removeOwnAddressWithoutKeyOfAnUnknownAddressReturns404() throws Exception {
-        mockMvc.perform(delete("/addresses/self/remove").param("phno", "9876543210").param("addressId", "1"))
+    void removeOwnAddressWithOwnSessionOfAnUnknownAddressReturns404() throws Exception {
+        mockMvc.perform(delete("/addresses/self/remove").param("phno", "9876543210").param("addressId", "999999").with(customer()))
                 .andExpect(status().isNotFound());
     }
 
     // /cart/*/return is now the storefront's own self-service return request - no X-Service-Key required, same
 // as /cart/*/cancel above. An unknown order id 404s regardless of whether a key was supplied.
     @Test
-    void returnOrderWithoutKeyOrBuyerTokenOfAnUnknownOrderReturns404() throws Exception {
-        mockMvc.perform(post("/cart/42/return").param("reason", "damaged")).andExpect(status().isNotFound());
+    void returnOrderWithOwnSessionOfAnUnknownOrderReturns404() throws Exception {
+        mockMvc.perform(post("/cart/42/return").param("reason", "damaged").with(customer())).andExpect(status().isNotFound());
     }
 
     @Test
@@ -447,13 +477,13 @@ class OrderControllerSecurityTest {
     }
 
     @Test
-    void lookingUpOwnLoyaltyBalanceByPhoneIsPublic() throws Exception {
-        mockMvc.perform(get("/loyalty/byphno").param("phno", "9876543210")).andExpect(status().isOk());
+    void lookingUpOwnLoyaltyBalanceWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(get("/loyalty/byphno").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
 
     @Test
-    void lookingUpOwnLoyaltyHistoryByPhoneIsPublic() throws Exception {
-        mockMvc.perform(get("/loyalty/history").param("phno", "9876543210")).andExpect(status().isOk());
+    void lookingUpOwnLoyaltyHistoryWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(get("/loyalty/history").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
 
     private static final String LOYALTY_ADJUSTMENT = """
@@ -484,18 +514,18 @@ class OrderControllerSecurityTest {
     }
 
     @Test
-    void invoiceOfAnUnknownOrderIsPublicButReturns404() throws Exception {
-        mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210")).andExpect(status().isNotFound());
+    void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
+        mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
     }
 
     @Test
     void invoiceWithoutPhoneNumberIsABadRequest() throws Exception {
-        mockMvc.perform(get("/cart/42/invoice")).andExpect(status().isBadRequest());
+        mockMvc.perform(get("/cart/42/invoice").with(customer())).andExpect(status().isBadRequest());
     }
 
     @Test
-    void availableCouponsLookupIsPublic() throws Exception {
-        mockMvc.perform(get("/coupons/available").param("phno", "9876543210")).andExpect(status().isOk());
+    void availableCouponsLookupWithOwnSessionSucceeds() throws Exception {
+        mockMvc.perform(get("/coupons/available").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
 
     @Test
@@ -529,5 +559,125 @@ class OrderControllerSecurityTest {
     void adminOrderSearchWithABadStatusFilterIsABadRequest() throws Exception {
         mockMvc.perform(get("/cart/orders/search").param("status", "bogus").header("X-Service-Key", VALID_KEY))
                 .andExpect(status().isBadRequest());
+    }
+    // ---- Verified customer sessions: a token only ever unlocks its own phone number's data ----
+
+    private long savedOrderOf(long phno) {
+        Cart order = new Cart();
+        order.setCustomerName("Buyer");
+        order.setCustomerPhno(phno);
+        order.setOrderItems(new java.util.ArrayList<>());
+        order.setPaymentMethod(PaymentMethod.CASH);
+        order.setTotalPrice(120);
+        return cartRepository.save(order).getOrderId();
+    }
+
+    @Test
+    void lookingUpOrdersByPhoneWithoutASessionIsUnauthorized() throws Exception {
+        mockMvc.perform(get("/cart/byphno").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void lookingUpOrdersByPhoneWithAnInvalidTokenIsUnauthorized() throws Exception {
+        mockMvc.perform(get("/cart/byphno").param("phno", "9876543210").header("X-Customer-Token", "made-up"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void lookingUpAnotherCustomersOrdersIsForbidden() throws Exception {
+        mockMvc.perform(get("/cart/byphno").param("phno", "9876543210").with(sessionOf(OTHER_CUSTOMER)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void serviceKeyCanStillLookUpAnyCustomersOrders() throws Exception {
+        mockMvc.perform(get("/cart/byphno").param("phno", "9876543210").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void customerSessionDoesNotUnlockServiceOnlyEndpoints() throws Exception {
+        mockMvc.perform(get("/cart/all").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(post("/cart/42/ship").with(customer())).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void checkingOutForAnotherPhoneNumberIsForbidden() throws Exception {
+        mockMvc.perform(post("/cart/checkout").contentType(MediaType.APPLICATION_JSON).content(CASH_CHECKOUT)
+                        .with(sessionOf(OTHER_CUSTOMER)))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void writingAReviewUnderAnotherPhoneNumberIsForbidden() throws Exception {
+        mockMvc.perform(post("/cart/reviews").param("productId", "1").with(sessionOf(OTHER_CUSTOMER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"reviewerName":"Alice","reviewerPhno":9876543210,"rating":5,"comment":"Great!"}
+                                """))
+                .andExpect(status().isForbidden());
+    }
+
+    // 404, not 403, so another customer's order ids can't be probed for existence.
+    @Test
+    void cancellingAnotherCustomersOrderLooksLikeItDoesNotExist() throws Exception {
+        long orderId = savedOrderOf(CUSTOMER);
+        mockMvc.perform(post("/cart/" + orderId + "/cancel").with(sessionOf(OTHER_CUSTOMER)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/cart/" + orderId + "/paymentstatus").with(sessionOf(OTHER_CUSTOMER)))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void ownOrderPaymentStatusWithOwnSessionSucceeds() throws Exception {
+        long orderId = savedOrderOf(CUSTOMER);
+        mockMvc.perform(get("/cart/" + orderId + "/paymentstatus").with(customer())).andExpect(status().isOk());
+    }
+
+    @Test
+    void guestOrderSummaryIsPublicWithTheMatchingPhoneNumber() throws Exception {
+        long orderId = savedOrderOf(CUSTOMER);
+        mockMvc.perform(get("/cart/" + orderId + "/summary").param("phno", "9876543210"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("PLACED"))
+                .andExpect(jsonPath("$.totalPrice").value(120.0))
+                .andExpect(jsonPath("$.customerPhno").doesNotExist());
+    }
+
+    @Test
+    void guestOrderSummaryWithTheWrongPhoneNumberReturns404() throws Exception {
+        long orderId = savedOrderOf(CUSTOMER);
+        mockMvc.perform(get("/cart/" + orderId + "/summary").param("phno", "9123456789"))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void sessionEndpointReportsTheSignedInPhoneNumber() throws Exception {
+        mockMvc.perform(get("/customer/session").with(customer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.phno").value(CUSTOMER));
+    }
+
+    @Test
+    void sessionEndpointNeedsACustomerSession() throws Exception {
+        mockMvc.perform(get("/customer/session")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/customer/session").header("X-Service-Key", VALID_KEY)).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void loggingOutInvalidatesTheToken() throws Exception {
+        String token = customerAuthService.issueSession(CUSTOMER).token();
+        mockMvc.perform(post("/customer/logout").header("X-Customer-Token", token)).andExpect(status().isNoContent());
+        mockMvc.perform(get("/cart/byphno").param("phno", "9876543210").header("X-Customer-Token", token))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void adminEmailRebindRequiresTheServiceKey() throws Exception {
+        mockMvc.perform(put("/customer/admin/email").param("phno", "9876543210").param("email", "a@b.com"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(put("/customer/admin/email").param("phno", "9876543210").param("email", "a@b.com")
+                        .header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isNoContent());
     }
 }

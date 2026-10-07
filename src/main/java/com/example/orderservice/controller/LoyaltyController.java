@@ -1,5 +1,6 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.security.CustomerAccess;
 import com.example.orderservice.dto.LoyaltyAdjustmentRequest;
 import com.example.orderservice.entity.LoyaltyAccount;
 import com.example.orderservice.entity.LoyaltyTransaction;
@@ -15,17 +16,17 @@ public class LoyaltyController {
     @Autowired
     private OrderService orderService;
 
-    // Public, same self-service trust level as /cart/byphno - looking up your own points balance by your own
-    // phone number. Returns a zero-balance account (not 404) for a customer who hasn't earned any yet.
+    // Signed-in customer (own phone number only) or service key. Returns a zero-balance account (not 404) for a customer who hasn't earned any yet.
     @GetMapping("/byphno")
     public LoyaltyAccount getBalance(@RequestParam long phno) {
+        CustomerAccess.requireSelfOrService(phno);
         return orderService.getLoyaltyAccount(phno);
     }
 
-    // Same public trust level as /cart/{orderId}/tracking - a per-transaction history behind the single
-    // balance figure above.
+    // Same access as /byphno above - the per-transaction history behind the balance.
     @GetMapping("/history")
     public List<LoyaltyTransaction> getHistory(@RequestParam long phno) {
+        CustomerAccess.requireSelfOrService(phno);
         return orderService.getLoyaltyHistory(phno);
     }
 

@@ -14,6 +14,7 @@ import com.example.orderservice.dto.PhonepeForgotPinRequest;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.PhonepeResetPinRequest;
+import com.example.orderservice.dto.GuestOrderSummary;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.Product;
@@ -104,6 +105,8 @@ public class OrderService {
     private ShippingAddressRepository shippingAddressRepository;
     @Autowired
     private NotificationLogRepository notificationLogRepository;
+    @Autowired
+    private CustomerNotifier customerNotifier;
     @Autowired
     ProductClient productClient;
     @Autowired
@@ -730,6 +733,7 @@ public class OrderService {
         cart.setStatus(OrderStatus.SHIPPED);
         Cart result = orderRepository.save(cart);
         recordTracking(result.getOrderId(), OrderStatus.SHIPPED);
+        customerNotifier.notifyStatusChange(result, OrderStatus.SHIPPED);
         sendNotification("Order shipped. OrderId: " + result.getOrderId());
         return result;
     }
@@ -744,6 +748,7 @@ public class OrderService {
         Cart result = orderRepository.save(cart);
         recordTracking(result.getOrderId(), OrderStatus.DELIVERED);
         earnLoyaltyPoints(result);
+        customerNotifier.notifyStatusChange(result, OrderStatus.DELIVERED);
         sendNotification("Order delivered. OrderId: " + result.getOrderId());
         return result;
     }
@@ -788,6 +793,20 @@ public class OrderService {
     // Receipt for one order. The caller must supply the phone number the order was placed under - a mismatch is
     // reported as "not found" (same as an unknown id) so an order id alone can't be used to read someone else's
     // receipt. A product whose catalog lookup fails (removed since) is shown as "Product #id" at price 0.
+    public long ownerPhnoOf(long orderId) {
+        return orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"))
+                .getCustomerPhno();
+    }
+
+    public GuestOrderSummary getGuestSummary(long orderId, long phno) {
+        Cart order = orderRepository.findById(orderId)
+                .filter(o -> o.getCustomerPhno() == phno)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        return new GuestOrderSummary(order.getOrderId(), String.valueOf(order.getStatus()), order.getTotalPrice(),
+                String.valueOf(order.getPaymentMethod()), order.isPaid());
+    }
+
     public Invoice getInvoice(long orderId, long phno) {
         Cart order = orderRepository.findById(orderId)
                 .filter(o -> o.getCustomerPhno() == phno)
@@ -830,8 +849,7 @@ public class OrderService {
         return trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId);
     }
 
-    // The audit trail OrderKafkaConsumer writes to for SHIPPED/DELIVERED events - see NotificationLog for why
-    // this is "dispatched" rather than actually emailed/texted anywhere yet.
+    // The SHIPPED/DELIVERED notifications CustomerNotifier recorded for this order (emailed or recorded-only).
     public List<NotificationLog> getNotifications(long orderId) {
         if (!orderRepository.existsById(orderId)) {
             throw new OrderNotFoundException("Order not found");
@@ -1233,8 +1251,8 @@ public class OrderService {
         return wishlistRepository.findByCustomerPhno(phno);
     }
 
-    // Computed on demand rather than pushed anywhere - this system has no scheduler and no email/SMS provider
-    // (same caveat NotificationLog already carries), so "alert" here means "ask and find out right now", not a
+    // Computed on demand rather than pushed anywhere - this system has no scheduler to watch prices with, so
+    // "alert" here means "ask and find out right now", not a
     // proactive notification. Re-fetches each product's CURRENT price fresh on every call, so it's always
     // accurate even though nothing is persisted between calls. An entry with no priceWhenAdded (wishlisted
     // before this field existed) or whose product Feign lookup fails is skipped rather than reported.

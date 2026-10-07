@@ -133,6 +133,8 @@ class OrderServiceTest {
     private PhonepeClient phonepeClient;
     @Mock
     private OrderKafkaProducer orderKafkaProducer;
+    @Mock
+    private CustomerNotifier customerNotifier;
 
     @InjectMocks
     private OrderService service;
@@ -1344,6 +1346,7 @@ class OrderServiceTest {
 
         assertEquals(OrderStatus.SHIPPED, result.getStatus());
         verify(orderKafkaProducer).sendMessage(contains("Order shipped"));
+        verify(customerNotifier).notifyStatusChange(cart, OrderStatus.SHIPPED);
         ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
         verify(trackingEventRepository).save(captor.capture());
         assertEquals(OrderStatus.SHIPPED, captor.getValue().getStatus());
@@ -1376,6 +1379,7 @@ class OrderServiceTest {
 
         assertEquals(OrderStatus.DELIVERED, result.getStatus());
         verify(orderKafkaProducer).sendMessage(contains("Order delivered"));
+        verify(customerNotifier).notifyStatusChange(cart, OrderStatus.DELIVERED);
         ArgumentCaptor<TrackingEvent> captor = ArgumentCaptor.forClass(TrackingEvent.class);
         verify(trackingEventRepository).save(captor.capture());
         assertEquals(OrderStatus.DELIVERED, captor.getValue().getStatus());
