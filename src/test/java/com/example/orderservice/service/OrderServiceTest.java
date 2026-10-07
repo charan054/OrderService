@@ -1389,6 +1389,37 @@ class OrderServiceTest {
         assertEquals(42L, captor.getValue().getOrderId());
     }
 
+    @Test
+    void cancelEmailsTheCustomerAndAFailingNotifierNeverFailsTheCancellation() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 2));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), eq(new RefundRequest("cancel-2", null))))
+                .thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        when(customerNotifier.notifyStatusChange(any(), any(), any())).thenThrow(new IllegalStateException("db down"));
+
+        Cart result = service.cancel(42L, AUTH, "cancel-2");
+
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        verify(customerNotifier).notifyStatusChange(cart, OrderStatus.CANCELLED, null);
+    }
+
+    @Test
+    void placingAnOrderEmailsTheCustomerAfterItIsSaved() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 45.0, 5));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        when(orderRepository.save(any())).thenAnswer(inv -> {
+            Cart c = inv.getArgument(0);
+            c.setOrderId(77L);
+            return c;
+        });
+
+        service.order(cart, AUTH, null);
+
+        verify(customerNotifier).notifyStatusChange(cart, OrderStatus.PLACED, null);
+    }
+
     // A CASH order was never charged through PhonepayService, so cancelling it needs no Authorization token and
     // makes no refund call at all - only the stock restoration and status change happen.
     @Test

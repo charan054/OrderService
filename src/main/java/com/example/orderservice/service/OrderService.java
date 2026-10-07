@@ -214,6 +214,7 @@ public class OrderService {
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Items: " + result.getOrderItems().size()
                 + " Total: " + result.getTotalPrice());
+        notifyCustomer(result, OrderStatus.PLACED, null);
         return result;
     }
 
@@ -388,6 +389,7 @@ public class OrderService {
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Items: " + result.getOrderItems().size()
                 + " Total: " + result.getTotalPrice());
+        notifyCustomer(result, OrderStatus.PLACED, null);
         return result;
     }
 
@@ -406,6 +408,7 @@ public class OrderService {
         sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Reason: " + reason);
+        notifyCustomer(result, OrderStatus.CANCELLED, reason);
         return result;
     }
 
@@ -449,6 +452,7 @@ public class OrderService {
         sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Refunded: " + refundedNow);
+        notifyCustomer(result, OrderStatus.CANCELLED, null);
         return result;
     }
 
@@ -494,6 +498,7 @@ public class OrderService {
                 + " Customer: " + mask(result.getCustomerPhno())
                 + " Reason: " + reason
                 + " Refunded: " + refundedNow);
+        notifyCustomer(result, OrderStatus.RETURNED, null);
         return result;
     }
 
@@ -537,6 +542,11 @@ public class OrderService {
         }
         sendNotification("Order item cancelled. OrderId: " + result.getOrderId() + " Product: " + productId
                 + " Quantity: " + quantity + " Customer: " + mask(result.getCustomerPhno()) + " Refunded: " + refundAmount);
+        if (nothingLeft) {
+            notifyCustomer(result, OrderStatus.CANCELLED, null);
+        } else {
+            notifyItemRefund(result, "cancelled", productId, quantity, refundAmount);
+        }
         return result;
     }
 
@@ -576,6 +586,11 @@ public class OrderService {
         sendNotification("Order item returned. OrderId: " + result.getOrderId() + " Product: " + productId
                 + " Quantity: " + quantity + " Customer: " + mask(result.getCustomerPhno())
                 + " Reason: " + reason.trim() + " Refunded: " + refundAmount);
+        if (nothingLeft) {
+            notifyCustomer(result, OrderStatus.RETURNED, null);
+        } else {
+            notifyItemRefund(result, "returned", productId, quantity, refundAmount);
+        }
         return result;
     }
 
@@ -1136,6 +1151,24 @@ public class OrderService {
             return List.of();
         }
         return notificationLogRepository.findByOrderIdInOrderBySentAtDesc(orderIds);
+    }
+
+    // Emails the customer (see CustomerNotifier) about an order change they or the system just caused. Called only
+    // after the change is saved, and a failure here is logged, never propagated - same rule as sendNotification().
+    private void notifyCustomer(Cart order, OrderStatus status, String detail) {
+        try {
+            customerNotifier.notifyStatusChange(order, status, detail);
+        } catch (RuntimeException e) {
+            log.error("Customer notification failed for order {} ({}): {}", order.getOrderId(), status, e.getMessage());
+        }
+    }
+
+    private void notifyItemRefund(Cart order, String what, int productId, int quantity, double refunded) {
+        try {
+            customerNotifier.notifyItemRefund(order, what, productId, quantity, refunded);
+        } catch (RuntimeException e) {
+            log.error("Customer notification failed for order {} (item {}): {}", order.getOrderId(), what, e.getMessage());
+        }
     }
 
     // Kafka is told only AFTER the save() above returns - neither order() nor cancel() wraps its DB writes in a
