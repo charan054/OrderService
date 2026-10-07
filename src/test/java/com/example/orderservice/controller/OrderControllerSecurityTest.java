@@ -721,6 +721,22 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void savedCartIsOwnSessionOnly() throws Exception {
+        mockMvc.perform(get("/savedcart").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+        mockMvc.perform(put("/savedcart").param("phno", "9876543210").contentType("application/json").content("[]"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/savedcart").param("phno", "9000000009").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(put("/savedcart").param("phno", "9000000009").contentType("application/json").content("[]").with(customer()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(put("/savedcart").param("phno", "9876543210").contentType("application/json")
+                .content("[{\"productId\":1,\"quantity\":2}]").with(customer())).andExpect(status().isOk());
+        mockMvc.perform(get("/savedcart").param("phno", "9876543210").with(customer())).andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$.lines[0].quantity").value(2));
+        mockMvc.perform(put("/savedcart").param("phno", "9876543210").contentType("application/json").content("[]").with(customer()))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
     }
