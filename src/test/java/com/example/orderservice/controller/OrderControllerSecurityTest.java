@@ -627,6 +627,20 @@ class OrderControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    // Pincode serviceability: checking is public (pre-login), managing the list is admin-only.
+    @Test
+    void pincodeCheckAndSlotsArePublic() throws Exception {
+        mockMvc.perform(get("/pincodes/slots")).andExpect(status().isOk());
+        mockMvc.perform(get("/pincodes/check").param("pincode", "12")).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void managingPincodesNeedsTheServiceKey() throws Exception {
+        mockMvc.perform(get("/pincodes/all")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/pincodes/all").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/pincodes/all").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
     @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());

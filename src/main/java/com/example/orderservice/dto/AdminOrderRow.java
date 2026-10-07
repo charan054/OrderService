@@ -6,5 +6,5 @@ import java.time.Instant;
 // both X-Service-Key gated). items is a compact "productId x qty; ..." summary.
 public record AdminOrderRow(long orderId, Instant placedAt, String customerName, long customerPhno, String status,
                             String paymentMethod, boolean paid, String items, String couponCode,
-                            double discountAmount, int pointsRedeemed, double totalPrice, String deliveryNote) {
+                            double discountAmount, int pointsRedeemed, double totalPrice, String deliveryNote, String deliverySlot) {
 }

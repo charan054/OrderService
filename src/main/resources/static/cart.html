@@ -423,6 +423,22 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">🚚</div>
+                <div class="title-wrap">
+                    <h2>Serviceable Pincodes</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Pincodes we deliver to, with delivery days. While the list is empty every pincode is accepted; once it has any entry, checkout rejects addresses outside it. Requires the Service Key above.</p>
+            <input type="text" id="pinCode" placeholder="6-digit pincode" maxlength="6" />
+            <input type="number" id="pinDays" placeholder="Delivery days (1-30)" />
+            <button class="blue" onclick="addPincode()">Add / Update Pincode</button>
+            <button onclick="listPincodes()">List Pincodes</button>
+            <button onclick="removePincode()">Remove Pincode</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">📍</div>
                 <div class="title-wrap">
                     <h2>Add Shipping Address</h2>
@@ -1498,6 +1514,40 @@
 
       showStatus("Coupon saved successfully. Result opened in new tab.", "success");
       openResultTab("Add Coupon", data);
+    }
+
+    async function addPincode() {
+      const pincode = document.getElementById("pinCode").value.trim();
+      const deliveryDays = document.getElementById("pinDays").value;
+      if (!pincode || !deliveryDays) return showStatus("Please enter a pincode and delivery days.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const data = await apiCall(`http://localhost:8083/pincodes/add`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
+        body: JSON.stringify({ pincode, deliveryDays: Number(deliveryDays) })
+      });
+      showStatus("Pincode saved. Result opened in new tab.", "success");
+      openResultTab("Add Pincode", data);
+    }
+
+    async function listPincodes() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const data = await apiCall(`http://localhost:8083/pincodes/all`, { headers: { "X-Service-Key": serviceKey } });
+      openResultTab("Serviceable Pincodes", data);
+    }
+
+    async function removePincode() {
+      const pincode = document.getElementById("pinCode").value.trim();
+      if (!pincode) return showStatus("Please enter the pincode to remove.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      await apiCall(`http://localhost:8083/pincodes/remove?pincode=${encodeURIComponent(pincode)}`, {
+        method: "DELETE",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      showStatus("Pincode removed.", "success");
     }
 
     async function addAddress() {
