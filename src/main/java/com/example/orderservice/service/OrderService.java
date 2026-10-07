@@ -20,6 +20,7 @@ import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
@@ -1221,13 +1222,23 @@ public class OrderService {
         return url != null && url.startsWith("/") ? PRODUCT_SERVICE_ORIGIN + url : url;
     }
 
-    // MAX_SEARCH_RESULTS caps the single page requested from ProductService's own paginated /product/search -
-    // this storefront's catalog is small enough that a single generously-sized page is simpler than exposing
-    // pagination end-to-end through OrderService too.
-    private static final int MAX_SEARCH_RESULTS = 200;
+    // ProductService's /product/search is paginated; the storefront wants the whole matching catalog (it sorts,
+    // filters and pages it client-side), so walk the pages here. The page cap is only a safety net against a
+    // misbehaving downstream - 50 x 200 = 10,000 products.
+    private static final int SEARCH_PAGE_SIZE = 200;
+    private static final int MAX_SEARCH_PAGES = 50;
 
     public List<Product> searchProducts(String name, String category) {
-        List<Product> found = productClient.search(blankToNull(name), blankToNull(category), MAX_SEARCH_RESULTS).content();
+        List<Product> found = new ArrayList<>();
+        for (int page = 0; page < MAX_SEARCH_PAGES; page++) {
+            ProductSearchResult result = productClient.search(blankToNull(name), blankToNull(category), page, SEARCH_PAGE_SIZE);
+            if (result.content() != null) {
+                found.addAll(result.content());
+            }
+            if (result.isLastPage() || result.content() == null || result.content().isEmpty()) {
+                break;
+            }
+        }
         found.forEach(this::absolutizeImageUrl);
         return found;
     }

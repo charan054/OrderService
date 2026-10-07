@@ -31,6 +31,7 @@ public interface ProductClient {
     @GetMapping("/product/search")
     ProductSearchResult search(@RequestParam(required = false) String name,
                                 @RequestParam(required = false) String category,
+                                @RequestParam int page,
                                 @RequestParam int size);
     // ProductService requires X-Service-Key on every catalog-changing call (see its SecurityConfig).
     @PutMapping("/product/updateStock")
