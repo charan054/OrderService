@@ -20,6 +20,7 @@ import java.util.List;
         "totalPrice",
         "shippingAddressId",
         "deliveryNote",
+        "deliverySlot",
         "paymentMethod",
         "paid",
         "status"
@@ -54,6 +55,10 @@ public class Cart {
     // MAX_DELIVERY_NOTE_LENGTH by OrderService.order(); shown on the invoice and in the admin orders table/CSV.
     @Column(length = 200)
     private String deliveryNote;
+    // Optional preferred delivery window (a key of OrderService.DELIVERY_SLOTS: MORNING/AFTERNOON/EVENING). A
+    // request, not a guarantee - there is no courier scheduling behind it, so it's shown to whoever ships the order.
+    @Column(length = 20)
+    private String deliverySlot;
     // Defaults to PHONEPE when the caller doesn't set it, so existing callers that only ever paid through
     // PhonepayService (the admin dashboard, existing tests) keep working unchanged. CASH skips the PhonepayService
     // charge entirely in order() - see OrderService.order().

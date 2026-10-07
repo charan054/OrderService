@@ -10,7 +10,7 @@ import java.util.List;
 public record Invoice(long orderId, Instant placedAt, String customerName, long customerPhno,
                       List<Line> lines, String couponCode, double discountAmount, int pointsRedeemed,
                       double totalPrice, double refundedAmount, String paymentMethod, boolean paid, String status,
-                      String shippingAddress, String deliveryNote) {
+                      String shippingAddress, String deliveryNote, String deliverySlot) {
     public record Line(int productId, String productName, int quantity, double unitPrice, double lineTotal,
                        int cancelledQuantity, int returnedQuantity) {
     }
