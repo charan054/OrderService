@@ -3561,4 +3561,67 @@ class OrderServiceTest {
         assertEquals(1, report.recentNotes().size());
         assertEquals("changed plans", report.recentNotes().get(0).note());
     }
+
+    // ---------- rescheduleDelivery ----------
+
+    @Test
+    void rescheduleChangesOnlyWhatWasSentAndNormalizesIt() {
+        Cart cart = placedCashOrder(42L);
+        cart.setDeliverySlot("MORNING");
+        cart.setDeliveryNote("leave at gate");
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.rescheduleDelivery(42L, " evening ", null);
+
+        assertEquals("EVENING", result.getDeliverySlot());
+        assertEquals("leave at gate", result.getDeliveryNote());
+    }
+
+    @Test
+    void rescheduleWithBlankClearsTheField() {
+        Cart cart = placedCashOrder(42L);
+        cart.setDeliverySlot("MORNING");
+        cart.setDeliveryNote("leave at gate");
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.rescheduleDelivery(42L, "", "  ");
+
+        assertNull(result.getDeliverySlot());
+        assertNull(result.getDeliveryNote());
+    }
+
+    @Test
+    void rescheduleIsRefusedOnceShippedAndLeavesTheOrderUntouched() {
+        Cart cart = placedCashOrder(42L);
+        cart.setStatus(OrderStatus.SHIPPED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.rescheduleDelivery(42L, "EVENING", null));
+
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void anInvalidSlotOrNoteChangesNothing() {
+        Cart cart = placedCashOrder(42L);
+        cart.setDeliverySlot("MORNING");
+        cart.setDeliveryNote("keep me");
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.rescheduleDelivery(42L, "MIDNIGHT", "new note"));
+        assertThrows(ProductException.class, () -> service.rescheduleDelivery(42L, null, "x".repeat(201)));
+
+        assertEquals("MORNING", cart.getDeliverySlot());
+        assertEquals("keep me", cart.getDeliveryNote());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void rescheduleNeedsSomethingToChangeAndAnExistingOrder() {
+        assertThrows(ProductException.class, () -> service.rescheduleDelivery(42L, null, null));
+        when(orderRepository.findById(9L)).thenReturn(Optional.empty());
+        assertThrows(OrderNotFoundException.class, () -> service.rescheduleDelivery(9L, "EVENING", null));
+    }
 }
