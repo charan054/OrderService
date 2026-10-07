@@ -9,4 +9,5 @@ import java.util.List;
 @Repository
 public interface CartRepository extends JpaRepository<Cart, Long> {
     public List<Cart> findBycustomerPhno(long phno);
+    List<Cart> findByStatus(com.example.orderservice.entity.OrderStatus status);
 }

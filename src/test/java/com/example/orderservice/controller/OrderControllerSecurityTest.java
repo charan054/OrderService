@@ -561,6 +561,22 @@ class OrderControllerSecurityTest {
         mockMvc.perform(post("/cart/alerts/run").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
     }
 
+    // Pending-payment sweep: admin-only.
+    @Test
+    void sweepingPendingPaymentsWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/pending/sweep")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aCustomerSessionCannotSweepPendingPayments() throws Exception {
+        mockMvc.perform(post("/cart/pending/sweep").with(customer())).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void sweepingPendingPaymentsWithValidKeySucceeds() throws Exception {
+        mockMvc.perform(post("/cart/pending/sweep").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
     @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());

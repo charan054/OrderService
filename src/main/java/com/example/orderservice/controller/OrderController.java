@@ -20,6 +20,7 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.exception.OrderNotFoundException;
+import com.example.orderservice.dto.PendingPaymentSweepResult;
 import com.example.orderservice.dto.StockAlertRunResult;
 import com.example.orderservice.service.OrderService;
 import com.example.orderservice.service.StockAlertService;
@@ -287,6 +288,12 @@ public class OrderController {
         return org.springframework.http.ResponseEntity.ok()
                 .header("Content-Disposition", "attachment; filename=\"orders.csv\"")
                 .body(orderService.exportOrdersCsv(status, paymentMethod, phno, from, to));
+    }
+    // Admin-only (service key by default): resolve every pending UPI order now (cancel expired/declined ones and
+    // put their stock back, finalize approved ones) instead of waiting for the next scheduled sweep.
+    @PostMapping("/pending/sweep")
+    public PendingPaymentSweepResult sweepPendingPayments(){
+        return orderService.sweepPendingPayments();
     }
     // Admin-only (service key by default): run the restock / price-drop email job now instead of waiting for the
     // next scheduled run. Safe to call any time - each restock and each new lower price is emailed only once.

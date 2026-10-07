@@ -8,6 +8,7 @@ import com.example.orderservice.dto.CreateUpiCollectRequest;
 import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.PaymentRequest;
+import com.example.orderservice.dto.PendingPaymentSweepResult;
 import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.PhonepeForgotPinRequest;
@@ -297,19 +298,62 @@ public class OrderService {
         return result;
     }
 
-    // Resolves a PENDING_PAYMENT order the moment anyone next asks about it (the storefront polling this while
-    // the buyer goes to approve in PhonepayService) - this system has no scheduler, same reasoning as
-    // OrderService's own loyalty-points-expiry. OrderService's OWN deadline is checked FIRST and is
+    // Resolves a PENDING_PAYMENT order: the storefront polls this while the buyer goes to approve in
+    // PhonepayService, and PendingPaymentSweeper calls it for every pending order on a timer so a buyer who never
+    // comes back can't leave their reserved stock stuck. OrderService's OWN deadline is checked FIRST and is
     // authoritative regardless of what PhonepayService's own collect-request expiry says (the two are set to
     // the same duration, but this keeps OrderService in control of how long an order actually holds its
     // reserved stock even if that ever changes independently on PhonepayService's side).
+    //
+    // A poll and a sweep can hit the same order at the same moment; both would then cancel it and put its stock
+    // back twice. Striped locks make them take turns, and the order is re-read inside the lock so the loser sees
+    // the winner's result and returns it.
+    private static final int PENDING_LOCK_STRIPES = 64;
+    private final Object[] pendingLocks = newLocks(PENDING_LOCK_STRIPES);
+
+    private static Object[] newLocks(int count) {
+        Object[] locks = new Object[count];
+        for (int i = 0; i < count; i++) {
+            locks[i] = new Object();
+        }
+        return locks;
+    }
+
     public Cart checkPendingPayment(long orderId) {
+        synchronized (pendingLocks[(int) Math.floorMod(orderId, (long) PENDING_LOCK_STRIPES)]) {
+            return resolvePendingPayment(orderId);
+        }
+    }
+
+    // Every PENDING_PAYMENT order is checked (not only expired ones): an approved collect request is turned into
+    // a placed order promptly even if the buyer closed the tab. One order failing never stops the rest.
+    public PendingPaymentSweepResult sweepPendingPayments() {
+        int checked = 0;
+        int resolved = 0;
+        for (Cart pending : orderRepository.findByStatus(OrderStatus.PENDING_PAYMENT)) {
+            checked++;
+            try {
+                if (checkPendingPayment(pending.getOrderId()).getStatus() != OrderStatus.PENDING_PAYMENT) {
+                    resolved++;
+                }
+            } catch (RuntimeException e) {
+                log.error("Pending payment sweep: order {} failed: {}", pending.getOrderId(), e.getMessage());
+            }
+        }
+        if (checked > 0) {
+            log.info("Pending payment sweep: {} order(s) checked, {} resolved", checked, resolved);
+        }
+        return new PendingPaymentSweepResult(checked, resolved);
+    }
+
+    private Cart resolvePendingPayment(long orderId) {
         Cart cart = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
         if (cart.getStatus() != OrderStatus.PENDING_PAYMENT) {
             return cart;
         }
-        if (Instant.now().isAfter(cart.getPaymentDeadline())) {
+        // A pending order with no deadline is corrupt - treat it as expired rather than holding its stock forever.
+        if (cart.getPaymentDeadline() == null || Instant.now().isAfter(cart.getPaymentDeadline())) {
             return cancelUnpaidOrder(cart, "payment window expired");
         }
 
