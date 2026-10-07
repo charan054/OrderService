@@ -125,4 +125,83 @@ class CustomerNotifierTest {
 
         assertFalse(log.isEmailed());
     }
+
+    @Test
+    void placedEmailConfirmsTheOrderAndMentionsAnyCouponSaving() {
+        verifiedEmail("asha@example.com");
+        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+        Cart cart = order(PaymentMethod.PHONEPE, true);
+        cart.setDiscountAmount(50);
+
+        NotificationLog log = notifier.notifyStatusChange(cart, OrderStatus.PLACED);
+
+        verify(mailService).send(eq("asha@example.com"), eq("Your order #42 is confirmed"), contains("You saved Rs. 50.00"));
+        assertEquals(OrderStatus.PLACED, log.getEventType());
+    }
+
+    @Test
+    void placedEmailForAnUnpaidCashOrderTellsThemToKeepTheCashReady() {
+        verifiedEmail("asha@example.com");
+        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+
+        notifier.notifyStatusChange(order(PaymentMethod.CASH, false), OrderStatus.PLACED);
+
+        verify(mailService).send(anyString(), anyString(), contains("please keep Rs. 450.00 ready"));
+    }
+
+    @Test
+    void cancelledEmailSaysHowMuchWasRefundedToPhonePe() {
+        verifiedEmail("asha@example.com");
+        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+        Cart cart = order(PaymentMethod.PHONEPE, true);
+        cart.setRefundedAmount(450);
+
+        notifier.notifyStatusChange(cart, OrderStatus.CANCELLED);
+
+        verify(mailService).send(eq("asha@example.com"), eq("Your order #42 was cancelled"),
+                contains("Rs. 450.00 has been refunded to your PhonePe account"));
+    }
+
+    // A cash order or an unpaid UPI order never took money, so the email must not promise a refund.
+    @Test
+    void cancelledEmailForAnOrderThatWasNeverChargedPromisesNoRefundAndNeverAsksForCash() {
+        verifiedEmail("asha@example.com");
+        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+
+        notifier.notifyStatusChange(order(PaymentMethod.CASH, false), OrderStatus.CANCELLED, "payment window expired");
+
+        org.mockito.ArgumentCaptor<String> body = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(mailService).send(anyString(), anyString(), body.capture());
+        assertTrue(body.getValue().contains("Reason: payment window expired."));
+        assertTrue(body.getValue().contains("You were not charged for this order."));
+        assertFalse(body.getValue().contains("keep Rs."));
+    }
+
+    @Test
+    void returnedEmailCarriesTheReasonAndTheRefund() {
+        verifiedEmail("asha@example.com");
+        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+        Cart cart = order(PaymentMethod.PHONEPE, true);
+        cart.setRefundedAmount(450);
+        cart.setReturnReason("too small");
+
+        notifier.notifyStatusChange(cart, OrderStatus.RETURNED);
+
+        verify(mailService).send(eq("asha@example.com"), eq("Your return for order #42 is complete"), contains("Reason given: too small."));
+        verify(mailService).send(anyString(), anyString(), contains("has been refunded to your PhonePe account"));
+    }
+
+    @Test
+    void itemRefundEmailNamesTheItemAndTheAmountAndKeepsTheOrderStatusAsEventType() {
+        verifiedEmail("asha@example.com");
+        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+        Cart cart = order(PaymentMethod.PHONEPE, true);
+        cart.setStatus(OrderStatus.PLACED);
+
+        NotificationLog log = notifier.notifyItemRefund(cart, "cancelled", 7, 2, 90);
+
+        verify(mailService).send(eq("asha@example.com"), eq("Order #42: 2 x product #7 cancelled"),
+                contains("Rs. 90.00 has been refunded to your PhonePe account"));
+        assertEquals(OrderStatus.PLACED, log.getEventType());
+    }
 }
