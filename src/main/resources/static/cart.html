@@ -304,6 +304,28 @@
           .section-header { flex-direction: column; align-items: flex-start; }
           .small-btn { width: 100%; }
         }
+
+        .rev-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 4px 0 12px; }
+        .rev-controls select, .rev-controls input { width: auto; margin: 0; }
+        .rev-summary { display: flex; flex-wrap: wrap; gap: 24px; margin: 4px 0 8px; color: #334155; }
+        .rev-summary b { display: block; font-size: 22px; color: #0f172a; }
+        .rev-summary span { font-size: 12px; color: var(--muted); }
+        .rev-chart { position: relative; }
+        .rev-chart svg { width: 100%; height: auto; display: block; }
+        .rev-chart .grid-line { stroke: #e2e8f0; stroke-width: 1; }
+        .rev-chart .axis-text { fill: #64748b; font-size: 11px; }
+        .rev-chart .bar { fill: #2a78d6; }
+        .rev-chart .hit:hover + .bar, .rev-chart .hit:focus + .bar { fill: #1d5db0; }
+        .rev-chart .hit { fill: transparent; outline: none; cursor: default; }
+        .rev-chart .hit:focus-visible { stroke: #0f172a; stroke-width: 2; }
+        .rev-tip { position: absolute; pointer-events: none; background: #0f172a; color: #fff; border-radius: 10px;
+                   padding: 8px 10px; font-size: 12px; line-height: 1.5; white-space: nowrap; transform: translate(-50%, -100%);
+                   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.25); }
+        .rev-tip b { font-size: 13px; }
+        .rev-table { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+        .rev-table th, .rev-table td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+        .rev-table th:first-child, .rev-table td:first-child { text-align: left; }
+        .rev-empty { color: var(--muted); padding: 24px 0; text-align: center; }
     </style>
 </head>
 <body>
@@ -758,6 +780,32 @@
         </div>
     </section>
 
+    <section class="grid">
+        <div class="card wide">
+            <div class="card-header">
+                <div class="icon">📈</div>
+                <div class="title-wrap">
+                    <h2>Revenue Over Time</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Revenue per day or week, net of refunds. Orders count in the period they were placed; cancelled and unpaid UPI orders are left out. Requires the Service Key above.</p>
+            <div class="rev-controls">
+                <label class="orders-date">From <input type="date" id="revFrom" /></label>
+                <label class="orders-date">To <input type="date" id="revTo" /></label>
+                <select id="revBucket">
+                    <option value="day">Daily</option>
+                    <option value="week">Weekly</option>
+                </select>
+                <button onclick="loadRevenueChart()">Load Chart</button>
+                <button class="blue" id="revViewToggle" onclick="toggleRevenueView()">View as table</button>
+            </div>
+            <div id="revSummary" class="rev-summary"></div>
+            <div id="revChart" class="rev-chart"></div>
+            <div id="revTable" class="orders-table-wrap" hidden></div>
+        </div>
+    </section>
+
     <div id="status" class="status-panel">Ready. Load products first, then add items to cart.</div>
 </main>
 
@@ -993,6 +1041,144 @@
       const data = await apiCall(`${BASE_URL}/byphno?phno=${encodeURIComponent(phno)}`);
       showStatus("Orders by phone number loaded successfully. Result opened in new tab.", "success");
       openResultTab("Orders By Phone Number", data);
+    }
+
+    // ---- Revenue over time ----
+    let revenueSeries = null;
+
+    function localIsoDate(d) {
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${d.getFullYear()}-${m}-${day}`;
+    }
+
+    (function initRevenueDates() {
+      const to = new Date();
+      const from = new Date();
+      from.setDate(from.getDate() - 29);
+      document.getElementById("revTo").value = localIsoDate(to);
+      document.getElementById("revFrom").value = localIsoDate(from);
+    })();
+
+    const rupees = n => "₹" + Number(n).toLocaleString("en-IN", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+
+    // Rounds a maximum up to a "nice" axis top (1, 2, 2.5, 5 x 10^n) and returns ticks from 0 to it.
+    function niceTicks(max, count = 4) {
+      if (max <= 0) return { top: 1, ticks: [0, 1] };
+      const rough = max / count;
+      const pow = Math.pow(10, Math.floor(Math.log10(rough)));
+      const step = [1, 2, 2.5, 5, 10].map(m => m * pow).find(v => v >= rough);
+      const top = Math.ceil(max / step) * step;
+      const ticks = [];
+      for (let v = 0; v <= top + step / 1000; v += step) ticks.push(Math.round(v * 100) / 100);
+      return { top, ticks };
+    }
+
+    function periodLabel(point, bucket, short) {
+      const d = new Date(point.periodStart + "T00:00:00");
+      const text = d.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+      return bucket === "week" && !short ? "Week of " + text : text;
+    }
+
+    function revenueQuery() {
+      const params = new URLSearchParams({
+        bucket: document.getElementById("revBucket").value,
+        zone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
+      });
+      const from = document.getElementById("revFrom").value;
+      const to = document.getElementById("revTo").value;
+      if (from) params.set("from", from);
+      if (to) params.set("to", to);
+      return params.toString();
+    }
+
+    async function loadRevenueChart() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      revenueSeries = await apiCall(`${BASE_URL}/analytics/timeseries?${revenueQuery()}`, {
+        headers: { "X-Service-Key": serviceKey }
+      });
+      showStatus("Revenue chart loaded.", "success");
+      renderRevenueChart();
+    }
+
+    function renderRevenueChart() {
+      const data = revenueSeries;
+      const summary = document.getElementById("revSummary");
+      const chart = document.getElementById("revChart");
+      const table = document.getElementById("revTable");
+      if (!data) return;
+
+      summary.innerHTML = `
+        <div><b>${rupees(data.totalRevenue)}</b><span>Revenue, ${data.from} to ${data.to}</span></div>
+        <div><b>${data.totalOrders}</b><span>Orders placed</span></div>
+        <div><b>${data.totalOrders ? rupees(data.totalRevenue / data.totalOrders) : "-"}</b><span>Average per order</span></div>
+        ${data.undatedOrders ? `<div><b>${data.undatedOrders}</b><span>Older orders with no date (not charted)</span></div>` : ""}`;
+
+      table.innerHTML = `<table class="rev-table"><thead><tr><th>${data.bucket === "week" ? "Week starting" : "Day"}</th><th>Orders</th><th>Revenue</th></tr></thead><tbody>${
+        data.points.map(pt => `<tr><td>${escapeHtml(pt.periodStart)}</td><td>${pt.orders}</td><td>${rupees(pt.revenue)}</td></tr>`).join("")
+      }</tbody></table>`;
+
+      if (!data.points.some(pt => pt.revenue > 0 || pt.orders > 0)) {
+        chart.innerHTML = `<div class="rev-empty">No orders in this period.</div>`;
+        return;
+      }
+
+      const W = 760, H = 280, left = 56, right = 12, top = 12, bottom = 34;
+      const plotW = W - left - right, plotH = H - top - bottom;
+      const { top: yTop, ticks } = niceTicks(Math.max(...data.points.map(pt => pt.revenue)));
+      const n = data.points.length;
+      const slot = plotW / n;
+      const barW = Math.max(2, Math.min(36, slot - 2)); // thin marks; 2px gap between neighbours
+      const y = v => top + plotH - (v / yTop) * plotH;
+      const labelEvery = Math.ceil(n / Math.floor(plotW / 54));
+
+      const grid = ticks.map(t => `
+        <line class="grid-line" x1="${left}" x2="${W - right}" y1="${y(t)}" y2="${y(t)}"></line>
+        <text class="axis-text" x="${left - 8}" y="${y(t) + 4}" text-anchor="end">${rupees(t)}</text>`).join("");
+
+      const bars = data.points.map((pt, i) => {
+        const cx = left + slot * i + slot / 2;
+        const x = cx - barW / 2;
+        const h = Math.max(0, plotH - (y(pt.revenue) - top));
+        const r = Math.min(4, barW / 2, h);
+        // Rounded top ends only, anchored flat to the baseline.
+        const path = h <= 0 ? "" : `M${x},${top + plotH} V${top + plotH - h + r} Q${x},${top + plotH - h} ${x + r},${top + plotH - h} H${x + barW - r} Q${x + barW},${top + plotH - h} ${x + barW},${top + plotH - h + r} V${top + plotH} Z`;
+        const label = `${periodLabel(pt, data.bucket)}: ${rupees(pt.revenue)}, ${pt.orders} order${pt.orders === 1 ? "" : "s"}`;
+        const xLabel = i % labelEvery === 0 ? `<text class="axis-text" x="${cx}" y="${H - 12}" text-anchor="middle">${periodLabel(pt, data.bucket, true)}</text>` : "";
+        return `<g>
+          <rect class="hit" x="${left + slot * i}" y="${top}" width="${slot}" height="${plotH}" tabindex="0"
+                role="img" aria-label="${escapeHtml(label)}" data-i="${i}" data-cx="${cx}" data-top="${y(pt.revenue)}"></rect>
+          <path class="bar" d="${path}"></path>${xLabel}</g>`;
+      }).join("");
+
+      chart.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Revenue per ${data.bucket}">${grid}${bars}</svg><div class="rev-tip" hidden></div>`;
+
+      const tip = chart.querySelector(".rev-tip");
+      const svg = chart.querySelector("svg");
+      const show = el => {
+        const pt = data.points[Number(el.dataset.i)];
+        tip.innerHTML = `<b>${escapeHtml(periodLabel(pt, data.bucket))}</b><br>${rupees(pt.revenue)} revenue<br>${pt.orders} order${pt.orders === 1 ? "" : "s"}`;
+        tip.hidden = false;
+        const scale = svg.getBoundingClientRect().width / W;
+        const maxLeft = chart.clientWidth - tip.offsetWidth / 2;
+        tip.style.left = Math.min(Math.max(Number(el.dataset.cx) * scale, tip.offsetWidth / 2), maxLeft) + "px";
+        tip.style.top = Math.max(Number(el.dataset.top) * scale - 8, tip.offsetHeight + 4) + "px";
+      };
+      chart.querySelectorAll(".hit").forEach(el => {
+        el.addEventListener("mouseenter", () => show(el));
+        el.addEventListener("focus", () => show(el));
+        el.addEventListener("mouseleave", () => { tip.hidden = true; });
+        el.addEventListener("blur", () => { tip.hidden = true; });
+      });
+    }
+
+    function toggleRevenueView() {
+      const table = document.getElementById("revTable");
+      const showTable = table.hidden;
+      table.hidden = !showTable;
+      document.getElementById("revChart").hidden = showTable;
+      document.getElementById("revViewToggle").textContent = showTable ? "View as chart" : "View as table";
     }
 
     async function getSalesAnalytics() {

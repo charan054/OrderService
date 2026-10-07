@@ -534,6 +534,16 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void revenueTimeseriesNeedsTheServiceKey() throws Exception {
+        mockMvc.perform(get("/cart/analytics/timeseries")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/analytics/timeseries").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/cart/analytics/timeseries").param("bucket", "week").param("zone", "Asia/Kolkata")
+                        .header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.bucket").value("week"));
+    }
+
+    @Test
     void adminOrderSearchWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(get("/cart/orders/search")).andExpect(status().isUnauthorized());
     }
