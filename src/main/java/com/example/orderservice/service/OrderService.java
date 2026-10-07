@@ -15,6 +15,7 @@ import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.PhonepeResetPinRequest;
 import com.example.orderservice.dto.GuestOrderSummary;
+import com.example.orderservice.dto.RevenueTimeseries;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.Product;
@@ -70,6 +71,9 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -568,9 +572,11 @@ public class OrderService {
     }
 
     // What the customer is still actually paying for: nothing once cancelled/returned (older returned orders
-    // predate refundedAmount, so status decides), otherwise the total minus any per-item refunds.
+    // predate refundedAmount, so status decides) or while a UPI payment is still awaiting approval, otherwise the
+    // total minus any per-item refunds.
     private static double netPaid(Cart cart) {
-        if (cart.getStatus() == OrderStatus.CANCELLED || cart.getStatus() == OrderStatus.RETURNED) {
+        if (cart.getStatus() == OrderStatus.CANCELLED || cart.getStatus() == OrderStatus.RETURNED
+                || cart.getStatus() == OrderStatus.PENDING_PAYMENT) {
             return 0;
         }
         return Math.max(0, cart.getTotalPrice() - cart.getRefundedAmount());
@@ -1284,6 +1290,76 @@ public class OrderService {
     // already uses at this system's scale - no separate reporting/warehouse store exists to query instead.
     // CANCELLED orders are excluded from every figure (fully refunded, never a kept sale); RETURNED ones still
     // count as revenue (no separate "returns" bucket exists yet to net them back out of the total).
+    static final int MAX_TIMESERIES_DAYS = 366;
+
+    // Revenue over time for the admin dashboard. An order belongs to the period it was placed in (its first
+    // tracking event), in the caller's time zone so "a day" matches the dashboard user's own day. Cancelled and
+    // still-unpaid UPI orders don't count; revenue is net of refunds, same as getSalesAnalytics().
+    public RevenueTimeseries getRevenueTimeseries(LocalDate from, LocalDate to, String bucket, String zone) {
+        ZoneId zoneId;
+        try {
+            zoneId = zone == null || zone.isBlank() ? ZoneOffset.UTC : ZoneId.of(zone.trim());
+        } catch (java.time.DateTimeException e) {
+            throw new ProductException("Unknown time zone: " + zone);
+        }
+        String unit = bucket == null || bucket.isBlank() ? "day" : bucket.trim().toLowerCase();
+        if (!unit.equals("day") && !unit.equals("week")) {
+            throw new ProductException("bucket must be day or week");
+        }
+        LocalDate end = to != null ? to : LocalDate.now(zoneId);
+        LocalDate start = from != null ? from : end.minusDays(29);
+        if (start.isAfter(end)) {
+            throw new ProductException("from must not be after to");
+        }
+        if (ChronoUnit.DAYS.between(start, end) >= MAX_TIMESERIES_DAYS) {
+            throw new ProductException("The range can be at most " + MAX_TIMESERIES_DAYS + " days");
+        }
+
+        Map<Long, Instant> placedAtByOrder = new HashMap<>();
+        for (TrackingEvent event : trackingEventRepository.findAll()) {
+            placedAtByOrder.merge(event.getOrderId(), event.getTimestamp(), (a, b) -> a.isBefore(b) ? a : b);
+        }
+
+        boolean weekly = unit.equals("week");
+        LocalDate firstPeriod = weekly ? start.with(java.time.DayOfWeek.MONDAY) : start;
+        Map<LocalDate, long[]> orders = new java.util.LinkedHashMap<>();
+        Map<LocalDate, Double> revenue = new HashMap<>();
+        for (LocalDate p = firstPeriod; !p.isAfter(end); p = weekly ? p.plusWeeks(1) : p.plusDays(1)) {
+            orders.put(p, new long[1]);
+            revenue.put(p, 0.0);
+        }
+
+        long undated = 0;
+        for (Cart order : orderRepository.findAll()) {
+            if (order.getStatus() == OrderStatus.CANCELLED || order.getStatus() == OrderStatus.PENDING_PAYMENT) {
+                continue;
+            }
+            Instant placedAt = placedAtByOrder.get(order.getOrderId());
+            if (placedAt == null) {
+                undated++;
+                continue;
+            }
+            LocalDate day = placedAt.atZone(zoneId).toLocalDate();
+            if (day.isBefore(start) || day.isAfter(end)) {
+                continue;
+            }
+            LocalDate period = weekly ? day.with(java.time.DayOfWeek.MONDAY) : day;
+            orders.get(period)[0]++;
+            revenue.merge(period, netPaid(order), Double::sum);
+        }
+
+        List<RevenueTimeseries.Point> points = new ArrayList<>();
+        double totalRevenue = 0;
+        long totalOrders = 0;
+        for (Map.Entry<LocalDate, long[]> entry : orders.entrySet()) {
+            double periodRevenue = roundMoney(revenue.get(entry.getKey()));
+            points.add(new RevenueTimeseries.Point(entry.getKey(), entry.getValue()[0], periodRevenue));
+            totalRevenue += periodRevenue;
+            totalOrders += entry.getValue()[0];
+        }
+        return new RevenueTimeseries(start, end, unit, zoneId.getId(), points, roundMoney(totalRevenue), totalOrders, undated);
+    }
+
     public SalesAnalytics getSalesAnalytics() {
         List<Cart> orders = orderRepository.findAll();
 

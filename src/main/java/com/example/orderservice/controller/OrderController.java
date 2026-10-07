@@ -233,6 +233,16 @@ public class OrderController {
     public SalesAnalytics getSalesAnalytics(){
         return orderService.getSalesAnalytics();
     }
+    // Admin-only like /analytics: revenue and order count per day or week (bucket=day|week) between from and to
+    // (yyyy-MM-dd, inclusive; default the last 30 days), in the given IANA time zone (default UTC).
+    @GetMapping("/analytics/timeseries")
+    public com.example.orderservice.dto.RevenueTimeseries getRevenueTimeseries(
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to,
+            @RequestParam(required = false) String bucket,
+            @RequestParam(required = false) String zone){
+        return orderService.getRevenueTimeseries(from, to, bucket, zone);
+    }
     // Admin orders table + CSV download (X-Service-Key gated by default). Dates are yyyy-MM-dd, inclusive.
     @GetMapping("/orders/search")
     public List<AdminOrderRow> searchOrders(@RequestParam(required = false) String status,

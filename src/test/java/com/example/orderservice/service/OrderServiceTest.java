@@ -21,6 +21,7 @@ import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.CouponSuggestion;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
+import com.example.orderservice.dto.RevenueTimeseries;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.dto.TopSellingProduct;
@@ -2875,5 +2876,100 @@ class OrderServiceTest {
 
         assertEquals(50.0, result.totalRevenue());
         assertEquals(1, result.topProducts().get(0).unitsSold());
+    }
+
+    // ---------- getRevenueTimeseries ----------
+
+    private Cart dated(long orderId, double total, OrderStatus status) {
+        Cart c = cart(CUSTOMER, item(1, 1));
+        c.setOrderId(orderId);
+        c.setTotalPrice(total);
+        c.setStatus(status);
+        return c;
+    }
+
+    private TrackingEvent placedEvent(long orderId, String instant) {
+        TrackingEvent e = new TrackingEvent();
+        e.setOrderId(orderId);
+        e.setStatus(OrderStatus.PLACED);
+        e.setTimestamp(Instant.parse(instant));
+        return e;
+    }
+
+    @Test
+    void revenueTimeseriesFillsEveryDayAndCountsRevenueNetOfRefunds() {
+        Cart partlyRefunded = dated(1L, 100, OrderStatus.PLACED);
+        partlyRefunded.setRefundedAmount(30);
+        Cart sameDay = dated(2L, 50, OrderStatus.DELIVERED);
+        Cart cancelled = dated(3L, 999, OrderStatus.CANCELLED);
+        Cart returned = dated(4L, 70, OrderStatus.RETURNED);
+        Cart noHistory = dated(5L, 10, OrderStatus.PLACED);
+        when(orderRepository.findAll()).thenReturn(List.of(partlyRefunded, sameDay, cancelled, returned, noHistory));
+        when(trackingEventRepository.findAll()).thenReturn(List.of(
+                placedEvent(1L, "2026-10-02T10:00:00Z"), placedEvent(2L, "2026-10-02T12:00:00Z"),
+                placedEvent(3L, "2026-10-02T12:00:00Z"), placedEvent(4L, "2026-10-04T09:00:00Z")));
+
+        RevenueTimeseries result = service.getRevenueTimeseries(
+                java.time.LocalDate.parse("2026-10-01"), java.time.LocalDate.parse("2026-10-04"), null, null);
+
+        assertEquals(4, result.points().size());
+        assertEquals(new RevenueTimeseries.Point(java.time.LocalDate.parse("2026-10-01"), 0, 0.0), result.points().get(0));
+        assertEquals(new RevenueTimeseries.Point(java.time.LocalDate.parse("2026-10-02"), 2, 120.0), result.points().get(1));
+        // a returned order still happened (counted) but is no longer revenue
+        assertEquals(new RevenueTimeseries.Point(java.time.LocalDate.parse("2026-10-04"), 1, 0.0), result.points().get(3));
+        assertEquals(120.0, result.totalRevenue());
+        assertEquals(3, result.totalOrders());
+        assertEquals(1, result.undatedOrders());
+    }
+
+    // 2026-10-01T20:00Z is already 2 October in India - the day follows the requested zone.
+    @Test
+    void revenueTimeseriesUsesTheRequestedTimeZoneForDayBoundaries() {
+        when(orderRepository.findAll()).thenReturn(List.of(dated(1L, 100, OrderStatus.PLACED)));
+        when(trackingEventRepository.findAll()).thenReturn(List.of(placedEvent(1L, "2026-10-01T20:00:00Z")));
+        java.time.LocalDate from = java.time.LocalDate.parse("2026-10-01");
+        java.time.LocalDate to = java.time.LocalDate.parse("2026-10-02");
+
+        RevenueTimeseries utc = service.getRevenueTimeseries(from, to, "day", "UTC");
+        RevenueTimeseries india = service.getRevenueTimeseries(from, to, "day", "Asia/Kolkata");
+
+        assertEquals(100.0, utc.points().get(0).revenue());
+        assertEquals(100.0, india.points().get(1).revenue());
+        assertEquals("Asia/Kolkata", india.zone());
+    }
+
+    @Test
+    void revenueTimeseriesGroupsByWeekStartingMonday() {
+        when(orderRepository.findAll()).thenReturn(List.of(dated(1L, 10, OrderStatus.PLACED), dated(2L, 20, OrderStatus.PLACED)));
+        // 2026-10-07 is a Wednesday, 2026-10-11 the Sunday of the same week
+        when(trackingEventRepository.findAll()).thenReturn(List.of(
+                placedEvent(1L, "2026-10-07T10:00:00Z"), placedEvent(2L, "2026-10-11T10:00:00Z")));
+
+        RevenueTimeseries result = service.getRevenueTimeseries(
+                java.time.LocalDate.parse("2026-10-01"), java.time.LocalDate.parse("2026-10-12"), "week", null);
+
+        assertEquals(List.of(java.time.LocalDate.parse("2026-09-28"), java.time.LocalDate.parse("2026-10-05"),
+                java.time.LocalDate.parse("2026-10-12")), result.points().stream().map(RevenueTimeseries.Point::periodStart).toList());
+        assertEquals(new RevenueTimeseries.Point(java.time.LocalDate.parse("2026-10-05"), 2, 30.0), result.points().get(1));
+    }
+
+    @Test
+    void revenueTimeseriesRejectsBadInput() {
+        java.time.LocalDate day = java.time.LocalDate.parse("2026-10-01");
+        assertThrows(ProductException.class, () -> service.getRevenueTimeseries(day, day.minusDays(1), null, null));
+        assertThrows(ProductException.class, () -> service.getRevenueTimeseries(day, day.plusDays(400), null, null));
+        assertThrows(ProductException.class, () -> service.getRevenueTimeseries(day, day, "month", null));
+        assertThrows(ProductException.class, () -> service.getRevenueTimeseries(day, day, null, "Mars/Olympus"));
+    }
+
+    @Test
+    void revenueTimeseriesDefaultsToTheLast30Days() {
+        when(orderRepository.findAll()).thenReturn(List.of());
+        when(trackingEventRepository.findAll()).thenReturn(List.of());
+
+        RevenueTimeseries result = service.getRevenueTimeseries(null, null, null, null);
+
+        assertEquals(30, result.points().size());
+        assertEquals("day", result.bucket());
     }
 }
