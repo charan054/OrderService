@@ -12,6 +12,7 @@ import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ModerationReviewsResult;
+import com.example.orderservice.dto.PendingPaymentSweepResult;
 import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ProductReviewsResult;
@@ -1139,6 +1140,66 @@ class OrderServiceTest {
         cart.setUpiId("9876543210@charanpe");
         cart.setPaymentDeadline(deadline);
         return cart;
+    }
+
+    @Test
+    void sweepCancelsExpiredPendingOrdersAndPutsTheirStockBackWithoutAnyoneAskingAboutThem() {
+        Cart expired = pendingUpiCart(Instant.now().minus(1, ChronoUnit.MINUTES));
+        when(orderRepository.findByStatus(OrderStatus.PENDING_PAYMENT)).thenReturn(List.of(expired));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(expired));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        PendingPaymentSweepResult result = service.sweepPendingPayments();
+
+        assertEquals(1, result.checked());
+        assertEquals(1, result.resolved());
+        assertEquals(OrderStatus.CANCELLED, expired.getStatus());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 1);
+        // The cancelled item shows as cancelled, like a normal cancel.
+        assertEquals(1, expired.getOrderItems().get(0).getCancelledQuantity());
+    }
+
+    @Test
+    void sweepLeavesAStillValidPendingOrderAloneWhenPhonepayServiceIsUnreachable() {
+        Cart live = pendingUpiCart(Instant.now().plus(3, ChronoUnit.MINUTES));
+        when(orderRepository.findByStatus(OrderStatus.PENDING_PAYMENT)).thenReturn(List.of(live));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(live));
+        when(phonepeClient.getUpiCollectRequest(any(), any())).thenThrow(org.mockito.Mockito.mock(FeignException.class));
+
+        PendingPaymentSweepResult result = service.sweepPendingPayments();
+
+        assertEquals(1, result.checked());
+        assertEquals(0, result.resolved());
+        assertEquals(OrderStatus.PENDING_PAYMENT, live.getStatus());
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+    }
+
+    // One broken order must not stop the rest of the sweep.
+    @Test
+    void sweepKeepsGoingWhenOneOrderFails() {
+        Cart broken = pendingUpiCart(Instant.now().minus(1, ChronoUnit.MINUTES));
+        broken.setOrderId(7L);
+        Cart fine = pendingUpiCart(Instant.now().minus(1, ChronoUnit.MINUTES));
+        when(orderRepository.findByStatus(OrderStatus.PENDING_PAYMENT)).thenReturn(List.of(broken, fine));
+        when(orderRepository.findById(7L)).thenThrow(new IllegalStateException("db hiccup"));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(fine));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        PendingPaymentSweepResult result = service.sweepPendingPayments();
+
+        assertEquals(2, result.checked());
+        assertEquals(1, result.resolved());
+        assertEquals(OrderStatus.CANCELLED, fine.getStatus());
+    }
+
+    @Test
+    void aPendingOrderWithNoDeadlineIsTreatedAsExpiredInsteadOfHoldingItsStockForever() {
+        Cart corrupt = pendingUpiCart(null);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(corrupt));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        assertEquals(OrderStatus.CANCELLED, service.checkPendingPayment(42L).getStatus());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 1);
     }
 
     @Test
