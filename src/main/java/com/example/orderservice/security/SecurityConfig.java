@@ -72,7 +72,7 @@ public class SecurityConfig {
                                 "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/coupons/available").hasAnyRole("CUSTOMER", "SERVICE")
                         // checkout/cancel/return still also need the buyer's own PhonePe credentials for anything
                         // that moves money (see OrderController) - the session only proves who the customer is.
-                        .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/reviews", "/cart/*/cancel", "/cart/*/return",
+                        .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/reviews", "/cart/reviews/flag", "/cart/*/cancel", "/cart/*/return",
                                 "/cart/*/items/*/cancel", "/cart/*/items/*/return",
                                 "/wishlist/self/add", "/waitlist/self/add", "/addresses/self/add").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove", "/waitlist/self/remove", "/addresses/self/remove").hasAnyRole("CUSTOMER", "SERVICE")

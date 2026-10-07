@@ -13,6 +13,7 @@ import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.GuestOrderSummary;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
+import com.example.orderservice.dto.ModerationReview;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.entity.Cart;
@@ -211,6 +212,27 @@ public class OrderController {
     public StorefrontReview addReview(@RequestParam long productId, @RequestBody ReviewSubmission review) {
         CustomerAccess.requireSelfOrService(review.reviewerPhno());
         return orderService.addProductReview(productId, review.reviewerName(), review.reviewerPhno(), review.rating(), review.comment());
+    }
+    // Signed-in customer (any - a report names no one's phone) or service: report a review for moderation.
+    @PostMapping("/reviews/flag")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void flagReview(@RequestParam long productId, @RequestParam long reviewId,
+                           @RequestParam(required = false) String reason) {
+        orderService.flagReview(productId, reviewId, reason);
+    }
+    // Admin moderation (service-only by default, like /analytics): the flagged-review queue and hide/unhide.
+    @GetMapping("/reviews/flagged")
+    public List<ModerationReview> getFlaggedReviews(@RequestParam(required = false) Integer page,
+                                                    @RequestParam(required = false) Integer size) {
+        return orderService.getFlaggedReviews(page, size);
+    }
+    @PutMapping("/reviews/{reviewId}/hide")
+    public ModerationReview hideReview(@PathVariable long reviewId, @RequestParam long productId) {
+        return orderService.hideReview(productId, reviewId);
+    }
+    @PutMapping("/reviews/{reviewId}/unhide")
+    public ModerationReview unhideReview(@PathVariable long reviewId, @RequestParam long productId) {
+        return orderService.unhideReview(productId, reviewId);
     }
     // Public, same catalog-browsing trust level as /cart/display - straight proxy to ProductService's own
     // public gallery listing (see OrderService.getGalleryImages for why this exists at all).

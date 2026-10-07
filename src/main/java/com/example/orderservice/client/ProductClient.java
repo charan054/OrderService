@@ -3,6 +3,8 @@ package com.example.orderservice.client;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ModerationReview;
+import com.example.orderservice.dto.ModerationReviewsResult;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
@@ -64,4 +66,21 @@ public interface ProductClient {
     @GetMapping("/product/{productId}/images")
     List<ProductGalleryImage> getGalleryImages(@PathVariable long productId);
 
+    // Review moderation (ProductService's own endpoints): flagging is public there, the queue and hide/unhide need
+    // X-Service-Key. Used by OrderService's /cart/reviews/flag(ged)|hide|unhide, since cart.html/shop.html only
+    // ever call their own origin.
+    @PostMapping("/product/{productId}/reviews/{reviewId}/flag")
+    void flagReview(@PathVariable long productId, @PathVariable long reviewId, @RequestParam(required = false) String reason);
+
+    @GetMapping("/product/reviews/flagged")
+    ModerationReviewsResult getFlaggedReviews(@RequestHeader("X-Service-Key") String serviceKey,
+                                              @RequestParam int page, @RequestParam int size);
+
+    @PutMapping("/product/{productId}/reviews/{reviewId}/hide")
+    ModerationReview hideReview(@RequestHeader("X-Service-Key") String serviceKey,
+                                @PathVariable long productId, @PathVariable long reviewId);
+
+    @PutMapping("/product/{productId}/reviews/{reviewId}/unhide")
+    ModerationReview unhideReview(@RequestHeader("X-Service-Key") String serviceKey,
+                                  @PathVariable long productId, @PathVariable long reviewId);
 }

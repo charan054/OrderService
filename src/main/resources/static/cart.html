@@ -804,6 +804,20 @@
             <div id="revChart" class="rev-chart"></div>
             <div id="revTable" class="orders-table-wrap" hidden></div>
         </div>
+        <div class="card wide">
+            <div class="card-header">
+                <div class="icon">🛡️</div>
+                <div class="title-wrap">
+                    <h2>Review Moderation</h2>
+                    <span class="method">GET / PUT</span>
+                </div>
+            </div>
+            <p>Reviews customers have reported, newest queue first. Hiding a review removes it (and its rating) from the storefront; Undo restores it. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadFlaggedReviews()">Load Flagged Reviews</button>
+            </div>
+            <div id="modTableWrap" class="orders-table-wrap"></div>
+        </div>
     </section>
 
     <div id="status" class="status-panel">Ready. Load products first, then add items to cart.</div>
@@ -1179,6 +1193,55 @@
       table.hidden = !showTable;
       document.getElementById("revChart").hidden = showTable;
       document.getElementById("revViewToggle").textContent = showTable ? "View as chart" : "View as table";
+    }
+
+    // ---------- review moderation ----------
+    // ProductService's queue only holds flagged-but-NOT-hidden reviews, so a review leaves it the moment it is
+    // hidden. Keep it on screen (struck through, with Undo) for this page view so a mistaken hide can be reversed.
+    let moderationRows = [];
+
+    function renderModerationTable() {
+      const wrap = document.getElementById("modTableWrap");
+      if (!moderationRows.length) {
+        wrap.innerHTML = '<p>No flagged reviews waiting - nothing to moderate.</p>';
+        return;
+      }
+      wrap.innerHTML = `<table class="orders-table"><thead><tr>
+        <th>Review</th><th>Product</th><th>Reviewer</th><th>Rating</th><th>Comment</th><th>Reported because</th><th>Action</th>
+      </tr></thead><tbody>${moderationRows.map((r, i) => `
+        <tr style="${r.hidden ? "opacity:0.55;" : ""}">
+          <td>#${r.reviewId}</td>
+          <td>${r.productId}</td>
+          <td>${escapeHtml(r.reviewerName || "")} (${r.reviewerPhno})</td>
+          <td>${"★".repeat(r.rating)}${"☆".repeat(Math.max(0, 5 - r.rating))}</td>
+          <td style="white-space:normal; min-width:200px; ${r.hidden ? "text-decoration:line-through;" : ""}">${escapeHtml(r.comment || "")}</td>
+          <td style="white-space:normal;">${escapeHtml(r.flagReason || "(no reason given)")}</td>
+          <td>${r.hidden
+            ? `<button class="blue" onclick="moderateReview(${i}, 'unhide')">Undo (show again)</button>`
+            : `<button onclick="moderateReview(${i}, 'hide')">Hide</button>`}</td>
+        </tr>`).join("")}</tbody></table>`;
+    }
+
+    async function loadFlaggedReviews() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const rows = await apiCall(`${BASE_URL}/reviews/flagged?size=100`, { headers: { "X-Service-Key": serviceKey } });
+      moderationRows = rows || [];
+      renderModerationTable();
+      showStatus(`${moderationRows.length} flagged review(s) waiting.`, "success");
+    }
+
+    async function moderateReview(index, action) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const row = moderationRows[index];
+      await apiCall(`${BASE_URL}/reviews/${row.reviewId}/${action}?productId=${row.productId}`, {
+        method: "PUT",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      row.hidden = action === "hide";
+      renderModerationTable();
+      showStatus(`Review #${row.reviewId} ${row.hidden ? "hidden from" : "shown on"} the storefront.`, "success");
     }
 
     async function getSalesAnalytics() {

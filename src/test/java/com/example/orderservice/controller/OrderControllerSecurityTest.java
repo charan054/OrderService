@@ -513,6 +513,38 @@ class OrderControllerSecurityTest {
         mockMvc.perform(get("/cart/lowstock").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
     }
 
+    // Review moderation: reporting is for any signed-in customer, the queue and hide/unhide are admin-only.
+    @Test
+    void reportingAReviewWithoutAnyCredentialsIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/reviews/flag").param("productId", "1").param("reviewId", "2"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aSignedInCustomerCanReportAReview() throws Exception {
+        mockMvc.perform(post("/cart/reviews/flag").param("productId", "1").param("reviewId", "2").with(customer()))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void theFlaggedReviewQueueWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(get("/cart/reviews/flagged")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aCustomerSessionCannotReadTheFlaggedQueueOrHideReviews() throws Exception {
+        mockMvc.perform(get("/cart/reviews/flagged").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(put("/cart/reviews/2/hide").param("productId", "1").with(customer()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void theFlaggedReviewQueueWithValidKeySucceeds() throws Exception {
+        when(productClient.getFlaggedReviews(any(), anyInt(), anyInt()))
+                .thenReturn(new com.example.orderservice.dto.ModerationReviewsResult(List.of()));
+        mockMvc.perform(get("/cart/reviews/flagged").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
     @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());

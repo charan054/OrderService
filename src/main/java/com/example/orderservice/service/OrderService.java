@@ -18,6 +18,7 @@ import com.example.orderservice.dto.GuestOrderSummary;
 import com.example.orderservice.dto.RevenueTimeseries;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
+import com.example.orderservice.dto.ModerationReview;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
 import com.example.orderservice.dto.ProductSearchResult;
@@ -1294,6 +1295,33 @@ public class OrderService {
                 .filter(o -> o.getStatus() != OrderStatus.CANCELLED && o.getStatus() != OrderStatus.PENDING_PAYMENT)
                 .filter(o -> o.getOrderItems() != null)
                 .anyMatch(o -> o.getOrderItems().stream().anyMatch(i -> i.getProductId() == productId));
+    }
+
+    // ---------- review moderation ----------
+
+    // A signed-in customer reporting a review. The reason is optional and trimmed/capped so a report can't carry a
+    // novel.
+    public void flagReview(long productId, long reviewId, String reason) {
+        String trimmed = reason == null || reason.isBlank() ? null : reason.trim();
+        if (trimmed != null && trimmed.length() > 200) {
+            trimmed = trimmed.substring(0, 200);
+        }
+        productClient.flagReview(productId, reviewId, trimmed);
+    }
+
+    // The admin queue: flagged reviews that haven't been hidden yet, straight from ProductService.
+    public List<ModerationReview> getFlaggedReviews(Integer page, Integer size) {
+        int effectivePage = page == null || page < 0 ? 0 : page;
+        int effectiveSize = size == null || size <= 0 ? 50 : Math.min(size, 200);
+        return productClient.getFlaggedReviews(serviceApiKey, effectivePage, effectiveSize).content();
+    }
+
+    public ModerationReview hideReview(long productId, long reviewId) {
+        return productClient.hideReview(serviceApiKey, productId, reviewId);
+    }
+
+    public ModerationReview unhideReview(long productId, long reviewId) {
+        return productClient.unhideReview(serviceApiKey, productId, reviewId);
     }
 
     // Straight proxy to ProductService's own public gallery listing - same "shop.html only calls its own

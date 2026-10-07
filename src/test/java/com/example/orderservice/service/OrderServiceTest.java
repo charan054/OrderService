@@ -11,6 +11,7 @@ import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductRatingSummary;
+import com.example.orderservice.dto.ModerationReviewsResult;
 import com.example.orderservice.dto.ProductGalleryImage;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ProductReviewsResult;
@@ -1968,6 +1969,37 @@ class OrderServiceTest {
 
         assertEquals("http://localhost:8082/uploads/a.png", result.get(0).getProductImageUrl());
         assertEquals("http://cdn.example/x.png", result.get(1).getProductImageUrl());
+    }
+
+    // ---------- review moderation ----------
+
+    @Test
+    void flagReviewTrimsAndCapsTheReasonAndTreatsBlankAsNone() {
+        service.flagReview(1, 2, "  spam  ");
+        service.flagReview(1, 3, "   ");
+        service.flagReview(1, 4, "x".repeat(500));
+
+        verify(productClient).flagReview(1, 2, "spam");
+        verify(productClient).flagReview(1, 3, null);
+        verify(productClient).flagReview(1, 4, "x".repeat(200));
+    }
+
+    @Test
+    void getFlaggedReviewsUsesTheServiceKeyAndSaneDefaults() {
+        when(productClient.getFlaggedReviews(SERVICE_KEY, 0, 50)).thenReturn(new ModerationReviewsResult(List.of()));
+        when(productClient.getFlaggedReviews(SERVICE_KEY, 0, 200)).thenReturn(new ModerationReviewsResult(List.of()));
+
+        assertEquals(0, service.getFlaggedReviews(null, null).size());
+        assertEquals(0, service.getFlaggedReviews(-3, 9999).size());
+    }
+
+    @Test
+    void hideAndUnhideForwardTheProductAndReviewIdsWithTheServiceKey() {
+        service.hideReview(7, 9);
+        service.unhideReview(7, 9);
+
+        verify(productClient).hideReview(SERVICE_KEY, 7, 9);
+        verify(productClient).unhideReview(SERVICE_KEY, 7, 9);
     }
 
     // ---------- searchProducts ----------
