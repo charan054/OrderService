@@ -20,7 +20,9 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.exception.OrderNotFoundException;
+import com.example.orderservice.dto.StockAlertRunResult;
 import com.example.orderservice.service.OrderService;
+import com.example.orderservice.service.StockAlertService;
 import jakarta.transaction.Transactional;
 import jakarta.websocket.server.ServerEndpoint;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -34,6 +36,8 @@ import java.util.List;
 public class OrderController {
     @Autowired
     private OrderService orderService;
+    @Autowired
+    private StockAlertService stockAlertService;
     // Authorization is the buyer's OWN PhonepayService session token ("Bearer <token>") - that is who gets
     // charged. It's optional here (unlike before) only so the storefront checkout can instead send payerPhno/
     // payerPin for a PHONEPE order with no token yet; OrderService exchanges those for a token itself via
@@ -283,6 +287,12 @@ public class OrderController {
         return org.springframework.http.ResponseEntity.ok()
                 .header("Content-Disposition", "attachment; filename=\"orders.csv\"")
                 .body(orderService.exportOrdersCsv(status, paymentMethod, phno, from, to));
+    }
+    // Admin-only (service key by default): run the restock / price-drop email job now instead of waiting for the
+    // next scheduled run. Safe to call any time - each restock and each new lower price is emailed only once.
+    @PostMapping("/alerts/run")
+    public StockAlertRunResult runStockAlerts(){
+        return stockAlertService.run();
     }
     // Admin-only restock report (X-Service-Key gated by default, like /analytics) - see OrderService.getLowStockReport().
     @GetMapping("/lowstock")
