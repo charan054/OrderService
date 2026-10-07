@@ -789,6 +789,15 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void reschedulingDeliveryNeedsTheOrdersOwnerOrTheServiceKey() throws Exception {
+        mockMvc.perform(put("/cart/42/delivery").param("deliverySlot", "EVENING")).andExpect(status().isUnauthorized());
+        // unknown order (or someone else's) looks the same: 404
+        mockMvc.perform(put("/cart/424242/delivery").param("deliverySlot", "EVENING").with(customer())).andExpect(status().isNotFound());
+        mockMvc.perform(put("/cart/424242/delivery").param("deliverySlot", "EVENING").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
     }

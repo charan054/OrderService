@@ -1408,6 +1408,7 @@
           <div class="price">₹${order.totalPrice.toFixed(2)}${order.refundedAmount > 0 ? `<span class="meta">₹${order.refundedAmount.toFixed(2)} ${order.paymentMethod === "CASH" ? "taken off" : "refunded"}</span>` : ""}</div>
           <button class="secondary" style="width:auto;" onclick="showInvoice(${order.orderId})">Invoice</button>
           <button class="secondary" style="width:auto;" onclick="reorderMyOrder(${order.orderId})">Buy again</button>
+          ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeDelivery(${order.orderId})">Change delivery</button>` : ""}
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
           ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
           ${order.status === "DELIVERED" ? (ratedOrderIds.has(order.orderId)
@@ -1559,6 +1560,26 @@
       } else {
         alert((await response.text()) || "Couldn't save your feedback. Please try again.");
       }
+    }
+
+    // Changes the delivery window and/or instructions of an order that hasn't shipped yet.
+    async function changeDelivery(orderId) {
+      const slots = ["MORNING", "AFTERNOON", "EVENING"];
+      const slotAnswer = prompt("New delivery window? Enter 1 = Morning (9-12), 2 = Afternoon (12-4), 3 = Evening (4-8), 0 = any time.\nLeave blank to keep the current one.");
+      if (slotAnswer === null) return;
+      const note = prompt("New delivery instructions? Leave blank to keep the current ones, or type - to clear them.");
+      if (note === null) return;
+      const params = [];
+      if (slotAnswer.trim() !== "") {
+        const n = Number(slotAnswer);
+        if (!Number.isInteger(n) || n < 0 || n > 3) { alert("Please enter 0, 1, 2 or 3."); return; }
+        params.push(`deliverySlot=${n === 0 ? "" : slots[n - 1]}`);
+      }
+      if (note.trim() !== "") params.push(`deliveryNote=${note.trim() === "-" ? "" : encodeURIComponent(note.trim())}`);
+      if (!params.length) return;
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/delivery?${params.join("&")}`, { method: "PUT" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't change the delivery details."); return; }
+      loadAccountView();
     }
 
     const CANCEL_REASONS = [

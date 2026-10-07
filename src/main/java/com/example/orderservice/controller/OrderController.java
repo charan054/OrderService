@@ -103,6 +103,15 @@ public class OrderController {
         requireOrderAccess(orderId);
         return orderService.cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin, reason, note);
     }
+    // The order's owner (signed-in session) or the service key: change delivery slot/instructions while still PLACED.
+    // Omit a parameter to keep it, send it blank to clear it.
+    @PutMapping("/{orderId}/delivery")
+    public Cart rescheduleDelivery(@PathVariable long orderId,
+                                   @RequestParam(required = false) String deliverySlot,
+                                   @RequestParam(required = false) String deliveryNote){
+        requireOrderAccess(orderId);
+        return orderService.rescheduleDelivery(orderId, deliverySlot, deliveryNote);
+    }
     // Admin-only (service key by default): why orders get cancelled.
     @GetMapping("/analytics/cancellations")
     public CancellationReport cancellationReport(){

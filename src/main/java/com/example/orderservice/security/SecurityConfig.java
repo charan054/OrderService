@@ -83,7 +83,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/reviews", "/cart/reviews/flag", "/cart/*/cancel", "/cart/*/return",
                                 "/cart/*/items/*/cancel", "/cart/*/items/*/return",
                                 "/wishlist/self/add", "/waitlist/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask", "/feedback/submit").hasAnyRole("CUSTOMER", "SERVICE")
-                        .requestMatchers(HttpMethod.PUT, "/savedcart").hasAnyRole("CUSTOMER", "SERVICE")
+                        .requestMatchers(HttpMethod.PUT, "/savedcart", "/cart/*/delivery").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove", "/waitlist/self/remove", "/addresses/self/remove").hasAnyRole("CUSTOMER", "SERVICE")
 
                         // ---- Service only ----

@@ -491,6 +491,32 @@ public class OrderService {
     // Returns can only happen AFTER delivery, unlike cancel() which only works on a still-PLACED order - the two
     // are mutually exclusive by status, never overlapping windows. Otherwise the same fail-safe refund-then-
     // restore-stock shape as cancel(): a declined refund leaves the order exactly DELIVERED, nothing rolled back.
+    // Lets the buyer (or admin) change the delivery window and/or instructions until the order ships. A parameter that
+    // is null leaves that field as it is; a blank one clears it. Both go through the same validation as checkout, and
+    // nothing is saved if either is invalid.
+    public Cart rescheduleDelivery(long orderId, String deliverySlot, String deliveryNote) {
+        if (deliverySlot == null && deliveryNote == null) {
+            throw new ProductException("Provide a delivery slot and/or delivery instructions to change");
+        }
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() != OrderStatus.PLACED) {
+            throw new ProductException("Delivery details can only be changed before the order ships");
+        }
+        // The normalizers read from and write to a cart, so run them on a scratch copy first: an invalid value must
+        // not leave the real order half-updated.
+        Cart scratch = new Cart();
+        scratch.setDeliverySlot(deliverySlot != null ? deliverySlot : cart.getDeliverySlot());
+        scratch.setDeliveryNote(deliveryNote != null ? deliveryNote : cart.getDeliveryNote());
+        normalizeDeliverySlot(scratch);
+        normalizeDeliveryNote(scratch);
+        cart.setDeliverySlot(scratch.getDeliverySlot());
+        cart.setDeliveryNote(scratch.getDeliveryNote());
+        Cart saved = orderRepository.save(cart);
+        sendNotification("Delivery details changed. OrderId: " + saved.getOrderId());
+        return saved;
+    }
+
     public CancellationReport getCancellationReport() {
         java.util.Map<String, Integer> byReason = new java.util.LinkedHashMap<>();
         CANCEL_REASONS.forEach(r -> byReason.put(r, 0));
