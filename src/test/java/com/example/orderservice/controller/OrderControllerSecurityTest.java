@@ -545,6 +545,22 @@ class OrderControllerSecurityTest {
         mockMvc.perform(get("/cart/reviews/flagged").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
     }
 
+    // Restock / price-drop email job: admin-only.
+    @Test
+    void runningTheStockAlertJobWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/alerts/run")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aCustomerSessionCannotRunTheStockAlertJob() throws Exception {
+        mockMvc.perform(post("/cart/alerts/run").with(customer())).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void runningTheStockAlertJobWithValidKeySucceeds() throws Exception {
+        mockMvc.perform(post("/cart/alerts/run").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
     @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());

@@ -21,4 +21,8 @@ public class Wishlist {
     // OrderService.getPriceDropAlerts() to detect a drop. Null for a wishlist entry saved before this field
     // existed; such an entry is simply skipped by the price-drop check rather than treated as a false drop.
     private Double priceWhenAdded;
+    // The lowest price a price-drop email has already been sent for (see StockAlertService) - only a price below
+    // BOTH priceWhenAdded and this triggers another email. Reset to null once the price recovers to the added
+    // price or above, so a later drop alerts again.
+    private Double lastAlertedPrice;
 }
