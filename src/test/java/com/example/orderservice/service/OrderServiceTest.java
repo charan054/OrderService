@@ -3493,4 +3493,72 @@ class OrderServiceTest {
         assertThrows(ProductException.class, () -> service.bulkTransition("ship", tooMany));
         verifyNoInteractions(orderRepository);
     }
+
+    // ---------- cancellation reasons ----------
+
+    private Cart placedCashOrder(long id) {
+        Cart c = placedOrder(id, 100000L, item(1, 1));
+        c.setPaymentMethod(PaymentMethod.CASH);
+        return c;
+    }
+
+    @Test
+    void cancelStoresTheReasonCodeAndNote() {
+        Cart cart = placedCashOrder(42L);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.cancel(42L, null, null, null, null, " changed_mind ", "  too pricey  ");
+
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        assertEquals("CHANGED_MIND", result.getCancelReason());
+        assertEquals("too pricey", result.getCancelNote());
+    }
+
+    @Test
+    void cancelWithoutAReasonStillWorks() {
+        Cart cart = placedCashOrder(42L);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.cancel(42L, null, null);
+
+        assertNull(result.getCancelReason());
+        assertNull(result.getCancelNote());
+    }
+
+    @Test
+    void cancelRejectsAnUnknownReasonOrTooLongNoteBeforeTouchingTheOrder() {
+        assertThrows(ProductException.class, () -> service.cancel(42L, null, null, null, null, "BORED", null));
+        assertThrows(ProductException.class, () -> service.cancel(42L, null, null, null, null, "OTHER", "x".repeat(201)));
+        verifyNoInteractions(orderRepository);
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void cancellationReportGroupsReasonsAndIgnoresOtherOrders() {
+        Cart a = placedCashOrder(1);
+        a.setStatus(OrderStatus.CANCELLED);
+        a.setCancelReason("CHANGED_MIND");
+        a.setCancelNote("changed plans");
+        Cart b = placedCashOrder(2);
+        b.setStatus(OrderStatus.CANCELLED);
+        Cart c = placedCashOrder(3);
+        c.setStatus(OrderStatus.CANCELLED);
+        c.setCancelReason("CHANGED_MIND");
+        Cart delivered = placedCashOrder(4);
+        delivered.setStatus(OrderStatus.DELIVERED);
+        Cart legacy = placedCashOrder(5);
+        legacy.setStatus(null);
+        when(orderRepository.findAll()).thenReturn(List.of(a, b, c, delivered, legacy));
+
+        com.example.orderservice.dto.CancellationReport report = service.getCancellationReport();
+
+        assertEquals(3, report.totalCancelled());
+        assertEquals(2, report.byReason().get("CHANGED_MIND"));
+        assertEquals(1, report.byReason().get("NOT_GIVEN"));
+        assertEquals(0, report.byReason().get("WRONG_ADDRESS"));
+        assertEquals(1, report.recentNotes().size());
+        assertEquals("changed plans", report.recentNotes().get(0).note());
+    }
 }

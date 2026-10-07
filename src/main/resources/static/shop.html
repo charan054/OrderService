@@ -1561,8 +1561,18 @@
       }
     }
 
+    const CANCEL_REASONS = [
+      ["CHANGED_MIND", "I changed my mind"], ["ORDERED_BY_MISTAKE", "I ordered by mistake"],
+      ["FOUND_CHEAPER_ELSEWHERE", "I found it cheaper elsewhere"], ["DELIVERY_TOO_SLOW", "Delivery is too slow"],
+      ["WRONG_ADDRESS", "Wrong delivery address"], ["OTHER", "Something else"]
+    ];
+
     async function cancelMyOrder(orderId, paymentMethod) {
       if (!confirm(`Cancel order #${orderId}? This can't be undone.`)) return;
+      const choice = prompt("Why are you cancelling? Enter a number (or leave blank to skip):\n"
+        + CANCEL_REASONS.map((r, i) => `${i + 1}. ${r[1]}`).join("\n"));
+      if (choice === null) return;
+      const picked = CANCEL_REASONS[Number(choice) - 1];
 
       let query = "";
       if (paymentMethod !== "CASH") {
@@ -1570,6 +1580,7 @@
         if (!pin) return;
         query = `?payerPhno=${encodeURIComponent(customerPhno)}&payerPin=${encodeURIComponent(pin)}`;
       }
+      if (picked) query += (query ? "&" : "?") + `reason=${picked[0]}`;
 
       const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/cancel${query}`, { method: "POST" });
       if (!response.ok) {
