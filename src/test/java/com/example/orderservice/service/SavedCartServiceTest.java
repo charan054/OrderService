@@ -80,6 +80,20 @@ class SavedCartServiceTest {
     }
 
     @Test
+    void changingTheCartRearmsTheAbandonedCartReminder() {
+        SavedCart existing = new SavedCart();
+        existing.setPhno(PHNO);
+        existing.setReminderSentAt(NOW.minusSeconds(100));
+        existing.getLines().add(line(9, 9));
+        when(carts.findById(PHNO)).thenReturn(Optional.of(existing));
+        when(carts.save(any(SavedCart.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        SavedCart saved = service.replace(PHNO, List.of(line(1, 1)));
+
+        assertEquals(null, saved.getReminderSentAt());
+    }
+
+    @Test
     void replacingWithNoLinesDeletesTheSavedCart() {
         when(carts.findById(PHNO)).thenReturn(Optional.empty());
 

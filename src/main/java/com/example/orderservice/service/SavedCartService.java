@@ -62,6 +62,7 @@ public class SavedCartService {
         SavedCart cart = carts.findById(phno).orElseGet(SavedCart::new);
         cart.setPhno(phno);
         cart.setUpdatedAt(Instant.now(clock));
+        cart.setReminderSentAt(null);
         cart.getLines().clear();
         merged.forEach((productId, quantity) ->
                 cart.getLines().add(new SavedCart.Line(productId, Math.min(quantity, MAX_QUANTITY_PER_LINE))));

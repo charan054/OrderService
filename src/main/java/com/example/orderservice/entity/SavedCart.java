@@ -24,6 +24,9 @@ public class SavedCart {
     @Id
     private long phno;
     private Instant updatedAt;
+    // When the abandoned-cart reminder email for the current contents was sent (see AbandonedCartService). Cleared
+    // whenever the cart changes, so a customer who returns and leaves again can be reminded again.
+    private Instant reminderSentAt;
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "saved_cart_line", joinColumns = @JoinColumn(name = "phno"))
     private List<Line> lines = new ArrayList<>();
