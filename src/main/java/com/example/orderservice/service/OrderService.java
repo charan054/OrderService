@@ -123,6 +123,8 @@ public class OrderService {
     @Autowired
     private CustomerNotifier customerNotifier;
     @Autowired
+    private CodRiskService codRiskService;
+    @Autowired
     private org.springframework.context.ApplicationEventPublisher eventPublisher;
     @Autowired
     ProductClient productClient;
@@ -189,6 +191,11 @@ public class OrderService {
         // Same fail-fast reasoning as stock/coupon above: an address that doesn't exist, or belongs to someone
         // else's phone number, must reject the order before any payment is attempted.
         validateShippingAddress(cart);
+        // Cash on delivery can be refused for this customer or capped for a first order (see CodRiskService) - checked
+        // against the final total, before the order exists or any stock moves.
+        if (cart.getPaymentMethod() == PaymentMethod.CASH) {
+            codRiskService.assertCashAllowed(cart.getCustomerPhno(), finalPrice);
+        }
 
         if (cart.getPaymentMethod() == PaymentMethod.PHONEPE && payerUpiId != null && !payerUpiId.isBlank()) {
             return createPendingUpiOrder(cart, finalPrice, discount, payerUpiId);

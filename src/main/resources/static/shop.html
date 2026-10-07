@@ -723,6 +723,7 @@
                         Cash on delivery
                     </label>
                 </div>
+                <p id="codHint" class="hidden" style="font-size:12px; color:var(--muted); margin:-6px 0 12px;"></p>
 
                 <div id="phonepeFields">
                     <input type="tel" id="payerPhno" placeholder="PhonePe phone number" />
@@ -1056,6 +1057,7 @@
       loadWaitlist();
       loadLoyaltyBalance();
       loadCouponSuggestions();
+      loadCodEligibility();
       loadAddressOptions();
     }
 
@@ -2128,6 +2130,35 @@
       document.getElementById("cartTotal").textContent = `₹${total.toFixed(2)}`;
       renderCouponSuggestions();
       saveCart();
+    }
+
+    // Whether cash on delivery is open to this customer (see CodRiskService). Checkout enforces it server-side anyway;
+    // this only greys the option out up front and explains why, instead of failing at "Place order".
+    let codEligibility = null;
+    async function loadCodEligibility() {
+      codEligibility = null;
+      try {
+        const response = await authFetch(`${BASE_URL}/customer/cod?phno=${encodeURIComponent(customerPhno)}`);
+        if (response.ok) codEligibility = await response.json();
+      } catch (e) { /* leave it to checkout */ }
+      applyCodEligibility();
+    }
+
+    function applyCodEligibility() {
+      const radio = document.querySelector('input[name="payMethod"][value="CASH"]');
+      const hint = document.getElementById("codHint");
+      const blocked = codEligibility && !codEligibility.available;
+      radio.disabled = !!blocked;
+      document.getElementById("payCashOption").style.opacity = blocked ? "0.5" : "";
+      if (blocked && radio.checked) {
+        document.querySelector('input[name="payMethod"][value="PHONEPE"]').checked = true;
+        onPaymentMethodChange();
+      }
+      let text = "";
+      if (blocked) text = codEligibility.reason;
+      else if (codEligibility && codEligibility.maxAmount) text = `Cash on delivery is available for orders up to ₹${codEligibility.maxAmount.toFixed(0)} until your first order is delivered.`;
+      hint.textContent = text;
+      hint.classList.toggle("hidden", !text);
     }
 
     function onPaymentMethodChange() {

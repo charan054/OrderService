@@ -1435,8 +1435,44 @@
         <p>Loyalty: ${escapeHtml(c.loyaltyTier)}, ${c.loyaltyPointsBalance} points (${c.lifetimePointsEarned} earned in total) &middot; ${c.wishlistCount} wishlisted &middot; ${c.reviewCount} reviews</p>
         ${c.recentOrders.length ? `<table class="orders-table"><thead><tr><th>Order</th><th>Status</th><th>Payment</th><th>Total</th><th>Refunded</th></tr></thead><tbody>${c.recentOrders.map(o => `
           <tr><td>#${o.orderId}</td><td>${escapeHtml(o.status)}</td><td>${escapeHtml(o.paymentMethod)}${o.paymentMethod === "CASH" ? (o.paid ? " (paid)" : " (unpaid)") : ""}</td><td>${money(o.totalPrice)}</td><td>${money(o.refundedAmount)}</td></tr>`).join("")}</tbody></table>` : "<p>No orders.</p>"}
-        ${c.addresses.length ? "<p>Addresses:</p><ul>" + c.addresses.map(a => `<li>${escapeHtml(a.label || "Address")}${a.isDefault ? " (default)" : ""}: ${escapeHtml(a.address)}</li>`).join("") + "</ul>" : "<p>No saved addresses.</p>"}`;
+        ${c.addresses.length ? "<p>Addresses:</p><ul>" + c.addresses.map(a => `<li>${escapeHtml(a.label || "Address")}${a.isDefault ? " (default)" : ""}: ${escapeHtml(a.address)}</li>`).join("") + "</ul>" : "<p>No saved addresses.</p>"}
+        <div id="codPanel"></div>`;
       showStatus("Customer found.", "success");
+      await loadCodPanel(c.phno);
+    }
+
+    // Cash-on-delivery status for the customer shown above, with the admin override (see CodRiskService).
+    async function loadCodPanel(phno) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const cod = await apiCall(`http://localhost:8083/customer/admin/cod?phno=${encodeURIComponent(phno)}`, { headers: { "X-Service-Key": serviceKey } });
+      const panel = document.getElementById("codPanel");
+      if (!cod || !panel) return;
+      const state = cod.available
+        ? (cod.maxAmount ? `allowed up to ₹${Number(cod.maxAmount).toFixed(2)} (no delivered order yet)` : "allowed")
+        : "blocked";
+      panel.innerHTML = `
+        <p><strong>Cash on delivery:</strong> ${state}${cod.override ? ` &middot; admin override: ${escapeHtml(cod.override)}${cod.overrideNote ? " (" + escapeHtml(cod.overrideNote) + ")" : ""}` : " &middot; automatic rules"}
+          &middot; ${cod.failedCashOrders} recent cancelled/returned cash order(s)</p>
+        <div class="orders-actions">
+          <button onclick="setCodOverride(${phno}, 'ALLOW')">Always allow COD</button>
+          <button onclick="setCodOverride(${phno}, 'BLOCK')">Block COD</button>
+          <button onclick="setCodOverride(${phno}, 'AUTO')">Use automatic rules</button>
+        </div>`;
+    }
+
+    async function setCodOverride(phno, mode) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      let note = "";
+      if (mode !== "AUTO") {
+        note = prompt("Reason for this override (optional, shown to admins only):", "");
+        if (note === null) return;
+      }
+      await apiCall(`http://localhost:8083/customer/admin/cod?phno=${encodeURIComponent(phno)}&mode=${mode}${note ? "&note=" + encodeURIComponent(note) : ""}`,
+        { method: "PUT", headers: { "X-Service-Key": serviceKey } });
+      showStatus("Cash-on-delivery setting saved.", "success");
+      await loadCodPanel(phno);
     }
 
     // ---------- audit log ----------
