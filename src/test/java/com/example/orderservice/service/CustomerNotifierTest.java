@@ -48,7 +48,7 @@ class CustomerNotifierTest {
     @BeforeEach
     void setUp() {
         notifier = new CustomerNotifier(accounts, notifications, mailService, Clock.fixed(NOW, ZoneOffset.UTC));
-        when(notifications.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        org.mockito.Mockito.lenient().when(notifications.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
     private Cart order(PaymentMethod method, boolean paid) {
@@ -203,5 +203,21 @@ class CustomerNotifierTest {
         verify(mailService).send(eq("asha@example.com"), eq("Order #42: 2 x product #7 cancelled"),
                 contains("Rs. 90.00 has been refunded to your PhonePe account"));
         assertEquals(OrderStatus.PLACED, log.getEventType());
+    }
+
+    @Test
+    void shippedEmailMentionsCarrierAndTrackingWhenRecorded() {
+        com.example.orderservice.entity.Cart cart = order(PaymentMethod.PHONEPE, true);
+        cart.setCarrier("Delhivery");
+        cart.setTrackingNumber("DL123");
+
+        String both = CustomerNotifier.bodyFor(cart, OrderStatus.SHIPPED);
+        assertTrue(both.contains("Carrier: Delhivery, tracking number: DL123."));
+
+        cart.setCarrier(null);
+        assertTrue(CustomerNotifier.bodyFor(cart, OrderStatus.SHIPPED).contains("tracking number: DL123."));
+
+        cart.setTrackingNumber(null);
+        assertFalse(CustomerNotifier.bodyFor(cart, OrderStatus.SHIPPED).contains("Carrier"));
     }
 }

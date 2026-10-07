@@ -1152,17 +1152,63 @@ public class OrderService {
     // Neither step touches stock or payment - those were already settled at order() time - so there's nothing
     // to roll back if a later step never happens.
     public Cart ship(long orderId) {
+        return ship(orderId, null, null);
+    }
+
+    static final int MAX_SHIPMENT_FIELD_LENGTH = 60;
+
+    // Blank -> null; longer than the column is rejected rather than silently truncated.
+    private static String cleanShipmentField(String value, String what) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        String v = value.trim();
+        if (v.length() > MAX_SHIPMENT_FIELD_LENGTH) {
+            throw new ProductException(what + " must be at most " + MAX_SHIPMENT_FIELD_LENGTH + " characters");
+        }
+        return v;
+    }
+
+    // carrier / trackingNumber are optional; they are validated before the order is touched, and the shipped email
+    // and the buyer's order list show them when present.
+    public Cart ship(long orderId, String carrier, String trackingNumber) {
+        String cleanCarrier = cleanShipmentField(carrier, "Carrier");
+        String cleanTracking = cleanShipmentField(trackingNumber, "Tracking number");
         Cart cart = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
         if (cart.getStatus() != OrderStatus.PLACED) {
             throw new ProductException("Only a placed order can be shipped");
         }
+        cart.setCarrier(cleanCarrier);
+        cart.setTrackingNumber(cleanTracking);
         cart.setStatus(OrderStatus.SHIPPED);
         Cart result = orderRepository.save(cart);
         recordTracking(result.getOrderId(), OrderStatus.SHIPPED);
         customerNotifier.notifyStatusChange(result, OrderStatus.SHIPPED);
         sendNotification("Order shipped. OrderId: " + result.getOrderId());
         return result;
+    }
+
+    // Corrects the carrier/tracking number of an order that is already SHIPPED (a typo, or a re-booked courier).
+    // Unlike ship(), a null argument keeps the current value and a blank one clears it.
+    public Cart updateShipment(long orderId, String carrier, String trackingNumber) {
+        if (carrier == null && trackingNumber == null) {
+            throw new ProductException("Provide a carrier and/or tracking number to change");
+        }
+        String cleanCarrier = cleanShipmentField(carrier, "Carrier");
+        String cleanTracking = cleanShipmentField(trackingNumber, "Tracking number");
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() != OrderStatus.SHIPPED) {
+            throw new ProductException("Shipment details can only be changed while the order is shipped");
+        }
+        if (carrier != null) {
+            cart.setCarrier(cleanCarrier);
+        }
+        if (trackingNumber != null) {
+            cart.setTrackingNumber(cleanTracking);
+        }
+        return orderRepository.save(cart);
     }
 
     public Cart deliver(long orderId) {

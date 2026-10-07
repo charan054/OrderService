@@ -545,7 +545,10 @@
             </div>
             <p>Move a placed order to SHIPPED. Requires the Service Key above.</p>
             <input type="number" id="shipOrderId" placeholder="Order ID" />
+            <input type="text" id="shipCarrier" maxlength="60" placeholder="Carrier, e.g. Delhivery (optional)" />
+            <input type="text" id="shipTracking" maxlength="60" placeholder="Tracking number (optional)" />
             <button class="blue" onclick="shipOrder()">Ship Order</button>
+            <button onclick="updateShipment()">Correct Shipment Details</button>
         </div>
 
         <div class="card">
@@ -1963,13 +1966,38 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
 
-      const data = await apiCall(`${BASE_URL}/${encodeURIComponent(orderId)}/ship`, {
+      const carrier = document.getElementById("shipCarrier").value.trim();
+      const tracking = document.getElementById("shipTracking").value.trim();
+      const params = new URLSearchParams();
+      if (carrier) params.set("carrier", carrier);
+      if (tracking) params.set("trackingNumber", tracking);
+      const data = await apiCall(`${BASE_URL}/${encodeURIComponent(orderId)}/ship${params.toString() ? "?" + params : ""}`, {
         method: "POST",
         headers: { "X-Service-Key": serviceKey }
       });
 
       showStatus("Order shipped successfully. Result opened in new tab.", "success");
       openResultTab("Ship Order", data);
+    }
+
+    // For an order that is already shipped: sends whichever of carrier/tracking is filled in (a blank-but-present
+    // value is not possible from this form, so it only sets, never clears).
+    async function updateShipment() {
+      const orderId = document.getElementById("shipOrderId").value;
+      const carrier = document.getElementById("shipCarrier").value.trim();
+      const tracking = document.getElementById("shipTracking").value.trim();
+      if (!orderId || (!carrier && !tracking)) return showStatus("Enter an order ID and a carrier and/or tracking number.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const params = new URLSearchParams();
+      if (carrier) params.set("carrier", carrier);
+      if (tracking) params.set("trackingNumber", tracking);
+      const data = await apiCall(`${BASE_URL}/${encodeURIComponent(orderId)}/shipment?${params}`, {
+        method: "PUT",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      showStatus("Shipment details updated. Result opened in new tab.", "success");
+      openResultTab("Shipment Details", data);
     }
 
     async function deliverOrder() {
