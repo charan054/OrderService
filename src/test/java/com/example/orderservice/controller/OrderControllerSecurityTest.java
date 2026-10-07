@@ -642,6 +642,15 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void adminCustomerLookupNeedsTheServiceKey() throws Exception {
+        mockMvc.perform(get("/customer/admin/lookup").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/customer/admin/lookup").param("phno", "9876543210").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/customer/admin/lookup").param("phno", "9876543210").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/customer/admin/lookup").header("X-Service-Key", VALID_KEY)).andExpect(status().isBadRequest());
+    }
+
+    @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
     }

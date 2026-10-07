@@ -822,6 +822,22 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128100;</div>
+                <div class="title-wrap">
+                    <h2>Customer Lookup</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Everything about one customer: sign-in email, orders and net spend, loyalty tier, saved addresses. Search by phone number or by the email they signed in with. Requires the Service Key above.</p>
+            <input type="text" id="lookupPhno" placeholder="Phone number" />
+            <input type="text" id="lookupEmail" placeholder="...or sign-in email" />
+            <div class="orders-actions">
+                <button onclick="lookupCustomer()">Look Up Customer</button>
+            </div>
+            <div id="lookupResult" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
                     <h2>Review Moderation</h2>
@@ -1209,6 +1225,27 @@
       table.hidden = !showTable;
       document.getElementById("revChart").hidden = showTable;
       document.getElementById("revViewToggle").textContent = showTable ? "View as chart" : "View as table";
+    }
+
+    // ---------- customer lookup ----------
+    async function lookupCustomer() {
+      const phno = document.getElementById("lookupPhno").value.trim();
+      const email = document.getElementById("lookupEmail").value.trim();
+      if (!phno === !email) return showStatus("Enter a phone number OR an email (not both).", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const query = phno ? `phno=${encodeURIComponent(phno)}` : `email=${encodeURIComponent(email)}`;
+      const c = await apiCall(`http://localhost:8083/customer/admin/lookup?${query}`, { headers: { "X-Service-Key": serviceKey } });
+      const money = v => "₹" + Number(v).toFixed(2);
+      const statuses = Object.entries(c.ordersByStatus).map(([s, n]) => `${escapeHtml(s)}: ${n}`).join(" &middot; ") || "none";
+      document.getElementById("lookupResult").innerHTML = `
+        <p><strong>${c.phno}</strong> &middot; ${c.email ? escapeHtml(c.email) + " (verified " + new Date(c.emailVerifiedAt).toLocaleDateString() + ")" : "never signed in to the storefront"}</p>
+        <p>${c.totalOrders} orders (${statuses}) &middot; net spend ${money(c.netSpend)}</p>
+        <p>Loyalty: ${escapeHtml(c.loyaltyTier)}, ${c.loyaltyPointsBalance} points (${c.lifetimePointsEarned} earned in total) &middot; ${c.wishlistCount} wishlisted &middot; ${c.reviewCount} reviews</p>
+        ${c.recentOrders.length ? `<table class="orders-table"><thead><tr><th>Order</th><th>Status</th><th>Payment</th><th>Total</th><th>Refunded</th></tr></thead><tbody>${c.recentOrders.map(o => `
+          <tr><td>#${o.orderId}</td><td>${escapeHtml(o.status)}</td><td>${escapeHtml(o.paymentMethod)}${o.paymentMethod === "CASH" ? (o.paid ? " (paid)" : " (unpaid)") : ""}</td><td>${money(o.totalPrice)}</td><td>${money(o.refundedAmount)}</td></tr>`).join("")}</tbody></table>` : "<p>No orders.</p>"}
+        ${c.addresses.length ? "<p>Addresses:</p><ul>" + c.addresses.map(a => `<li>${escapeHtml(a.label || "Address")}${a.isDefault ? " (default)" : ""}: ${escapeHtml(a.address)}</li>`).join("") + "</ul>" : "<p>No saved addresses.</p>"}`;
+      showStatus("Customer found.", "success");
     }
 
     // ---------- review moderation ----------
