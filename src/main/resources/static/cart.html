@@ -791,6 +791,8 @@
             <div class="orders-actions">
                 <button onclick="loadOrdersTable()">Load Orders</button>
                 <button class="blue" onclick="downloadOrdersCsv()">Download CSV</button>
+                <button onclick="bulkAction('ship')">Ship Selected</button>
+                <button onclick="bulkAction('deliver')">Deliver Selected</button>
             </div>
             <div id="ordersTableWrap" class="orders-table-wrap"></div>
         </div>
@@ -1407,15 +1409,37 @@
       } else {
         const total = rows.reduce((sum, r) => sum + r.totalPrice, 0);
         wrap.innerHTML = `<table class="orders-table"><thead><tr>
-            <th>Order</th><th>Placed</th><th>Customer</th><th>Phone</th><th>Status</th><th>Payment</th><th>Paid</th><th>Items</th><th>Coupon</th><th>Note</th><th>Total</th>
+            <th><input type="checkbox" onclick="toggleAllOrderChecks(this.checked)" title="Select all" /></th><th>Order</th><th>Placed</th><th>Customer</th><th>Phone</th><th>Status</th><th>Payment</th><th>Paid</th><th>Items</th><th>Coupon</th><th>Note</th><th>Total</th>
           </tr></thead><tbody>${rows.map(r => `<tr>
-            <td>#${r.orderId}</td><td>${r.placedAt ? new Date(r.placedAt).toLocaleString() : "-"}</td>
+            <td><input type="checkbox" class="orderCheck" value="${r.orderId}" /></td><td>#${r.orderId}</td><td>${r.placedAt ? new Date(r.placedAt).toLocaleString() : "-"}</td>
             <td>${escapeCell(r.customerName)}</td><td>${r.customerPhno}</td><td>${escapeCell(r.status)}</td>
             <td>${escapeCell(r.paymentMethod)}</td><td>${r.paid ? "Yes" : "No"}</td><td>${escapeCell(r.items)}</td>
             <td>${escapeCell(r.couponCode || "")}</td><td>${escapeCell(r.deliveryNote || "")}</td><td class="num">₹${r.totalPrice.toFixed(2)}</td></tr>`).join("")}
-          </tbody><tfoot><tr><td colspan="10"><strong>${rows.length} order(s)</strong></td><td class="num"><strong>₹${total.toFixed(2)}</strong></td></tr></tfoot></table>`;
+          </tbody><tfoot><tr><td colspan="11"><strong>${rows.length} order(s)</strong></td><td class="num"><strong>₹${total.toFixed(2)}</strong></td></tr></tfoot></table>`;
       }
       showStatus(`${rows.length} order(s) loaded.`, "success");
+    }
+
+    function toggleAllOrderChecks(checked) {
+      document.querySelectorAll(".orderCheck").forEach(cb => { cb.checked = checked; });
+    }
+
+    // Ships/delivers every ticked order via the bulk endpoints, then reloads the table. Orders that can't move
+    // (wrong status, etc.) are listed in the result tab; the others still go through.
+    async function bulkAction(action) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const ids = [...document.querySelectorAll(".orderCheck:checked")].map(cb => Number(cb.value));
+      if (!ids.length) return showStatus("Tick at least one order in the table first.", "error");
+      if (!confirm(`${action === "ship" ? "Ship" : "Deliver"} ${ids.length} order(s)? Customers will be emailed.`)) return;
+      const result = await apiCall(`${BASE_URL}/bulk/${action}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
+        body: JSON.stringify(ids)
+      });
+      await loadOrdersTable();
+      showStatus(`${result.succeeded} order(s) updated, ${result.failed} skipped.`, result.failed ? "error" : "success");
+      if (result.failed) openResultTab("Bulk " + action, result);
     }
 
     async function downloadOrdersCsv() {

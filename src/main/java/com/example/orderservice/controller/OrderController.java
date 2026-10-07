@@ -2,6 +2,7 @@ package com.example.orderservice.controller;
 
 import com.example.orderservice.security.CustomerAccess;
 import com.example.orderservice.dto.AdminOrderRow;
+import com.example.orderservice.dto.BulkTransitionResult;
 import com.example.orderservice.dto.ForgotPinRequest;
 import com.example.orderservice.dto.OrderHistoryPage;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
@@ -138,6 +139,15 @@ public class OrderController {
     @PostMapping("/{orderId}/ship")
     public Cart shipOrder(@PathVariable long orderId){
         return orderService.ship(orderId);
+    }
+    // Service-key only like ship/deliver: body is a JSON array of order ids, at most 100 per call.
+    @PostMapping("/bulk/ship")
+    public BulkTransitionResult bulkShip(@RequestBody List<Long> orderIds){
+        return orderService.bulkTransition("ship", orderIds);
+    }
+    @PostMapping("/bulk/deliver")
+    public BulkTransitionResult bulkDeliver(@RequestBody List<Long> orderIds){
+        return orderService.bulkTransition("deliver", orderIds);
     }
     @PostMapping("/{orderId}/deliver")
     public Cart deliverOrder(@PathVariable long orderId){

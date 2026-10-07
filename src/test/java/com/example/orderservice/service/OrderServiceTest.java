@@ -3431,4 +3431,66 @@ class OrderServiceTest {
 
         verifyNoInteractions(phonepeClient);
     }
+
+    // ---------- bulkTransition ----------
+
+    @Test
+    void bulkShipMovesWhatItCanAndReportsTheRest() {
+        Cart ok = placedOrder(1L, 100001L, item(1, 1));
+        Cart alreadyShipped = placedOrder(2L, 100002L, item(1, 1));
+        alreadyShipped.setStatus(OrderStatus.SHIPPED);
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(ok));
+        when(orderRepository.findById(2L)).thenReturn(Optional.of(alreadyShipped));
+        when(orderRepository.findById(3L)).thenReturn(Optional.empty());
+        when(orderRepository.save(ok)).thenReturn(ok);
+
+        com.example.orderservice.dto.BulkTransitionResult result =
+                service.bulkTransition("ship", java.util.Arrays.asList(1L, 2L, 3L, 1L, null));
+
+        assertEquals(1, result.succeeded());
+        assertEquals(2, result.failed());
+        assertEquals(List.of(1L, 2L, 3L), result.results().stream().map(i -> i.orderId()).toList());
+        assertTrue(result.results().get(0).success());
+        assertFalse(result.results().get(1).success());
+        assertEquals("Only a placed order can be shipped", result.results().get(1).message());
+        assertEquals("Order not found", result.results().get(2).message());
+        assertEquals(OrderStatus.SHIPPED, ok.getStatus());
+    }
+
+    @Test
+    void bulkDeliverDeliversShippedOrders() {
+        Cart shipped = placedOrder(5L, 100005L, item(1, 1));
+        shipped.setStatus(OrderStatus.SHIPPED);
+        when(orderRepository.findById(5L)).thenReturn(Optional.of(shipped));
+        when(orderRepository.save(shipped)).thenReturn(shipped);
+
+        com.example.orderservice.dto.BulkTransitionResult result = service.bulkTransition("deliver", List.of(5L));
+
+        assertEquals(1, result.succeeded());
+        assertEquals(OrderStatus.DELIVERED, shipped.getStatus());
+    }
+
+    @Test
+    void bulkTransitionContinuesPastAnUnexpectedFailure() {
+        Cart ok = placedOrder(2L, 100002L, item(1, 1));
+        when(orderRepository.findById(1L)).thenThrow(new IllegalStateException("db down"));
+        when(orderRepository.findById(2L)).thenReturn(Optional.of(ok));
+        when(orderRepository.save(ok)).thenReturn(ok);
+
+        com.example.orderservice.dto.BulkTransitionResult result = service.bulkTransition("ship", List.of(1L, 2L));
+
+        assertEquals(1, result.succeeded());
+        assertFalse(result.results().get(0).success());
+    }
+
+    @Test
+    void bulkTransitionRejectsBadRequests() {
+        assertThrows(ProductException.class, () -> service.bulkTransition("cancel", List.of(1L)));
+        assertThrows(ProductException.class, () -> service.bulkTransition("ship", List.of()));
+        assertThrows(ProductException.class, () -> service.bulkTransition("ship", null));
+        assertThrows(ProductException.class, () -> service.bulkTransition("ship", java.util.Collections.singletonList(null)));
+        List<Long> tooMany = java.util.stream.LongStream.rangeClosed(1, 101).boxed().toList();
+        assertThrows(ProductException.class, () -> service.bulkTransition("ship", tooMany));
+        verifyNoInteractions(orderRepository);
+    }
 }
