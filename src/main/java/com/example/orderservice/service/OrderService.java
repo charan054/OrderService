@@ -838,7 +838,7 @@ public class OrderService {
 
     // ~12 months - Instant has no calendar-month arithmetic (ChronoUnit.MONTHS isn't a supported unit for it,
     // unlike LocalDate), so this is expressed in days instead.
-    private static final int POINTS_EXPIRY_DAYS = 365;
+    private static final int POINTS_EXPIRY_DAYS = LoyaltyAccount.POINTS_EXPIRY_DAYS;
 
     // The single entry point every loyalty method should load an account through - applies expiry BEFORE
     // handing back the balance, so a stale balance is never read, redeemed against, or added to without first
