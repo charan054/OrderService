@@ -855,6 +855,20 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#11088;</div>
+                <div class="title-wrap">
+                    <h2>Order Feedback</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>How customers rated their delivered orders: averages, star counts and the latest comments. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadFeedbackSummary()">Load Feedback</button>
+            </div>
+            <div id="feedbackWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
                     <h2>Review Moderation</h2>
@@ -1351,6 +1365,23 @@
             <td>${r.status}</td><td>${escapeHtml(r.remoteAddr || "")}</td></tr>`).join("")}</tbody></table>`
         : "<p>No recorded actions yet.</p>";
       showStatus(`${rows.length} recorded action(s).`, "success");
+    }
+
+    // ---------- order feedback ----------
+    async function loadFeedbackSummary() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const s = await apiCall(`http://localhost:8083/feedback/summary`, { headers: { "X-Service-Key": serviceKey } });
+      const stars = n => "★".repeat(n) + "☆".repeat(5 - n);
+      const counts = Object.entries(s.ratingCounts).reverse().map(([n, c]) => `${stars(Number(n))} ${c}`).join(" &middot; ");
+      document.getElementById("feedbackWrap").innerHTML = s.totalFeedback === 0 ? "<p>No feedback yet.</p>" : `
+        <p><strong>${s.totalFeedback}</strong> rating(s) &middot; overall <strong>${s.averageRating}</strong>/5
+           ${s.averageDeliveryRating !== null ? "&middot; delivery <strong>" + s.averageDeliveryRating + "</strong>/5" : ""}</p>
+        <p>${counts}</p>
+        <table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Overall</th><th>Delivery</th><th>Comment</th><th>When</th></tr></thead><tbody>${s.recent.map(f => `
+          <tr><td>#${f.orderId}</td><td>${f.customerPhno}</td><td>${stars(f.rating)}</td><td>${f.deliveryRating ? stars(f.deliveryRating) : "-"}</td>
+          <td style="white-space:normal;">${escapeHtml(f.comment || "")}</td><td>${new Date(f.createdAt).toLocaleDateString()}</td></tr>`).join("")}</tbody></table>`;
+      showStatus(`${s.totalFeedback} feedback entr${s.totalFeedback === 1 ? "y" : "ies"}.`, "success");
     }
 
     // ---------- review moderation ----------

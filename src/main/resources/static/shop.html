@@ -1378,6 +1378,8 @@
         authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`),
         authFetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`)
       ]);
+      const feedbackResponse = await authFetch(`${BASE_URL}/feedback/mine?phno=${encodeURIComponent(customerPhno)}`);
+      ratedOrderIds = new Set((feedbackResponse.ok ? await feedbackResponse.json() : []).map(f => f.orderId));
       const profile = profileResponse.ok ? await profileResponse.json() : null;
       const historyPage = ordersResponse.ok ? await ordersResponse.json() : null;
       const orders = historyPage ? historyPage.orders : [];
@@ -1408,6 +1410,9 @@
           <button class="secondary" style="width:auto;" onclick="reorderMyOrder(${order.orderId})">Buy again</button>
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
           ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
+          ${order.status === "DELIVERED" ? (ratedOrderIds.has(order.orderId)
+              ? `<span class="meta">Thanks for your feedback</span>`
+              : `<button class="secondary" style="width:auto;" onclick="rateMyOrder(${order.orderId})">Rate this order</button>`) : ""}
         </div>
         ${orderItemsHtml(order)}
       `).join("") : `<p style="color:var(--muted);">${orderFilter.status || orderFilter.from || orderFilter.to ? "No orders match these filters." : "No orders yet."}</p>`;
@@ -1515,6 +1520,28 @@
         return;
       }
       loadAccountView();
+    }
+
+    // Orders the customer has already rated (loaded with the account view) - each order can be rated once.
+    let ratedOrderIds = new Set();
+
+    async function rateMyOrder(orderId) {
+      const rating = Number(prompt("How would you rate this order overall? (1 = poor, 5 = excellent)"));
+      if (!rating) return;
+      if (!Number.isInteger(rating) || rating < 1 || rating > 5) { alert("Please enter a whole number from 1 to 5."); return; }
+      const deliveryAnswer = prompt("How was the delivery? (1-5, or leave blank to skip)");
+      if (deliveryAnswer === null) return;
+      const comment = prompt("Anything else you'd like to tell us? (optional)");
+      if (comment === null) return;
+      let query = `phno=${encodeURIComponent(customerPhno)}&orderId=${orderId}&rating=${rating}`;
+      if (deliveryAnswer.trim()) query += `&deliveryRating=${encodeURIComponent(deliveryAnswer.trim())}`;
+      if (comment.trim()) query += `&comment=${encodeURIComponent(comment.trim())}`;
+      const response = await authFetch(`${BASE_URL}/feedback/submit?${query}`, { method: "POST" });
+      if (response.ok) {
+        await loadAccountView();
+      } else {
+        alert((await response.text()) || "Couldn't save your feedback. Please try again.");
+      }
     }
 
     async function cancelMyOrder(orderId, paymentMethod) {
