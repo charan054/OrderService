@@ -1003,7 +1003,7 @@ public class OrderService {
         int effectivePage = (page == null || page < 0) ? 0 : page;
         int effectiveSize = (size == null || size <= 0) ? DEFAULT_REVIEWS_PAGE_SIZE : size;
         Map<Long, Boolean> verifiedByPhno = new HashMap<>();
-        return productClient.getReviews(productId, effectivePage, effectiveSize).content().stream()
+        return productClient.getReviews(serviceApiKey, productId, effectivePage, effectiveSize).content().stream()
                 .map(r -> toStorefrontReview(r, productId,
                         verifiedByPhno.computeIfAbsent(r.reviewerPhno(), phno -> hasKeptPurchase(phno, productId))))
                 .toList();

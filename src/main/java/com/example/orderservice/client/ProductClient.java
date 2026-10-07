@@ -46,11 +46,14 @@ public interface ProductClient {
     @GetMapping("/product/{productId}/rating-summary")
     ProductRatingSummary getRatingSummary(@PathVariable long productId);
 
-    // Public on ProductService's side (see its SecurityConfig - matches "/product/*/reviews" with no HttpMethod
-    // restriction, so both GET and POST are open). Used by OrderService's own /cart/reviews proxy, since
-    // shop.html only ever calls its own origin.
-    @GetMapping("/product/{productId}/reviews")
-    ProductReviewsResult getReviews(@PathVariable long productId, @RequestParam int page, @RequestParam int size);
+    // ProductService's public listing omits reviewerPhno (it doubles as the ownership check for update/delete),
+    // so the Verified-purchase badge reads from the X-Service-Key-only internal listing instead. Used by
+    // OrderService's own /cart/reviews proxy, since shop.html only ever calls its own origin.
+    @GetMapping("/product/internal/{productId}/reviews")
+    ProductReviewsResult getReviews(@RequestHeader("X-Service-Key") String serviceKey, @PathVariable long productId,
+                                    @RequestParam int page, @RequestParam int size);
+
+    // Public on ProductService's side (matches "/product/*/reviews", POST open).
 
     @PostMapping("/product/{productId}/reviews")
     ProductReview addReview(@PathVariable long productId, @RequestBody ReviewSubmission review);
