@@ -24,7 +24,8 @@ import java.util.List;
  * abandoned-cart.after-hours (default 24) but is not older than abandoned-cart.max-age-days (default 7 - past that
  * it is stale, not abandoned) and hasn't been reminded yet. Any change to the cart (SavedCartService.replace) clears
  * reminderSentAt, so a customer who comes back and leaves again can be reminded again. State only advances after a
- * successful send; a customer with no verified email, or a mail failure, is simply retried on the next run.
+ * successful send; a customer with no verified email, or a mail failure, is simply retried on the next run, and a
+ * customer who has unsubscribed from promotional email is skipped (see EmailPreferenceService).
  */
 @Service
 public class AbandonedCartService {
@@ -34,18 +35,21 @@ public class AbandonedCartService {
     private final CustomerAccountRepository customers;
     private final ProductClient productClient;
     private final MailService mailService;
+    private final EmailPreferenceService preferences;
     private final Clock clock;
     private final Duration after;
     private final Duration maxAge;
 
     public AbandonedCartService(SavedCartRepository carts, CustomerAccountRepository customers,
-                                ProductClient productClient, MailService mailService, Clock clock,
+                                ProductClient productClient, MailService mailService, EmailPreferenceService preferences,
+                                Clock clock,
                                 @Value("${abandoned-cart.after-hours:24}") long afterHours,
                                 @Value("${abandoned-cart.max-age-days:7}") long maxAgeDays) {
         this.carts = carts;
         this.customers = customers;
         this.productClient = productClient;
         this.mailService = mailService;
+        this.preferences = preferences;
         this.clock = clock;
         this.after = Duration.ofHours(afterHours);
         this.maxAge = Duration.ofDays(maxAgeDays);
@@ -58,14 +62,20 @@ public class AbandonedCartService {
         int sent = 0;
         int noEmail = 0;
         int skipped = 0;
+        int optedOut = 0;
         int failed = 0;
         for (SavedCart cart : candidates) {
             if (cart.getLines().isEmpty()) {
                 continue;
             }
-            String email = customers.findById(cart.getPhno()).map(CustomerAccount::getEmail).orElse(null);
+            CustomerAccount account = customers.findById(cart.getPhno()).orElse(null);
+            String email = account == null ? null : account.getEmail();
             if (email == null || email.isBlank()) {
                 noEmail++;
+                continue;
+            }
+            if (account.isMarketingOptOut()) {
+                optedOut++;
                 continue;
             }
             List<String> items = describeItems(cart);
@@ -75,7 +85,8 @@ public class AbandonedCartService {
             }
             String body = "Hi,\n\nYou left these in your Charan Mart cart:\n\n  - " + String.join("\n  - ", items)
                     + "\n\nSign in to the store and your cart will be waiting. Prices and stock are checked again at "
-                    + "checkout, so what you see there is what you pay.\n";
+                    + "checkout, so what you see there is what you pay.\n"
+                    + preferences.footer(cart.getPhno());
             if (mailService.send(email, "You left something in your cart", body)) {
                 cart.setReminderSentAt(now);
                 carts.save(cart);
@@ -84,9 +95,9 @@ public class AbandonedCartService {
                 failed++;
             }
         }
-        log.info("Abandoned cart reminders: {} sent, {} without an email, {} skipped, {} send failure(s)",
-                sent, noEmail, skipped, failed);
-        return new AbandonedCartResult(sent, noEmail, skipped, failed);
+        log.info("Abandoned cart reminders: {} sent, {} without an email, {} skipped, {} unsubscribed, {} send failure(s)",
+                sent, noEmail, skipped, optedOut, failed);
+        return new AbandonedCartResult(sent, noEmail, skipped, optedOut, failed);
     }
 
     // "2 x Name" per product that still exists; a product that has gone from the catalog is left out, and a lookup

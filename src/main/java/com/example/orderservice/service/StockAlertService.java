@@ -41,17 +41,19 @@ public class StockAlertService {
     private final CustomerAccountRepository accounts;
     private final ProductClient productClient;
     private final MailService mailService;
+    private final EmailPreferenceService preferences;
     private final Clock clock;
     private final String shopUrl;
 
     public StockAlertService(WishlistRepository wishlists, StockWaitlistRepository waitlists,
                              CustomerAccountRepository accounts, ProductClient productClient, MailService mailService,
-                             Clock clock, @Value("${alerts.shop-url:}") String shopUrl) {
+                             EmailPreferenceService preferences, Clock clock, @Value("${alerts.shop-url:}") String shopUrl) {
         this.wishlists = wishlists;
         this.waitlists = waitlists;
         this.accounts = accounts;
         this.productClient = productClient;
         this.mailService = mailService;
+        this.preferences = preferences;
         this.clock = clock;
         this.shopUrl = shopUrl == null ? "" : shopUrl.trim();
     }
@@ -128,15 +130,21 @@ public class StockAlertService {
         int restocks = 0;
         int priceDrops = 0;
         int skippedNoEmail = 0;
+        int optedOut = 0;
         int failed = 0;
         for (Map.Entry<Long, Pending> entry : byCustomer.entrySet()) {
             Pending pending = entry.getValue();
-            String email = accounts.findById(entry.getKey()).map(CustomerAccount::getEmail).orElse(null);
+            CustomerAccount account = accounts.findById(entry.getKey()).orElse(null);
+            String email = account == null ? null : account.getEmail();
             if (email == null || email.isBlank()) {
                 skippedNoEmail++;
                 continue;
             }
-            if (mailService.send(email, subjectFor(pending), bodyFor(pending))) {
+            if (account.isMarketingOptOut()) {
+                optedOut++;
+                continue;
+            }
+            if (mailService.send(email, subjectFor(pending), bodyFor(pending, entry.getKey()))) {
                 pending.onSent.forEach(Runnable::run);
                 emails++;
                 restocks += pending.restocks;
@@ -145,9 +153,9 @@ public class StockAlertService {
                 failed++;
             }
         }
-        log.info("Stock alerts: {} email(s) sent ({} restock, {} price drop), {} customer(s) without an email, {} send failure(s)",
-                emails, restocks, priceDrops, skippedNoEmail, failed);
-        return new StockAlertRunResult(emails, restocks, priceDrops, skippedNoEmail, failed);
+        log.info("Stock alerts: {} email(s) sent ({} restock, {} price drop), {} customer(s) without an email, {} unsubscribed, {} send failure(s)",
+                emails, restocks, priceDrops, skippedNoEmail, optedOut, failed);
+        return new StockAlertRunResult(emails, restocks, priceDrops, skippedNoEmail, optedOut, failed);
     }
 
     // One catalog lookup per product per run; null (cached too) when the product no longer exists.
@@ -176,7 +184,7 @@ public class StockAlertService {
         return pending.restocks > 0 ? "An item you wanted is back in stock" : "An item on your wishlist just got cheaper";
     }
 
-    private String bodyFor(Pending pending) {
+    private String bodyFor(Pending pending, long phno) {
         StringBuilder body = new StringBuilder("Hi,\n\nGood news from Charan Mart:\n\n");
         pending.lines.forEach(line -> body.append("  - ").append(line).append('\n'));
         body.append('\n');
@@ -185,6 +193,7 @@ public class StockAlertService {
         }
         body.append("Stock can sell out quickly. You are getting this because the item is on your waitlist or wishlist; "
                 + "remove it in the shop under \"My account\" to stop these emails.\n");
+        body.append(preferences.footer(phno));
         return body.toString();
     }
 }

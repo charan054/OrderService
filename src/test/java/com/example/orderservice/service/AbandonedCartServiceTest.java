@@ -44,11 +44,14 @@ class AbandonedCartServiceTest {
     @Mock
     private MailService mailService;
 
+    private final EmailPreferenceService preferences =
+            new EmailPreferenceService(org.mockito.Mockito.mock(CustomerAccountRepository.class), "k", "http://shop.example");
+
     private AbandonedCartService service;
 
     @BeforeEach
     void setUp() {
-        service = new AbandonedCartService(carts, customers, productClient, mailService,
+        service = new AbandonedCartService(carts, customers, productClient, mailService, preferences,
                 Clock.fixed(NOW, ZoneOffset.UTC), 24, 7);
     }
 
@@ -98,6 +101,25 @@ class AbandonedCartServiceTest {
         verify(mailService).send(eq("a@example.com"), any(), body.capture());
         assertTrue(body.getValue().contains("2 x Soap"));
         assertTrue(body.getValue().contains("1 x Shampoo"));
+        assertTrue(body.getValue().contains("http://shop.example/prefs/unsubscribe?phno=" + PHNO + "&token="));
+    }
+
+    @Test
+    void aCustomerWhoUnsubscribedIsNotEmailedAndTheCartIsLeftAlone() {
+        SavedCart c = cart(1, 1);
+        candidates(c);
+        CustomerAccount a = new CustomerAccount();
+        a.setPhno(PHNO);
+        a.setEmail("a@example.com");
+        a.setMarketingOptOut(true);
+        when(customers.findById(PHNO)).thenReturn(Optional.of(a));
+
+        AbandonedCartResult r = service.run();
+
+        assertEquals(1, r.optedOut());
+        assertEquals(0, r.remindersSent());
+        assertNull(c.getReminderSentAt());
+        verify(mailService, never()).send(any(), any(), any());
     }
 
     @Test

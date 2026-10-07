@@ -55,11 +55,14 @@ class StockAlertServiceTest {
     @Mock
     private MailService mailService;
 
+    private final EmailPreferenceService preferences =
+            new EmailPreferenceService(org.mockito.Mockito.mock(CustomerAccountRepository.class), "k", "http://shop.example");
+
     private StockAlertService service;
 
     @BeforeEach
     void setUp() {
-        service = new StockAlertService(wishlists, waitlists, accounts, productClient, mailService,
+        service = new StockAlertService(wishlists, waitlists, accounts, productClient, mailService, preferences,
                 Clock.fixed(NOW, ZoneOffset.UTC), "http://shop.example/shop.html");
     }
 
@@ -111,6 +114,26 @@ class StockAlertServiceTest {
         assertEquals(1, result.restockAlerts());
         assertEquals(NOW, entry.getNotifiedAt());
         verify(waitlists).save(entry);
+    }
+
+    @Test
+    void aCustomerWhoUnsubscribedGetsNoAlertAndNothingIsRecorded() {
+        StockWaitlist entry = waiting(1, null);
+        when(waitlists.findAll()).thenReturn(List.of(entry));
+        when(wishlists.findAll()).thenReturn(List.of());
+        when(productClient.getProductById(1)).thenReturn(product(1, 49.5, 12));
+        CustomerAccount account = new CustomerAccount();
+        account.setPhno(PHNO);
+        account.setEmail("asha@example.com");
+        account.setMarketingOptOut(true);
+        when(accounts.findById(PHNO)).thenReturn(Optional.of(account));
+
+        StockAlertRunResult result = service.run();
+
+        assertEquals(1, result.optedOut());
+        assertEquals(0, result.emailsSent());
+        assertNull(entry.getNotifiedAt());
+        verifyNoInteractions(mailService);
     }
 
     @Test

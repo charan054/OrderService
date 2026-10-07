@@ -1402,6 +1402,8 @@
       const waitlist = waitlistResponse.ok ? await waitlistResponse.json() : [];
       const referralResponse = await authFetch(`${BASE_URL}/referral/mine?phno=${encodeURIComponent(customerPhno)}`);
       const referral = referralResponse.ok ? await referralResponse.json() : null;
+      const prefsResponse = await authFetch(`${BASE_URL}/prefs/mine?phno=${encodeURIComponent(customerPhno)}`);
+      const emailPrefs = prefsResponse.ok ? await prefsResponse.json() : null;
 
       const profileHtml = profile ? `
         <div class="account-summary">
@@ -1457,6 +1459,10 @@
         ${profileHtml}
         <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="downloadMyData()">Download my data</button>
           <span class="meta">Everything we store about you, as a JSON file.</span></p>
+        ${emailPrefs ? `<p style="margin:8px 0;"><label style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="marketingEmails" style="width:auto;" ${emailPrefs.marketingEmails ? "checked" : ""} onchange="setMarketingEmails(this)" />
+          Email me cart reminders, restock / price-drop alerts and points-expiry warnings</label>
+          <span class="meta">Emails about your own orders and sign-in codes are always sent.</span></p>` : ""}
         ${referralHtml(referral)}
         <h3 style="margin:16px 0 10px;">Order history</h3>
         ${orderFilterBarHtml(historyPage)}
@@ -1553,6 +1559,15 @@
       link.click();
       link.remove();
       URL.revokeObjectURL(link.href);
+    }
+
+    async function setMarketingEmails(box) {
+      const wanted = box.checked;
+      const response = await authFetch(`${BASE_URL}/prefs/mine?phno=${encodeURIComponent(customerPhno)}&marketingEmails=${wanted}`, { method: "PUT" });
+      if (!response.ok) {
+        box.checked = !wanted;
+        alert("Couldn't save your email preference. Please try again.");
+      }
     }
 
     // Orders the customer has already rated (loaded with the account view) - each order can be rated once.
