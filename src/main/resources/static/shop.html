@@ -704,7 +704,7 @@
                     <option value="EVENING">Evening (4pm-8pm)</option>
                 </select>
                 <input type="text" id="deliveryNote" maxlength="200" placeholder="Delivery instructions (optional)" />
-                <input type="text" id="couponCode" placeholder="Coupon code (optional)" oninput="renderCouponSuggestions()" />
+                <input type="text" id="couponCode" placeholder="Coupon code (optional)" oninput="couponAutoApplyOff = true; renderCouponSuggestions()" />
                 <div id="couponSuggestions" class="coupon-chips"></div>
                 <input type="number" id="pointsRedeemed" min="0" placeholder="Loyalty points to redeem (optional)" />
                 <p id="loyaltyHint" style="font-size:12px; color:var(--muted); margin:-6px 0 12px;"></p>
@@ -1143,12 +1143,25 @@
       renderCouponSuggestions();
     }
 
+    // The best coupon (suggestions arrive highest discount first) is filled in automatically once the cart has
+    // something in it, unless the customer has typed their own code or tapped a chip to remove/replace it - from then
+    // on their choice stands until the order is placed.
+    let couponAutoApplyOff = false;
+    let couponAutoApplied = null;
+
     function renderCouponSuggestions() {
       const box = document.getElementById("couponSuggestions");
       if (!box) return;
       const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-      const applied = document.getElementById("couponCode").value.trim().toUpperCase();
-      box.innerHTML = couponSuggestions.map(c => {
+      const input = document.getElementById("couponCode");
+      if (!couponAutoApplyOff && total > 0 && !input.value.trim() && couponSuggestions.length) {
+        input.value = couponSuggestions[0].code;
+        couponAutoApplied = couponSuggestions[0].code;
+      }
+      const applied = input.value.trim().toUpperCase();
+      const autoNote = couponAutoApplied && applied === couponAutoApplied && !couponAutoApplyOff
+        ? `<p class="meta" style="flex-basis:100%;">Best coupon applied automatically - tap it to remove.</p>` : "";
+      box.innerHTML = autoNote + couponSuggestions.map(c => {
         const saving = total > 0 ? ` (save ₹${(total * c.discountPercent / 100).toFixed(2)})` : "";
         const expiry = c.expiryDate ? `, until ${new Date(c.expiryDate).toLocaleDateString()}` : "";
         return `<button type="button" class="${applied === c.code ? "applied" : ""}" onclick="applySuggestedCoupon('${escapeHtml(c.code)}')" title="${c.discountPercent}% off${expiry}">${escapeHtml(c.code)} &middot; ${c.discountPercent}% off${saving}</button>`;
@@ -1156,6 +1169,7 @@
     }
 
     function applySuggestedCoupon(code) {
+      couponAutoApplyOff = true; // the customer is choosing now - stop second-guessing them
       const input = document.getElementById("couponCode");
       input.value = input.value.trim().toUpperCase() === code ? "" : code;
       renderCouponSuggestions();
@@ -2264,6 +2278,9 @@
         document.getElementById("payerPin").value = "";
         document.getElementById("payerUpiId").value = "";
         document.getElementById("couponCode").value = "";
+        couponAutoApplyOff = false;
+        couponAutoApplied = null;
+        loadCouponSuggestions(); // usage limits may have changed with this order
         document.getElementById("deliveryNote").value = "";
         document.getElementById("deliverySlot").value = "";
         document.getElementById("pointsRedeemed").value = "";
