@@ -1433,6 +1433,8 @@
       const waitlist = waitlistResponse.ok ? await waitlistResponse.json() : [];
       const referralResponse = await authFetch(`${BASE_URL}/referral/mine?phno=${encodeURIComponent(customerPhno)}`);
       const referral = referralResponse.ok ? await referralResponse.json() : null;
+      const ticketsResponse = await authFetch(`${BASE_URL}/support/tickets/mine?phno=${encodeURIComponent(customerPhno)}`);
+      const supportTickets = ticketsResponse.ok ? await ticketsResponse.json() : [];
       const creditResponse = await authFetch(`${BASE_URL}/storecredit/byphno?phno=${encodeURIComponent(customerPhno)}`);
       const storeCredit = creditResponse.ok ? await creditResponse.json() : null;
       const prefsResponse = await authFetch(`${BASE_URL}/prefs/mine?phno=${encodeURIComponent(customerPhno)}`);
@@ -1465,6 +1467,7 @@
           ${order.status === "DELIVERED" ? (ratedOrderIds.has(order.orderId)
               ? `<span class="meta">Thanks for your feedback</span>`
               : `<button class="secondary" style="width:auto;" onclick="rateMyOrder(${order.orderId})">Rate this order</button>`) : ""}
+          ${order.status !== "PENDING_PAYMENT" ? `<button class="secondary" style="width:auto;" onclick="reportProblem(${order.orderId})">Report a problem</button>` : ""}
         </div>
         ${orderItemsHtml(order)}
       `).join("") : `<p style="color:var(--muted);">${orderFilter.status || orderFilter.from || orderFilter.to ? "No orders match these filters." : "No orders yet."}</p>`;
@@ -1502,6 +1505,7 @@
         <h3 style="margin:16px 0 10px;">Order history</h3>
         ${orderFilterBarHtml(historyPage)}
         ${ordersHtml}
+        ${supportTickets.length ? `<h3 style="margin:20px 0 10px;">Support requests</h3>${supportTickets.map(supportTicketHtml).join("")}` : ""}
         <h3 style="margin:20px 0 10px;">Waiting for restock</h3>
         ${waitlistHtml || `<p style="color:var(--muted);">Nothing on your restock waitlist - tap "Notify me" on an out-of-stock product to add it here.</p>`}
         <h3 style="margin:20px 0 10px;">Saved addresses</h3>
@@ -1593,6 +1597,75 @@
       link.click();
       link.remove();
       URL.revokeObjectURL(link.href);
+    }
+
+    const SUPPORT_CATEGORIES = [
+      ["DAMAGED", "Item arrived damaged"], ["MISSING_ITEM", "Item missing from the order"], ["WRONG_ITEM", "Received the wrong item"],
+      ["NOT_DELIVERED", "Order not delivered"], ["PAYMENT", "Payment or refund problem"], ["OTHER", "Something else"]
+    ];
+    const SUPPORT_STATUS = { OPEN: "Waiting for us", ANSWERED: "We replied", RESOLVED: "Resolved" };
+
+    // "Report a problem" on an order: what kind, which item (optional), what happened, and an optional photo link.
+    async function reportProblem(orderId) {
+      const order = accountOrders.find(o => o.orderId === orderId);
+      const choice = prompt("What's the problem? Enter a number:\n" + SUPPORT_CATEGORIES.map((c, i) => `${i + 1}. ${c[1]}`).join("\n"));
+      if (choice === null) return;
+      const category = SUPPORT_CATEGORIES[Number(choice) - 1];
+      if (!category) { alert("Please enter one of the numbers shown."); return; }
+      let productId = null;
+      if (order && order.orderItems && order.orderItems.length > 1) {
+        const nameById = new Map(products.map(p => [p.productId, p.productName]));
+        const pick = prompt("Which item is it about? Enter a number, or leave blank for the whole order:\n"
+          + order.orderItems.map((it, i) => `${i + 1}. ${nameById.get(it.productId) || "Product #" + it.productId}`).join("\n"));
+        if (pick === null) return;
+        if (pick.trim()) {
+          const item = order.orderItems[Number(pick) - 1];
+          if (!item) { alert("Please enter one of the numbers shown."); return; }
+          productId = item.productId;
+        }
+      } else if (order && order.orderItems && order.orderItems.length === 1) {
+        productId = order.orderItems[0].productId;
+      }
+      const message = prompt("Tell us what happened (at least 5 characters):");
+      if (message === null) return;
+      const photoUrl = prompt("Optional: a link to a photo of the problem (leave blank to skip):", "");
+      if (photoUrl === null) return;
+      const response = await authFetch(`${BASE_URL}/support/tickets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerPhno: Number(customerPhno), orderId, category: category[0], productId,
+          message: message.trim(), photoUrl: photoUrl.trim() || null })
+      });
+      if (!response.ok) { alert((await response.text()) || "Couldn't send your request. Please try again."); return; }
+      const created = await response.json();
+      alert(`Thanks - your request #${created.ticket.id} has been sent. We'll email you when we reply.`);
+      loadAccountView();
+    }
+
+    function supportTicketHtml(view) {
+      const t = view.ticket;
+      const category = (SUPPORT_CATEGORIES.find(c => c[0] === t.category) || [t.category, t.category])[1];
+      const thread = view.messages.map(m => `
+        <div class="meta" style="margin:4px 0;"><strong>${m.author === "STAFF" ? "Charan Mart" : "You"}</strong>
+          &middot; ${new Date(m.createdAt).toLocaleString()}<br>${escapeHtml(m.body)}</div>`).join("");
+      return `<div class="order-row" style="display:block;">
+        <div><strong>Request #${t.id}</strong> &middot; Order #${t.orderId} &middot; ${escapeHtml(category)}
+          <span class="meta">${SUPPORT_STATUS[t.status] || escapeHtml(t.status)}${t.resolutionNote ? " - " + escapeHtml(t.resolutionNote) : ""}</span></div>
+        ${thread}
+        <button class="secondary" style="width:auto; margin-top:6px;" onclick="replyToTicket(${t.id})">${t.status === "RESOLVED" ? "Reopen with a message" : "Add a message"}</button>
+      </div>`;
+    }
+
+    async function replyToTicket(ticketId) {
+      const message = prompt("Your message:");
+      if (!message) return;
+      const response = await authFetch(`${BASE_URL}/support/tickets/${ticketId}/reply?phno=${encodeURIComponent(customerPhno)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: message.trim() })
+      });
+      if (!response.ok) { alert((await response.text()) || "Couldn't send your message. Please try again."); return; }
+      loadAccountView();
     }
 
     function storeCreditHtml(credit) {

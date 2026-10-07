@@ -77,12 +77,12 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/customer/session").hasRole("CUSTOMER")
                         .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/history", "/cart/notifications", "/cart/*/invoice", "/cart/*/paymentstatus",
                                 "/wishlist/byphno", "/wishlist/pricedrops", "/waitlist/byphno", "/addresses/byphno",
-                                "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/customer/export", "/coupons/available", "/referral/mine", "/questions/mine", "/savedcart", "/feedback/mine", "/prefs/mine", "/customer/cod", "/storecredit/byphno").hasAnyRole("CUSTOMER", "SERVICE")
+                                "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/customer/export", "/coupons/available", "/referral/mine", "/questions/mine", "/savedcart", "/feedback/mine", "/prefs/mine", "/customer/cod", "/storecredit/byphno", "/support/tickets/mine").hasAnyRole("CUSTOMER", "SERVICE")
                         // checkout/cancel/return still also need the buyer's own PhonePe credentials for anything
                         // that moves money (see OrderController) - the session only proves who the customer is.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/reviews", "/cart/reviews/flag", "/cart/*/cancel", "/cart/*/return",
                                 "/cart/*/items/*/cancel", "/cart/*/items/*/return", "/cart/*/invoice/email",
-                                "/wishlist/self/add", "/waitlist/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask", "/feedback/submit").hasAnyRole("CUSTOMER", "SERVICE")
+                                "/wishlist/self/add", "/waitlist/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask", "/feedback/submit", "/support/tickets", "/support/tickets/*/reply").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.PUT, "/savedcart", "/cart/*/delivery", "/prefs/mine").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove", "/waitlist/self/remove", "/addresses/self/remove").hasAnyRole("CUSTOMER", "SERVICE")
 

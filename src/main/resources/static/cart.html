@@ -999,6 +999,28 @@
             </div>
             <div id="qaTableWrap" class="orders-table-wrap"></div>
         </div>
+        <div class="card wide">
+            <div class="card-header">
+                <div class="icon">&#128172;</div>
+                <div class="title-wrap">
+                    <h2>Support Requests</h2>
+                    <span class="method">GET / POST</span>
+                </div>
+            </div>
+            <p>"Problem with this order" requests from customers - waiting longest first. Each reply is emailed to the customer. Use the cancel / return / per-item refund tools for the money side, then resolve the request. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <select id="supportStatus">
+                    <option value="UNRESOLVED">Open + answered</option>
+                    <option value="OPEN">Waiting on us</option>
+                    <option value="ANSWERED">Waiting on customer</option>
+                    <option value="RESOLVED">Resolved</option>
+                    <option value="ALL">All</option>
+                </select>
+                <button onclick="loadSupportQueue()">Load Requests</button>
+            </div>
+            <div id="supportTableWrap" class="orders-table-wrap"></div>
+            <div id="supportDetail"></div>
+        </div>
     </section>
 
     <div id="status" class="status-panel">Ready. Load products first, then add items to cart.</div>
@@ -1432,6 +1454,73 @@
       pendingQuestions.splice(index, 1);
       renderQuestionsTable();
       showStatus(`Question #${q.id} deleted.`, "success");
+    }
+
+    // ---------- support requests ----------
+    const SUPPORT_URL = "http://localhost:8083/support/admin/tickets";
+
+    async function loadSupportQueue() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const status = document.getElementById("supportStatus").value;
+      const rows = (await apiCall(`${SUPPORT_URL}?status=${status}`, { headers: { "X-Service-Key": serviceKey } })) || [];
+      document.getElementById("supportDetail").innerHTML = "";
+      document.getElementById("supportTableWrap").innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>#</th><th>Order</th><th>Customer</th><th>Problem</th><th>Status</th><th>Last update</th><th></th></tr></thead><tbody>${rows.map(t => `
+            <tr><td>${t.id}</td><td>#${t.orderId}</td><td>${t.customerPhno}</td><td>${escapeHtml(t.category)}</td>
+            <td>${escapeHtml(t.status)}</td><td>${new Date(t.updatedAt).toLocaleString()}</td>
+            <td><button onclick="openSupportTicket(${t.id})">Open</button></td></tr>`).join("")}</tbody></table>`
+        : "<p>No requests here.</p>";
+      showStatus(`${rows.length} support request(s).`, "success");
+    }
+
+    async function openSupportTicket(id) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const v = await apiCall(`${SUPPORT_URL}/${id}`, { headers: { "X-Service-Key": serviceKey } });
+      const t = v.ticket;
+      const money = n => "₹" + Number(n).toFixed(2);
+      const photo = t.photoUrl && /^https?:\/\//.test(t.photoUrl)
+        ? `<p>Photo: <a href="${escapeHtml(t.photoUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(t.photoUrl)}</a></p>` : "";
+      document.getElementById("supportDetail").innerHTML = `
+        <h3 style="margin-top:16px;">Request #${t.id} &middot; ${escapeHtml(t.category)} &middot; ${escapeHtml(t.status)}</h3>
+        <p>Customer ${t.customerPhno} &middot; Order #${t.orderId}${t.productId ? " &middot; product " + t.productId : ""}
+          ${v.order ? ` &middot; order is ${escapeHtml(v.order.status)}, ${escapeHtml(v.order.paymentMethod)}${v.order.paid ? " (paid)" : ""}, total ${money(v.order.totalPrice)}, refunded ${money(v.order.refundedAmount)}` : " &middot; order no longer exists"}</p>
+        ${photo}
+        ${v.messages.map(m => `<p><strong>${m.author === "STAFF" ? "Staff" : "Customer"}</strong> &middot; ${new Date(m.createdAt).toLocaleString()}<br>${escapeHtml(m.body)}</p>`).join("")}
+        ${t.resolutionNote ? `<p><em>Resolution: ${escapeHtml(t.resolutionNote)}</em></p>` : ""}
+        <textarea id="supportReply" rows="3" maxlength="1000" placeholder="Reply to the customer (emailed to them)" style="width:100%;"></textarea>
+        <div class="orders-actions">
+          <button class="blue" onclick="replySupportTicket(${t.id})">Send Reply</button>
+          ${t.status !== "RESOLVED" ? `<button onclick="resolveSupportTicket(${t.id})">Mark Resolved</button>` : ""}
+        </div>`;
+    }
+
+    async function replySupportTicket(id) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const message = document.getElementById("supportReply").value.trim();
+      if (!message) return showStatus("Please type a reply first.", "error");
+      await apiCall(`${SUPPORT_URL}/${id}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
+        body: JSON.stringify({ message })
+      });
+      showStatus(`Reply sent on request #${id}.`, "success");
+      await openSupportTicket(id);
+    }
+
+    async function resolveSupportTicket(id) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const note = prompt("Resolution note for the customer (optional), e.g. Refunded the damaged item:", "");
+      if (note === null) return;
+      await apiCall(`${SUPPORT_URL}/${id}/resolve${note.trim() ? "?note=" + encodeURIComponent(note.trim()) : ""}`, {
+        method: "POST",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      showStatus(`Request #${id} resolved.`, "success");
+      await openSupportTicket(id);
     }
 
     // ---------- customer lookup ----------
