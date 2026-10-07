@@ -6,8 +6,10 @@ import com.example.orderservice.dto.CustomerSessionInfo;
 import com.example.orderservice.dto.LoginCodeRequest;
 import com.example.orderservice.dto.LoginVerifyRequest;
 import com.example.orderservice.security.CustomerTokenAuthenticationFilter;
+import com.example.orderservice.security.LoginRateLimiter;
 import com.example.orderservice.service.AdminCustomerService;
 import com.example.orderservice.service.CustomerAuthService;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -17,22 +19,27 @@ import org.springframework.web.bind.annotation.*;
 public class CustomerAuthController {
     private final CustomerAuthService customerAuthService;
     private final AdminCustomerService adminCustomerService;
+    private final LoginRateLimiter loginRateLimiter;
 
-    public CustomerAuthController(CustomerAuthService customerAuthService, AdminCustomerService adminCustomerService) {
+    public CustomerAuthController(CustomerAuthService customerAuthService, AdminCustomerService adminCustomerService,
+                                  LoginRateLimiter loginRateLimiter) {
         this.customerAuthService = customerAuthService;
         this.adminCustomerService = adminCustomerService;
+        this.loginRateLimiter = loginRateLimiter;
     }
 
     // Public - the storefront's sign-in step 1. Always 204 for a valid phone+email (see requestCode for why).
     @PostMapping("/login/request")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void requestCode(@RequestBody LoginCodeRequest request) {
+    public void requestCode(@RequestBody LoginCodeRequest request, HttpServletRequest http) {
+        loginRateLimiter.checkCodeRequest(http.getRemoteAddr(), request.phno(), request.email());
         customerAuthService.requestCode(request.phno(), request.email());
     }
 
     // Public - step 2: exchanges the emailed code for a session token.
     @PostMapping("/login/verify")
-    public CustomerLoginResponse verify(@RequestBody LoginVerifyRequest request) {
+    public CustomerLoginResponse verify(@RequestBody LoginVerifyRequest request, HttpServletRequest http) {
+        loginRateLimiter.checkVerify(http.getRemoteAddr(), request.phno());
         return customerAuthService.verifyCode(request.phno(), request.code());
     }
 

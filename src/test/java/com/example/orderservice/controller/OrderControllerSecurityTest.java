@@ -707,6 +707,19 @@ class OrderControllerSecurityTest {
                 .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].status").value(200));
     }
 
+    // Default limit is 15 verify attempts per phone per 15 minutes (LoginRateLimiter); the 16th is refused with 429
+    // before the code is even checked. Uses its own phone number so no other test shares the counter.
+    @Test
+    void repeatedWrongSignInCodesEventuallyGetTooManyRequests() throws Exception {
+        String body = "{\"phno\":9111111111,\"code\":\"000000\"}";
+        for (int i = 0; i < 15; i++) {
+            mockMvc.perform(post("/customer/login/verify").contentType("application/json").content(body))
+                    .andExpect(status().isUnauthorized());
+        }
+        mockMvc.perform(post("/customer/login/verify").contentType("application/json").content(body))
+                .andExpect(status().isTooManyRequests());
+    }
+
     @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
