@@ -44,7 +44,9 @@ import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.PaymentMethod;
 import com.example.orderservice.dto.OrderHistoryPage;
+import com.example.orderservice.entity.ServiceablePincode;
 import com.example.orderservice.entity.ShippingAddress;
+import com.example.orderservice.dto.PincodeServiceability;
 import com.example.orderservice.entity.StockWaitlist;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.Wishlist;
@@ -59,6 +61,7 @@ import com.example.orderservice.repository.LoyaltyTransactionRepository;
 import com.example.orderservice.repository.OrderItemRepository;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.NotificationLogRepository;
+import com.example.orderservice.repository.ServiceablePincodeRepository;
 import com.example.orderservice.repository.ShippingAddressRepository;
 import com.example.orderservice.repository.StockWaitlistRepository;
 import com.example.orderservice.repository.TrackingEventRepository;
@@ -112,6 +115,8 @@ public class OrderService {
     @Autowired
     private ShippingAddressRepository shippingAddressRepository;
     @Autowired
+    private ServiceablePincodeRepository serviceablePincodeRepository;
+    @Autowired
     private NotificationLogRepository notificationLogRepository;
     @Autowired
     private CustomerNotifier customerNotifier;
@@ -149,6 +154,7 @@ public class OrderService {
         validatePhno(cart.getCustomerPhno());
         sanitizeNewOrder(cart);
         normalizeDeliveryNote(cart);
+        normalizeDeliverySlot(cart);
         if (cart.getPaymentMethod() == null) {
             cart.setPaymentMethod(PaymentMethod.PHONEPE);
         }
@@ -949,6 +955,76 @@ public class OrderService {
         if (address.getCustomerPhno() != cart.getCustomerPhno()) {
             throw new OrderNotFoundException("Address not found");
         }
+        // Same fail-before-payment rule: don't take money for an order we've said we don't deliver to. Skipped
+        // while no pincodes are configured at all (see ServiceablePincode).
+        if (serviceablePincodeRepository.count() > 0
+                && !serviceablePincodeRepository.existsById(String.valueOf(address.getPincode()).trim())) {
+            throw new ProductException("Sorry, we don't deliver to pincode " + address.getPincode() + " yet");
+        }
+    }
+
+    // Time windows a buyer can ask for at checkout (optional). Stored as the key; the label is for display only.
+    static final Map<String, String> DELIVERY_SLOTS = new java.util.LinkedHashMap<>();
+    static {
+        DELIVERY_SLOTS.put("MORNING", "Morning (9am-12pm)");
+        DELIVERY_SLOTS.put("AFTERNOON", "Afternoon (12pm-4pm)");
+        DELIVERY_SLOTS.put("EVENING", "Evening (4pm-8pm)");
+    }
+
+    // Blank -> null; anything not in DELIVERY_SLOTS is rejected up front rather than saved as free text.
+    private void normalizeDeliverySlot(Cart cart) {
+        String slot = cart.getDeliverySlot();
+        if (slot == null || slot.isBlank()) {
+            cart.setDeliverySlot(null);
+            return;
+        }
+        slot = slot.trim().toUpperCase(java.util.Locale.ROOT);
+        if (!DELIVERY_SLOTS.containsKey(slot)) {
+            throw new ProductException("Unknown delivery slot. Choose one of: " + String.join(", ", DELIVERY_SLOTS.keySet()));
+        }
+        cart.setDeliverySlot(slot);
+    }
+
+    public List<String> getDeliverySlots() {
+        return new ArrayList<>(DELIVERY_SLOTS.keySet());
+    }
+
+    private static String normalizePincode(String raw) {
+        String p = raw == null ? "" : raw.trim();
+        if (!p.matches("[1-9][0-9]{5}")) {
+            throw new ProductException("Pincode must be 6 digits");
+        }
+        return p;
+    }
+
+    public PincodeServiceability checkPincode(String pincode) {
+        String p = normalizePincode(pincode);
+        if (serviceablePincodeRepository.count() == 0) {
+            return new PincodeServiceability(p, true, null);
+        }
+        return serviceablePincodeRepository.findById(p)
+                .map(sp -> new PincodeServiceability(p, true, sp.getDeliveryDays()))
+                .orElse(new PincodeServiceability(p, false, null));
+    }
+
+    public ServiceablePincode savePincode(ServiceablePincode pincode) {
+        pincode.setPincode(normalizePincode(pincode.getPincode()));
+        if (pincode.getDeliveryDays() < 1 || pincode.getDeliveryDays() > 30) {
+            throw new ProductException("Delivery days must be between 1 and 30");
+        }
+        return serviceablePincodeRepository.save(pincode);
+    }
+
+    public void removePincode(String pincode) {
+        String p = normalizePincode(pincode);
+        if (!serviceablePincodeRepository.existsById(p)) {
+            throw new ProductException("Pincode " + p + " is not in the serviceable list");
+        }
+        serviceablePincodeRepository.deleteById(p);
+    }
+
+    public List<ServiceablePincode> getPincodes() {
+        return serviceablePincodeRepository.findAll();
     }
 
     public Coupon saveCoupon(Coupon coupon) {
@@ -1129,7 +1205,7 @@ public class OrderService {
                 order.getPointsRedeemed() == null ? 0 : order.getPointsRedeemed(), order.getTotalPrice(),
                 order.getRefundedAmount(),
                 String.valueOf(order.getPaymentMethod()), order.isPaid(), String.valueOf(order.getStatus()), address,
-                order.getDeliveryNote());
+                order.getDeliveryNote(), order.getDeliverySlot());
     }
 
     public List<TrackingEvent> getTracking(long orderId) {
@@ -1826,7 +1902,7 @@ public class OrderService {
                     order.getCustomerPhno(), String.valueOf(order.getStatus()),
                     String.valueOf(order.getPaymentMethod()), order.isPaid(), items, order.getCouponCode(),
                     order.getDiscountAmount(), order.getPointsRedeemed() == null ? 0 : order.getPointsRedeemed(),
-                    order.getTotalPrice(), order.getDeliveryNote()));
+                    order.getTotalPrice(), order.getDeliveryNote(), order.getDeliverySlot()));
         }
         rows.sort(Comparator.comparingLong(AdminOrderRow::orderId).reversed());
         return rows;
@@ -1838,7 +1914,7 @@ public class OrderService {
                                   java.time.LocalDate from, java.time.LocalDate to) {
         StringBuilder csv = new StringBuilder(
                 "orderId,placedAt,customerName,customerPhno,status,paymentMethod,paid,items,couponCode,"
-                        + "discountAmount,pointsRedeemed,totalPrice,deliveryNote\r\n");
+                        + "discountAmount,pointsRedeemed,totalPrice,deliveryNote,deliverySlot\r\n");
         for (AdminOrderRow r : searchOrders(status, paymentMethod, phno, from, to)) {
             csv.append(r.orderId()).append(',')
                     .append(r.placedAt() == null ? "" : r.placedAt()).append(',')
@@ -1852,7 +1928,7 @@ public class OrderService {
                     .append(r.discountAmount()).append(',')
                     .append(r.pointsRedeemed()).append(',')
                     .append(r.totalPrice()).append(',')
-                    .append(csvCell(r.deliveryNote())).append("\r\n");
+                    .append(csvCell(r.deliveryNote())).append(",").append(csvCell(r.deliverySlot())).append("\r\n");
         }
         return csv.toString();
     }
