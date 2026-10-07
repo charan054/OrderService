@@ -3,6 +3,7 @@ package com.example.orderservice.controller;
 import com.example.orderservice.security.CustomerAccess;
 import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.BulkTransitionResult;
+import com.example.orderservice.dto.CancellationReport;
 import com.example.orderservice.dto.ForgotPinRequest;
 import com.example.orderservice.dto.OrderHistoryPage;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
@@ -96,9 +97,16 @@ public class OrderController {
                             @RequestHeader(value = "Authorization", required = false) String authorization,
                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                             @RequestParam(required = false) Long payerPhno,
-                            @RequestParam(required = false) String payerPin){
+                            @RequestParam(required = false) String payerPin,
+                            @RequestParam(required = false) String reason,
+                            @RequestParam(required = false) String note){
         requireOrderAccess(orderId);
-        return orderService.cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin);
+        return orderService.cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin, reason, note);
+    }
+    // Admin-only (service key by default): why orders get cancelled.
+    @GetMapping("/analytics/cancellations")
+    public CancellationReport cancellationReport(){
+        return orderService.getCancellationReport();
     }
     // Same buyer-token requirement as cancel above (waived for CASH, same reasoning), but only usable once an
     // order has reached DELIVERED - cancel and return are mutually exclusive by status, never overlapping windows.

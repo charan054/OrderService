@@ -782,6 +782,13 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void cancellationReportIsServiceKeyOnly() throws Exception {
+        mockMvc.perform(get("/cart/analytics/cancellations")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/analytics/cancellations").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/cart/analytics/cancellations").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
+    @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
     }

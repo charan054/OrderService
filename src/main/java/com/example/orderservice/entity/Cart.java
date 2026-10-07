@@ -82,6 +82,12 @@ public class Cart {
     // Set by OrderService.returnOrder() when a DELIVERED order is returned; null otherwise. Purely a record of
     // why, same role couponCode/shippingAddressId play - re-editing it after the fact has no effect.
     private String returnReason;
+    // Why the buyer (or admin) cancelled the whole order: one of OrderService.CANCEL_REASONS, optional, plus an
+    // optional free-text note. Null for an order that wasn't cancelled, or was cancelled without giving one.
+    @Column(length = 40)
+    private String cancelReason;
+    @Column(length = 200)
+    private String cancelNote;
     // Set only for a PHONEPE order placed via a UPI collect request (see OrderService.order()'s payerUpiId
     // path) - the buyer's UPI ID as entered at checkout, purely a record like couponCode. Null for every other
     // order, including a PHONEPE order paid the older synchronous way (an already-supplied token, or

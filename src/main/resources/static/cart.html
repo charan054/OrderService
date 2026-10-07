@@ -900,6 +900,20 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128683;</div>
+                <div class="title-wrap">
+                    <h2>Cancellation Reasons</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Why customers cancel their orders, with the latest written notes. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadCancellationReport()">Load Cancellation Report</button>
+            </div>
+            <div id="cancelReportWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
                     <h2>Review Moderation</h2>
@@ -1468,6 +1482,20 @@
         <table class="orders-table"><thead><tr><th>#</th><th>Customer</th><th>Phone</th><th>Orders</th><th>Net spend</th></tr></thead><tbody>${r.topCustomers.map((c, i) => `
           <tr><td>${i + 1}</td><td>${escapeHtml(c.name || "")}</td><td>${c.phno}</td><td>${c.orders}</td><td class="num">${money(c.netSpend)}</td></tr>`).join("")}</tbody></table>`;
       showStatus("Customer insights loaded.", "success");
+    }
+
+    // ---------- cancellation reasons ----------
+    async function loadCancellationReport() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const r = await apiCall(`${BASE_URL}/analytics/cancellations`, { headers: { "X-Service-Key": serviceKey } });
+      const rows = Object.entries(r.byReason).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+      document.getElementById("cancelReportWrap").innerHTML = r.totalCancelled === 0 ? "<p>No cancelled orders.</p>" : `
+        <p><strong>${r.totalCancelled}</strong> cancelled order(s)</p>
+        <table class="orders-table"><thead><tr><th>Reason</th><th>Orders</th><th>Share</th></tr></thead><tbody>${rows.map(([k, n]) => `
+          <tr><td>${escapeHtml(k.replaceAll("_", " ").toLowerCase())}</td><td>${n}</td><td>${(100 * n / r.totalCancelled).toFixed(0)}%</td></tr>`).join("")}</tbody></table>
+        ${r.recentNotes.length ? "<p>Latest notes:</p><ul>" + r.recentNotes.map(n => `<li>#${n.orderId}: ${escapeHtml(n.note)}</li>`).join("") + "</ul>" : ""}`;
+      showStatus(`${r.totalCancelled} cancelled order(s).`, "success");
     }
 
     // ---------- review moderation ----------

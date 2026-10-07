@@ -44,6 +44,7 @@ import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.PaymentMethod;
 import com.example.orderservice.dto.BulkTransitionResult;
+import com.example.orderservice.dto.CancellationReport;
 import com.example.orderservice.dto.OrderHistoryPage;
 import com.example.orderservice.entity.ServiceablePincode;
 import com.example.orderservice.entity.ShippingAddress;
@@ -432,6 +433,25 @@ public class OrderService {
     // payerPhno/payerPin mirror order()'s storefront path - the customer-facing cancel button has no stored
     // session token either, only a phone+PIN entered fresh for this one call (see resolveBuyerToken).
     public Cart cancel(long orderId, String authorization, String idempotencyKey, Long payerPhno, String payerPin) {
+        return cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin, null, null);
+    }
+
+    static final java.util.List<String> CANCEL_REASONS = java.util.List.of(
+            "CHANGED_MIND", "ORDERED_BY_MISTAKE", "FOUND_CHEAPER_ELSEWHERE", "DELIVERY_TOO_SLOW", "WRONG_ADDRESS", "OTHER");
+    static final int MAX_CANCEL_NOTE_LENGTH = 200;
+
+    // reason (optional) must be one of CANCEL_REASONS; note (optional) is free text. Both are checked BEFORE anything
+    // is refunded, same fail-fast reasoning as everywhere else in this service.
+    public Cart cancel(long orderId, String authorization, String idempotencyKey, Long payerPhno, String payerPin,
+                       String reason, String note) {
+        String reasonCode = reason == null || reason.isBlank() ? null : reason.trim().toUpperCase(java.util.Locale.ROOT);
+        if (reasonCode != null && !CANCEL_REASONS.contains(reasonCode)) {
+            throw new ProductException("Unknown cancellation reason. Choose one of: " + String.join(", ", CANCEL_REASONS));
+        }
+        String cancelNote = note == null || note.isBlank() ? null : note.trim();
+        if (cancelNote != null && cancelNote.length() > MAX_CANCEL_NOTE_LENGTH) {
+            throw new ProductException("Cancellation note must be at most " + MAX_CANCEL_NOTE_LENGTH + " characters");
+        }
         Cart cart = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
         if (cart.getStatus() == OrderStatus.CANCELLED) {
@@ -457,6 +477,8 @@ public class OrderService {
         closeOutstanding(cart, false);
         cart.setRefundedAmount(cart.getTotalPrice());
         cart.setStatus(OrderStatus.CANCELLED);
+        cart.setCancelReason(reasonCode);
+        cart.setCancelNote(cancelNote);
         Cart result = orderRepository.save(cart);
         recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
         sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
@@ -469,6 +491,26 @@ public class OrderService {
     // Returns can only happen AFTER delivery, unlike cancel() which only works on a still-PLACED order - the two
     // are mutually exclusive by status, never overlapping windows. Otherwise the same fail-safe refund-then-
     // restore-stock shape as cancel(): a declined refund leaves the order exactly DELIVERED, nothing rolled back.
+    public CancellationReport getCancellationReport() {
+        java.util.Map<String, Integer> byReason = new java.util.LinkedHashMap<>();
+        CANCEL_REASONS.forEach(r -> byReason.put(r, 0));
+        byReason.put("NOT_GIVEN", 0);
+        List<CancellationReport.Note> notes = new ArrayList<>();
+        int total = 0;
+        List<Cart> cancelled = orderRepository.findAll().stream()
+                .filter(o -> o.getStatus() == OrderStatus.CANCELLED)   // null status (legacy rows) is simply not CANCELLED
+                .sorted(Comparator.comparing(Cart::getOrderId).reversed())
+                .toList();
+        for (Cart order : cancelled) {
+            total++;
+            byReason.merge(order.getCancelReason() == null ? "NOT_GIVEN" : order.getCancelReason(), 1, Integer::sum);
+            if (order.getCancelNote() != null && notes.size() < 20) {
+                notes.add(new CancellationReport.Note(order.getOrderId(), order.getCancelReason(), order.getCancelNote()));
+            }
+        }
+        return new CancellationReport(total, byReason, notes);
+    }
+
     public Cart returnOrder(long orderId, String authorization, String idempotencyKey, String reason) {
         return returnOrder(orderId, authorization, idempotencyKey, reason, null, null);
     }
