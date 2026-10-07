@@ -106,6 +106,8 @@ public class OrderService {
     @Autowired
     private NotificationLogRepository notificationLogRepository;
     @Autowired
+    private CustomerNotifier customerNotifier;
+    @Autowired
     ProductClient productClient;
     @Autowired
     PhonepeClient phonepeClient;
@@ -731,6 +733,7 @@ public class OrderService {
         cart.setStatus(OrderStatus.SHIPPED);
         Cart result = orderRepository.save(cart);
         recordTracking(result.getOrderId(), OrderStatus.SHIPPED);
+        customerNotifier.notifyStatusChange(result, OrderStatus.SHIPPED);
         sendNotification("Order shipped. OrderId: " + result.getOrderId());
         return result;
     }
@@ -745,6 +748,7 @@ public class OrderService {
         Cart result = orderRepository.save(cart);
         recordTracking(result.getOrderId(), OrderStatus.DELIVERED);
         earnLoyaltyPoints(result);
+        customerNotifier.notifyStatusChange(result, OrderStatus.DELIVERED);
         sendNotification("Order delivered. OrderId: " + result.getOrderId());
         return result;
     }
@@ -845,8 +849,7 @@ public class OrderService {
         return trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId);
     }
 
-    // The audit trail OrderKafkaConsumer writes to for SHIPPED/DELIVERED events - see NotificationLog for why
-    // this is "dispatched" rather than actually emailed/texted anywhere yet.
+    // The SHIPPED/DELIVERED notifications CustomerNotifier recorded for this order (emailed or recorded-only).
     public List<NotificationLog> getNotifications(long orderId) {
         if (!orderRepository.existsById(orderId)) {
             throw new OrderNotFoundException("Order not found");
@@ -1248,8 +1251,8 @@ public class OrderService {
         return wishlistRepository.findByCustomerPhno(phno);
     }
 
-    // Computed on demand rather than pushed anywhere - this system has no scheduler and no email/SMS provider
-    // (same caveat NotificationLog already carries), so "alert" here means "ask and find out right now", not a
+    // Computed on demand rather than pushed anywhere - this system has no scheduler to watch prices with, so
+    // "alert" here means "ask and find out right now", not a
     // proactive notification. Re-fetches each product's CURRENT price fresh on every call, so it's always
     // accurate even though nothing is persisted between calls. An entry with no priceWhenAdded (wishlisted
     // before this field existed) or whose product Feign lookup fails is skipped rather than reported.

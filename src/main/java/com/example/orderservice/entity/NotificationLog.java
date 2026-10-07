@@ -5,10 +5,10 @@ import lombok.Data;
 
 import java.time.Instant;
 
-// An audit trail of customer-facing notifications dispatched off the Kafka order-notification topic (see
-// OrderKafkaConsumer) - not the internal log-only messages every order/cancel/ship/deliver/return already
-// publishes there, just the subset (SHIPPED/DELIVERED) meant for the customer. This system has no email/SMS
-// provider wired up, so "dispatched" here means logged + recorded, not actually delivered anywhere yet.
+// An audit trail of customer-facing notifications (SHIPPED/DELIVERED), written by CustomerNotifier. emailed says
+// whether it actually reached the customer's verified email; false means recorded only (no verified email on
+// file yet, or the mail server was unreachable). The recipient address itself is deliberately not stored here -
+// the per-order notification list is public by order id.
 @Data
 @Table(name = "notification_log")
 @Entity
@@ -22,4 +22,5 @@ public class NotificationLog {
     private OrderStatus eventType;
     private String message;
     private Instant sentAt;
+    private boolean emailed;
 }

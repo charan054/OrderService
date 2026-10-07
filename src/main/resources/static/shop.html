@@ -1189,7 +1189,7 @@
         <div class="order-row">
           <div>
             <strong>Order #${n.orderId} - ${escapeHtml(n.eventType)}</strong>
-            <span class="meta">${escapeHtml(n.message)}</span>
+            <span class="meta">${escapeHtml(n.message)}${n.emailed ? " · emailed to you" : ""}</span>
           </div>
           <div class="meta">${new Date(n.sentAt).toLocaleString()}</div>
         </div>
