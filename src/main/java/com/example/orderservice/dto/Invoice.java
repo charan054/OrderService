@@ -9,7 +9,7 @@ import java.util.List;
 // refundedAmount and the per-line cancelled/returned quantities show any per-item changes since.
 public record Invoice(long orderId, Instant placedAt, String customerName, long customerPhno,
                       List<Line> lines, String couponCode, double discountAmount, int pointsRedeemed,
-                      double totalPrice, double refundedAmount, String paymentMethod, boolean paid, String status,
+                      double storeCreditUsed, double totalPrice, double refundedAmount, String paymentMethod, boolean paid, String status,
                       String shippingAddress, String deliveryNote, String deliverySlot) {
     public record Line(int productId, String productName, int quantity, double unitPrice, double lineTotal,
                        int cancelledQuantity, int returnedQuantity) {

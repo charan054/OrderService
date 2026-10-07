@@ -71,7 +71,7 @@ class InvoiceEmailServiceTest {
     private Invoice invoice() {
         return new Invoice(7, NOW, "Asha", PHNO,
                 List.of(new Invoice.Line(1, "Soap", 2, 30.0, 60.0, 1, 0)),
-                "WELCOME10", 6.0, 10, 44.0, 20.0, "CASH", false, "PLACED", "1 Main St, Pune, MH, 411001", null, null);
+                "WELCOME10", 6.0, 10, 0.0, 44.0, 20.0, "CASH", false, "PLACED", "1 Main St, Pune, MH, 411001", null, null);
     }
 
     private void verifiedEmail() {

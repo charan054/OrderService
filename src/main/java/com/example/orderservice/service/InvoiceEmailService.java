@@ -103,6 +103,9 @@ public class InvoiceEmailService {
         if (inv.pointsRedeemed() > 0) {
             b.append("Loyalty points redeemed: -Rs. ").append(money(inv.pointsRedeemed())).append('\n');
         }
+        if (inv.storeCreditUsed() > 0) {
+            b.append("Store credit used: -Rs. ").append(money(inv.storeCreditUsed())).append('\n');
+        }
         b.append("Total charged: Rs. ").append(money(inv.totalPrice())).append('\n');
         if (inv.refundedAmount() > 0) {
             b.append("Refunded or taken off since: Rs. ").append(money(inv.refundedAmount())).append('\n');

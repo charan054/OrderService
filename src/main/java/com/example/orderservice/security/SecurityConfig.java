@@ -77,7 +77,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/customer/session").hasRole("CUSTOMER")
                         .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/history", "/cart/notifications", "/cart/*/invoice", "/cart/*/paymentstatus",
                                 "/wishlist/byphno", "/wishlist/pricedrops", "/waitlist/byphno", "/addresses/byphno",
-                                "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/customer/export", "/coupons/available", "/referral/mine", "/questions/mine", "/savedcart", "/feedback/mine", "/prefs/mine", "/customer/cod").hasAnyRole("CUSTOMER", "SERVICE")
+                                "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/customer/export", "/coupons/available", "/referral/mine", "/questions/mine", "/savedcart", "/feedback/mine", "/prefs/mine", "/customer/cod", "/storecredit/byphno").hasAnyRole("CUSTOMER", "SERVICE")
                         // checkout/cancel/return still also need the buyer's own PhonePe credentials for anything
                         // that moves money (see OrderController) - the session only proves who the customer is.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/reviews", "/cart/reviews/flag", "/cart/*/cancel", "/cart/*/return",

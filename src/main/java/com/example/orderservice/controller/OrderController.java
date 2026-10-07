@@ -103,9 +103,10 @@ public class OrderController {
                             @RequestParam(required = false) Long payerPhno,
                             @RequestParam(required = false) String payerPin,
                             @RequestParam(required = false) String reason,
-                            @RequestParam(required = false) String note){
+                            @RequestParam(required = false) String note,
+                            @RequestParam(required = false) String refundTo){
         requireOrderAccess(orderId);
-        return orderService.cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin, reason, note);
+        return orderService.cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin, reason, note, refundTo);
     }
     // The order's owner (signed-in session) or the service key: change delivery slot/instructions while still PLACED.
     // Omit a parameter to keep it, send it blank to clear it.
@@ -129,9 +130,10 @@ public class OrderController {
                             @RequestHeader(value = "Authorization", required = false) String authorization,
                             @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                             @RequestParam(required = false) Long payerPhno,
-                            @RequestParam(required = false) String payerPin){
+                            @RequestParam(required = false) String payerPin,
+                            @RequestParam(required = false) String refundTo){
         requireOrderAccess(orderId);
-        return orderService.returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin);
+        return orderService.returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin, refundTo);
     }
     // Per-item versions of cancel/return above: some units of one product in the order. Same access (the order's
     // signed-in owner, or the service key) and the same PhonePe credential rules for the partial refund.
@@ -141,9 +143,10 @@ public class OrderController {
                            @RequestHeader(value = "Authorization", required = false) String authorization,
                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                            @RequestParam(required = false) Long payerPhno,
-                           @RequestParam(required = false) String payerPin){
+                           @RequestParam(required = false) String payerPin,
+                           @RequestParam(required = false) String refundTo){
         requireOrderAccess(orderId);
-        return orderService.cancelItem(orderId, productId, quantity, authorization, idempotencyKey, payerPhno, payerPin);
+        return orderService.cancelItem(orderId, productId, quantity, authorization, idempotencyKey, payerPhno, payerPin, refundTo);
     }
     @PostMapping("/{orderId}/items/{productId}/return")
     public Cart returnItem(@PathVariable long orderId, @PathVariable int productId,
@@ -151,9 +154,10 @@ public class OrderController {
                            @RequestHeader(value = "Authorization", required = false) String authorization,
                            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
                            @RequestParam(required = false) Long payerPhno,
-                           @RequestParam(required = false) String payerPin){
+                           @RequestParam(required = false) String payerPin,
+                           @RequestParam(required = false) String refundTo){
         requireOrderAccess(orderId);
-        return orderService.returnItem(orderId, productId, quantity, reason, authorization, idempotencyKey, payerPhno, payerPin);
+        return orderService.returnItem(orderId, productId, quantity, reason, authorization, idempotencyKey, payerPhno, payerPin, refundTo);
     }
     // Operational actions (warehouse/ops moving an order along), not something the buyer's own token gates -
     // authenticated the same way as every other trusted-caller endpoint here, via X-Service-Key.

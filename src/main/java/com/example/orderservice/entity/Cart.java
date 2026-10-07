@@ -47,6 +47,15 @@ public class Cart {
     // How much of totalPrice no longer stands: refunded to the buyer for a PhonePe order, or no longer due for a
     // cash one. Grows with each per-item cancel/return and reaches totalPrice on a full cancel/return.
     private double refundedAmount;
+    // Store credit the buyer chose to use at checkout (rupees, optional), taken off after coupon and points - see
+    // OrderService.resolveStoreCredit. totalPrice is what was left to pay after it.
+    private Double storeCreditUsed;
+    // How much of storeCreditUsed has gone back to the customer's store credit through cancels/returns.
+    private double storeCreditRefunded;
+    // Where the refund made by the request that returned this order went: STORE_CREDIT, or null for the original
+    // payment / nothing refunded. Response-only (used for the customer email and the storefront message), not stored.
+    @Transient
+    private String refundDestination;
     // Set by the caller at checkout (optional); order() validates it belongs to the same customerPhno before
     // saving it as a record of which saved address the order shipped to. Purely informational once saved - like
     // couponCode, re-editing this field after the fact has no effect on anything.
