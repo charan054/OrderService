@@ -1114,20 +1114,23 @@ public class OrderService {
         // redemptionCount is system-managed (see recordCouponRedemption) - preserve it across an update instead
         // of silently resetting accumulated usage back to zero just because the caller's payload didn't include it.
         couponRepository.findById(normalizedCode)
-                .ifPresent(existing -> coupon.setRedemptionCount(existing.getRedemptionCount()));
+                .ifPresent(existing -> {
+                    coupon.setRedemptionCount(existing.getRedemptionCount());
+                    coupon.setUnlisted(existing.isUnlisted());
+                });
         return couponRepository.save(coupon);
     }
 
     // Coupons this customer could apply at checkout right now, best discount first: active, not expired, not at
     // the global redemption cap, and not already at this customer's own per-customer limit - i.e. exactly the
-    // checks resolveDiscount() would pass. Note this makes every active coupon code visible to anyone who knows
-    // a phone number, same self-service trust level as /cart/byphno.
+    // checks resolveDiscount() would pass. Note this makes every active, listed coupon code visible to anyone who knows
+    // a phone number, same self-service trust level as /cart/byphno. Unlisted (bulk-minted) codes are never shown.
     public List<CouponSuggestion> getAvailableCoupons(long phno) {
         validatePhno(phno);
         Instant now = Instant.now();
         List<CouponSuggestion> suggestions = new ArrayList<>();
         for (Coupon c : couponRepository.findAll()) {
-            if (!c.isActive()) continue;
+            if (!c.isActive() || c.isUnlisted()) continue;
             if (c.getExpiryDate() != null && now.isAfter(c.getExpiryDate())) continue;
             if (c.getMaxRedemptions() != null && c.getRedemptionCount() >= c.getMaxRedemptions()) continue;
             Integer usesLeft = null;

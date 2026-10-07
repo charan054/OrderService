@@ -423,6 +423,23 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">🎟️</div>
+                <div class="title-wrap">
+                    <h2>Bulk Single-Use Coupons</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Mint a batch of one-time codes to hand out one per person (gifts, win-back emails). Each works once in total and is never shown to customers in the storefront. Requires the Service Key above.</p>
+            <input type="text" id="bulkCouponPrefix" placeholder="Prefix, e.g. GIFT (optional)" maxlength="12" />
+            <input type="number" id="bulkCouponCount" placeholder="How many codes (1-500)" />
+            <input type="number" id="bulkCouponDiscount" placeholder="Discount percent (1-100)" />
+            <input type="date" id="bulkCouponExpiry" placeholder="Expiry date (optional)" />
+            <button class="blue" onclick="generateBulkCoupons()">Generate Codes</button>
+            <textarea id="bulkCouponCodes" rows="6" readonly placeholder="Generated codes appear here, one per line" style="width:100%; margin-top:10px;"></textarea>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">🚚</div>
                 <div class="title-wrap">
                     <h2>Serviceable Pincodes</h2>
@@ -1892,6 +1909,31 @@
 
       showStatus("Coupon saved successfully. Result opened in new tab.", "success");
       openResultTab("Add Coupon", data);
+    }
+
+    async function generateBulkCoupons() {
+      const prefix = document.getElementById("bulkCouponPrefix").value.trim();
+      const count = document.getElementById("bulkCouponCount").value;
+      const discountPercent = document.getElementById("bulkCouponDiscount").value;
+      const expiry = document.getElementById("bulkCouponExpiry").value;
+      if (!count || !discountPercent) return showStatus("Please enter how many codes and the discount percent.", "error");
+
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+
+      const data = await apiCall(`http://localhost:8083/coupons/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
+        body: JSON.stringify({
+          prefix: prefix || null,
+          count: Number(count),
+          discountPercent: Number(discountPercent),
+          expiryDate: expiry ? new Date(expiry + "T23:59:59Z").toISOString() : null
+        })
+      });
+      if (!data || !data.codes) return;
+      document.getElementById("bulkCouponCodes").value = data.codes.join("\n");
+      showStatus(`${data.codes.length} single-use codes generated.`, "success");
     }
 
     async function addPincode() {
