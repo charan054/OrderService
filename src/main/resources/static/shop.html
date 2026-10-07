@@ -1104,7 +1104,9 @@
         return;
       }
       const account = await response.json();
-      hint.textContent = `You have ${account.pointsBalance} loyalty points (1 point = ₹1).`;
+      const expires = account.pointsBalance > 0 && account.pointsExpireAt
+        ? ` They expire on ${new Date(account.pointsExpireAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })} unless you use them.` : "";
+      hint.textContent = `You have ${account.pointsBalance} loyalty points (1 point = ₹1).${expires}`;
     }
 
     async function loadProducts() {

@@ -596,6 +596,22 @@ class OrderControllerSecurityTest {
         mockMvc.perform(post("/cart/digest/send").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
     }
 
+    // Loyalty expiry warning emails: admin-only to trigger by hand.
+    @Test
+    void runningTheLoyaltyExpiryWarningsWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/loyalty/expiry-warnings/run")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aCustomerSessionCannotRunTheLoyaltyExpiryWarnings() throws Exception {
+        mockMvc.perform(post("/loyalty/expiry-warnings/run").with(customer())).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void runningTheLoyaltyExpiryWarningsWithValidKeySucceeds() throws Exception {
+        mockMvc.perform(post("/loyalty/expiry-warnings/run").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
     @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());

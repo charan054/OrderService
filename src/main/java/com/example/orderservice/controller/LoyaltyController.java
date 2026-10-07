@@ -4,6 +4,7 @@ import com.example.orderservice.security.CustomerAccess;
 import com.example.orderservice.dto.LoyaltyAdjustmentRequest;
 import com.example.orderservice.entity.LoyaltyAccount;
 import com.example.orderservice.entity.LoyaltyTransaction;
+import com.example.orderservice.service.LoyaltyExpiryWarningService;
 import com.example.orderservice.service.OrderService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
@@ -15,6 +16,8 @@ import java.util.List;
 public class LoyaltyController {
     @Autowired
     private OrderService orderService;
+    @Autowired
+    private LoyaltyExpiryWarningService expiryWarningService;
 
     // Signed-in customer (own phone number only) or service key. Returns a zero-balance account (not 404) for a customer who hasn't earned any yet.
     @GetMapping("/byphno")
@@ -35,5 +38,12 @@ public class LoyaltyController {
     @PostMapping("/adjust")
     public LoyaltyAccount adjust(@RequestBody LoyaltyAdjustmentRequest request) {
         return orderService.adjustLoyaltyPoints(request.customerPhno(), request.points(), request.reason());
+    }
+
+    // Admin-only (service key by default, like /adjust): send the "points about to expire" emails now instead of
+    // waiting for the daily run. Each customer is warned once per expiry.
+    @PostMapping("/expiry-warnings/run")
+    public com.example.orderservice.dto.LoyaltyExpiryWarningResult runExpiryWarnings() {
+        return expiryWarningService.run();
     }
 }
