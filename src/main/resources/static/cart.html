@@ -914,6 +914,20 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128197;</div>
+                <div class="title-wrap">
+                    <h2>Today</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Today's orders and revenue, plus what needs doing now: orders waiting too long to ship, delivered cash orders not yet marked paid, UPI payments still pending and unanswered customer questions. Uses your browser's time zone. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadToday()">Refresh Today</button>
+            </div>
+            <div id="todayWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
                     <h2>Review Moderation</h2>
@@ -1496,6 +1510,27 @@
           <tr><td>${escapeHtml(k.replaceAll("_", " ").toLowerCase())}</td><td>${n}</td><td>${(100 * n / r.totalCancelled).toFixed(0)}%</td></tr>`).join("")}</tbody></table>
         ${r.recentNotes.length ? "<p>Latest notes:</p><ul>" + r.recentNotes.map(n => `<li>#${n.orderId}: ${escapeHtml(n.note)}</li>`).join("") + "</ul>" : ""}`;
       showStatus(`${r.totalCancelled} cancelled order(s).`, "success");
+    }
+
+    // ---------- today ----------
+    async function loadToday() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const t = await apiCall(`${BASE_URL}/analytics/today?zone=${encodeURIComponent(zone)}`, { headers: { "X-Service-Key": serviceKey } });
+      const ids = list => list.length ? list.map(id => "#" + id).join(", ") : "none";
+      const a = t.attention;
+      document.getElementById("todayWrap").innerHTML = `
+        <p><strong>${t.date}</strong> (${escapeHtml(t.zone)}): <strong>${t.ordersPlaced}</strong> order(s) placed &middot;
+           net revenue <strong>₹${t.netRevenue.toFixed(2)}</strong> &middot; ${t.delivered} delivered &middot; ${t.cancelled} cancelled</p>
+        <p><strong>Needs attention</strong></p>
+        <ul>
+          <li>Waiting over ${a.staleHours}h to ship: ${ids(a.unshipped)}</li>
+          <li>Delivered cash orders not marked paid: ${ids(a.cashDeliveredUnpaid)}</li>
+          <li>UPI payments still pending: ${a.pendingPayments}</li>
+          <li>Unanswered customer questions: ${a.unansweredQuestions}</li>
+        </ul>`;
+      showStatus("Today's snapshot loaded.", "success");
     }
 
     // ---------- review moderation ----------
