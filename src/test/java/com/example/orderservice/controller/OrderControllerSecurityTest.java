@@ -750,6 +750,18 @@ class OrderControllerSecurityTest {
         mockMvc.perform(get("/feedback/summary").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
     }
 
+    // Staff-internal notes: never reachable with a customer session.
+    @Test
+    void orderNotesAreServiceKeyOnly() throws Exception {
+        mockMvc.perform(get("/ordernotes").param("orderId", "1")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/ordernotes").param("orderId", "1").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(post("/ordernotes").param("orderId", "1").param("note", "hi").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(delete("/ordernotes/1").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/ordernotes").param("orderId", "1").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+        mockMvc.perform(post("/ordernotes").param("orderId", "424242").param("note", "hi").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isNotFound());
+    }
+
     @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
