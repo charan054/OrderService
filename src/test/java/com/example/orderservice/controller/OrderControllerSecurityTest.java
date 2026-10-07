@@ -99,7 +99,7 @@ class OrderControllerSecurityTest {
 
     @Test
     void reviewsListingIsPublic() throws Exception {
-        when(productClient.getReviews(1, 0, 20)).thenReturn(new ProductReviewsResult(List.of()));
+        when(productClient.getReviews(any(), eq(1L), eq(0), eq(20))).thenReturn(new ProductReviewsResult(List.of()));
         mockMvc.perform(get("/cart/reviews").param("productId", "1")).andExpect(status().isOk());
     }
 

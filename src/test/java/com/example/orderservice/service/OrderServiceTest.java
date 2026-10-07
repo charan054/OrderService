@@ -1922,7 +1922,7 @@ class OrderServiceTest {
 
     @Test
     void getProductReviewsDefaultsPageAndSizeWhenNotProvided() {
-        when(productClient.getReviews(1, 0, 20))
+        when(productClient.getReviews(any(), eq(1L), eq(0), eq(20)))
                 .thenReturn(new ProductReviewsResult(List.of(new ProductReview(1, "Alice", 9876543210L, 5, "Great!", LocalDateTime.now()))));
 
         List<StorefrontReview> result = service.getProductReviews(1, null, null);
@@ -1933,17 +1933,17 @@ class OrderServiceTest {
 
     @Test
     void getProductReviewsUsesProvidedPageAndSize() {
-        when(productClient.getReviews(1, 2, 5)).thenReturn(new ProductReviewsResult(List.of()));
+        when(productClient.getReviews(any(), eq(1L), eq(2), eq(5))).thenReturn(new ProductReviewsResult(List.of()));
 
         assertTrue(service.getProductReviews(1, 2, 5).isEmpty());
-        verify(productClient).getReviews(1, 2, 5);
+        verify(productClient).getReviews(any(), eq(1L), eq(2), eq(5));
     }
 
     @Test
     void getProductReviewsMarksOnlyRealKeptBuyersAsVerified() {
         long buyer = 9876543210L, cancelledBuyer = 9876543211L, pendingBuyer = 9876543212L,
                 otherProductBuyer = 9876543213L, stranger = 9876543214L;
-        when(productClient.getReviews(1, 0, 20)).thenReturn(new ProductReviewsResult(List.of(
+        when(productClient.getReviews(any(), eq(1L), eq(0), eq(20))).thenReturn(new ProductReviewsResult(List.of(
                 new ProductReview(1, "Buyer", buyer, 5, "a", LocalDateTime.now()),
                 new ProductReview(2, "Cancelled", cancelledBuyer, 5, "b", LocalDateTime.now()),
                 new ProductReview(3, "Pending", pendingBuyer, 5, "c", LocalDateTime.now()),
