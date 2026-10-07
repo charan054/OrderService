@@ -2089,7 +2089,7 @@ public class OrderService {
         return csv.toString();
     }
 
-    private static String csvCell(String value) {
+    static String csvCell(String value) {
         if (value == null) return "";
         if (!value.isEmpty() && "=+-@".indexOf(value.charAt(0)) >= 0) value = "'" + value;
         if (value.contains(",") || value.contains("\"") || value.contains("\n") || value.contains("\r")) {
