@@ -26,4 +26,19 @@ public class GlobalExceptionHandler {
     public ResponseEntity<String> handleOrderNotFound(OrderNotFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
     }
+
+    // A downstream (ProductService/PhonepayService) failure no service method translated itself, e.g. the public
+    // review/gallery proxies asked about a product that doesn't exist: a 4xx from downstream is passed through as
+    // that same status, anything else (5xx, unreachable) is a 502 - never an opaque 500 from this service.
+    @ExceptionHandler(feign.FeignException.class)
+    public ResponseEntity<String> handleFeign(feign.FeignException e) {
+        HttpStatus status = HttpStatus.resolve(e.status());
+        // 401/403 from downstream mean OUR credentials were refused - not something the caller can fix.
+        if (status == null || !status.is4xxClientError() || status == HttpStatus.UNAUTHORIZED || status == HttpStatus.FORBIDDEN) {
+            status = HttpStatus.BAD_GATEWAY;
+        }
+        String message = status == HttpStatus.NOT_FOUND ? "Not found"
+                : status == HttpStatus.BAD_GATEWAY ? "A backing service is unavailable" : e.contentUTF8();
+        return ResponseEntity.status(status).body(message);
+    }
 }
