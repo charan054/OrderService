@@ -737,6 +737,20 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void orderFeedbackRulesFollowTheCustomerAndServiceSplit() throws Exception {
+        mockMvc.perform(post("/feedback/submit").param("phno", "9876543210").param("orderId", "1").param("rating", "5"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/feedback/submit").param("phno", "9000000009").param("orderId", "1").param("rating", "5").with(customer()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/feedback/submit").param("phno", "9876543210").param("orderId", "424242").param("rating", "5").with(customer()))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(get("/feedback/mine").param("phno", "9000000009").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/feedback/mine").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
+        mockMvc.perform(get("/feedback/summary").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/feedback/summary").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
+    @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
     }
