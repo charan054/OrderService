@@ -20,8 +20,10 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.exception.OrderNotFoundException;
+import com.example.orderservice.dto.DigestResult;
 import com.example.orderservice.dto.PendingPaymentSweepResult;
 import com.example.orderservice.dto.StockAlertRunResult;
+import com.example.orderservice.service.DigestService;
 import com.example.orderservice.service.OrderService;
 import com.example.orderservice.service.StockAlertService;
 import jakarta.transaction.Transactional;
@@ -39,6 +41,8 @@ public class OrderController {
     private OrderService orderService;
     @Autowired
     private StockAlertService stockAlertService;
+    @Autowired
+    private DigestService digestService;
     // Authorization is the buyer's OWN PhonepayService session token ("Bearer <token>") - that is who gets
     // charged. It's optional here (unlike before) only so the storefront checkout can instead send payerPhno/
     // payerPin for a PHONEPE order with no token yet; OrderService exchanges those for a token itself via
@@ -288,6 +292,16 @@ public class OrderController {
         return org.springframework.http.ResponseEntity.ok()
                 .header("Content-Disposition", "attachment; filename=\"orders.csv\"")
                 .body(orderService.exportOrdersCsv(status, paymentMethod, phno, from, to));
+    }
+    // Admin-only (service key by default): the daily digest as it would be emailed right now, without sending it.
+    @GetMapping("/digest/preview")
+    public DigestResult previewDigest(){
+        return digestService.preview();
+    }
+    // Admin-only: email the digest now (needs ADMIN_EMAIL / digest.to) instead of waiting for the daily run.
+    @PostMapping("/digest/send")
+    public DigestResult sendDigest(){
+        return digestService.send();
     }
     // Admin-only (service key by default): resolve every pending UPI order now (cancel expired/declined ones and
     // put their stock back, finalize approved ones) instead of waiting for the next scheduled sweep.

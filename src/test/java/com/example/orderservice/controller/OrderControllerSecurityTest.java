@@ -577,6 +577,25 @@ class OrderControllerSecurityTest {
         mockMvc.perform(post("/cart/pending/sweep").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
     }
 
+    // Daily admin digest: preview and send are admin-only.
+    @Test
+    void theDigestEndpointsWithoutKeyAreUnauthorized() throws Exception {
+        mockMvc.perform(get("/cart/digest/preview")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/cart/digest/send")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aCustomerSessionCannotReadOrSendTheDigest() throws Exception {
+        mockMvc.perform(get("/cart/digest/preview").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(post("/cart/digest/send").with(customer())).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void theDigestPreviewWithValidKeySucceedsAndSendingWithoutARecipientIsReportedNotAnError() throws Exception {
+        mockMvc.perform(get("/cart/digest/preview").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+        mockMvc.perform(post("/cart/digest/send").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
     @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
