@@ -1,10 +1,12 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.dto.AdminCustomerLookup;
 import com.example.orderservice.dto.CustomerLoginResponse;
 import com.example.orderservice.dto.CustomerSessionInfo;
 import com.example.orderservice.dto.LoginCodeRequest;
 import com.example.orderservice.dto.LoginVerifyRequest;
 import com.example.orderservice.security.CustomerTokenAuthenticationFilter;
+import com.example.orderservice.service.AdminCustomerService;
 import com.example.orderservice.service.CustomerAuthService;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -14,9 +16,11 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/customer")
 public class CustomerAuthController {
     private final CustomerAuthService customerAuthService;
+    private final AdminCustomerService adminCustomerService;
 
-    public CustomerAuthController(CustomerAuthService customerAuthService) {
+    public CustomerAuthController(CustomerAuthService customerAuthService, AdminCustomerService adminCustomerService) {
         this.customerAuthService = customerAuthService;
+        this.adminCustomerService = adminCustomerService;
     }
 
     // Public - the storefront's sign-in step 1. Always 204 for a valid phone+email (see requestCode for why).
@@ -43,6 +47,14 @@ public class CustomerAuthController {
     @GetMapping("/session")
     public CustomerSessionInfo session(@AuthenticationPrincipal Long phno) {
         return new CustomerSessionInfo(phno, customerAuthService.boundEmail(phno).orElse(null));
+    }
+
+    // Admin-only (X-Service-Key): one customer's account, orders, spend, loyalty and addresses, found by phone OR
+    // by the email they signed in with.
+    @GetMapping("/admin/lookup")
+    public AdminCustomerLookup adminLookup(@RequestParam(required = false) Long phno,
+                                           @RequestParam(required = false) String email) {
+        return adminCustomerService.lookup(phno, email);
     }
 
     // Admin-only (X-Service-Key): rebind a phone to a different email - see CustomerAuthService.adminSetEmail.

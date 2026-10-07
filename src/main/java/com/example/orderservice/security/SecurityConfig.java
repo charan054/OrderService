@@ -46,7 +46,7 @@ public class SecurityConfig {
                         // ---- Public ----
                         // Catalog browsing and the storefront's product-detail extras (ratings, reviews, gallery,
                         // frequently-bought-together) - no customer's data.
-                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery", "/questions/product").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery", "/pincodes/check", "/pincodes/slots", "/questions/product").permitAll()
                         // Signing in, and the forgot-PIN proxy to PhonepayService - by definition used before the
                         // customer has a session.
                         .requestMatchers(HttpMethod.POST, "/customer/login/request", "/customer/login/verify", "/customer/logout").permitAll()
@@ -67,7 +67,7 @@ public class SecurityConfig {
 
                         // ---- Customer (own data only, see CustomerAccess) or service ----
                         .requestMatchers(HttpMethod.GET, "/customer/session").hasRole("CUSTOMER")
-                        .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/notifications", "/cart/*/invoice", "/cart/*/paymentstatus",
+                        .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/history", "/cart/notifications", "/cart/*/invoice", "/cart/*/paymentstatus",
                                 "/wishlist/byphno", "/wishlist/pricedrops", "/waitlist/byphno", "/addresses/byphno",
                                 "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/coupons/available", "/referral/mine", "/questions/mine").hasAnyRole("CUSTOMER", "SERVICE")
                         // checkout/cancel/return still also need the buyer's own PhonePe credentials for anything

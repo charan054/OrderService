@@ -41,6 +41,7 @@ import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.PaymentMethod;
+import com.example.orderservice.dto.OrderHistoryPage;
 import com.example.orderservice.entity.ShippingAddress;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.entity.StockWaitlist;
@@ -128,6 +129,8 @@ class OrderServiceTest {
     private TrackingEventRepository trackingEventRepository;
     @Mock
     private ShippingAddressRepository shippingAddressRepository;
+    @Mock
+    private com.example.orderservice.repository.ServiceablePincodeRepository serviceablePincodeRepository;
     @Mock
     private NotificationLogRepository notificationLogRepository;
     @Mock
@@ -2475,14 +2478,14 @@ class OrderServiceTest {
     @Test
     void exportOrdersCsvIncludesTheDeliveryNote() {
         Cart order = adminOrder(7, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "Ann");
-        order.setDeliveryNote("Call, don't ring");
+        order.setDeliveryNote("Call, don't ring"); order.setDeliverySlot("EVENING");
         when(orderRepository.findAll()).thenReturn(List.of(order));
         when(trackingEventRepository.findAll()).thenReturn(List.of());
 
         String csv = service.exportOrdersCsv(null, null, null, null, null);
 
-        assertTrue(csv.split("\r\n")[0].endsWith(",deliveryNote"));
-        assertTrue(csv.split("\r\n")[1].endsWith(",\"Call, don't ring\""));
+        assertTrue(csv.split("\r\n")[0].endsWith(",deliveryNote,deliverySlot"));
+        assertTrue(csv.split("\r\n")[1].endsWith(",\"Call, don't ring\",EVENING"));
     }
 
     // ---------- getLowStockReport ----------
@@ -3240,5 +3243,192 @@ class OrderServiceTest {
 
         assertEquals(30, result.points().size());
         assertEquals("day", result.bucket());
+    }
+
+    // ---------- getOrderHistory ----------
+
+    private void stubHistory() {
+        when(orderRepository.findBycustomerPhno(CUSTOMER)).thenReturn(List.of(
+                adminOrder(1, CUSTOMER, OrderStatus.DELIVERED, PaymentMethod.CASH, "A"),
+                adminOrder(2, CUSTOMER, OrderStatus.CANCELLED, PaymentMethod.CASH, "A"),
+                adminOrder(3, CUSTOMER, OrderStatus.DELIVERED, PaymentMethod.CASH, "A")));
+    }
+
+    @Test
+    void orderHistoryIsNewestFirstAndPaged() {
+        stubHistory();
+
+        OrderHistoryPage first = service.getOrderHistory(CUSTOMER, null, null, null, 0, 2);
+        OrderHistoryPage second = service.getOrderHistory(CUSTOMER, null, null, null, 1, 2);
+        OrderHistoryPage beyond = service.getOrderHistory(CUSTOMER, null, null, null, 5, 2);
+
+        assertEquals(List.of(3L, 2L), first.orders().stream().map(Cart::getOrderId).toList());
+        assertEquals(List.of(1L), second.orders().stream().map(Cart::getOrderId).toList());
+        assertEquals(3, first.totalElements());
+        assertEquals(2, first.totalPages());
+        assertTrue(beyond.orders().isEmpty());
+    }
+
+    @Test
+    void orderHistoryFiltersByStatus() {
+        stubHistory();
+
+        OrderHistoryPage page = service.getOrderHistory(CUSTOMER, "delivered", null, null, 0, 10);
+
+        assertEquals(List.of(3L, 1L), page.orders().stream().map(Cart::getOrderId).toList());
+    }
+
+    @Test
+    void orderHistoryFiltersByPlacedDateRange() {
+        stubHistory();
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(1L)).thenReturn(List.of(trackedAt(1, "2026-09-01T10:00:00Z")));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(2L)).thenReturn(List.of(trackedAt(2, "2026-10-05T23:59:00Z")));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(3L)).thenReturn(List.of());
+
+        OrderHistoryPage page = service.getOrderHistory(CUSTOMER, null,
+                java.time.LocalDate.of(2026, 10, 1), java.time.LocalDate.of(2026, 10, 5), 0, 10);
+
+        assertEquals(List.of(2L), page.orders().stream().map(Cart::getOrderId).toList());
+    }
+
+    @Test
+    void orderHistoryRejectsBadArguments() {
+        assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, null, null, null, -1, 10));
+        assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, null, null, null, 0, 0));
+        assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, null, null, null, 0, 51));
+        assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, "BOGUS", null, null, 0, 10));
+        assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, null,
+                java.time.LocalDate.of(2026, 10, 5), java.time.LocalDate.of(2026, 10, 1), 0, 10));
+        assertThrows(ProductException.class, () -> service.getOrderHistory(123L, null, null, null, 0, 10));
+    }
+
+    // ---------- pincode serviceability + delivery slots ----------
+
+    private ShippingAddress addressInPincode(String pincode) {
+        ShippingAddress a = new ShippingAddress();
+        a.setId(99L);
+        a.setCustomerPhno(CUSTOMER);
+        a.setPincode(pincode);
+        return a;
+    }
+
+    private com.example.orderservice.entity.ServiceablePincode serviceable(String pincode, int days) {
+        com.example.orderservice.entity.ServiceablePincode sp = new com.example.orderservice.entity.ServiceablePincode();
+        sp.setPincode(pincode);
+        sp.setDeliveryDays(days);
+        return sp;
+    }
+
+    @Test
+    void orderRejectsAnAddressOutsideTheServiceableListBeforeAnyPayment() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(shippingAddressRepository.findById(99L)).thenReturn(Optional.of(addressInPincode("560001")));
+        when(serviceablePincodeRepository.count()).thenReturn(2L);
+        when(serviceablePincodeRepository.existsById("560001")).thenReturn(false);
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setShippingAddressId(99L);
+
+        ProductException ex = assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+
+        assertTrue(ex.getMessage().contains("560001"));
+        verifyNoInteractions(phonepeClient);
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void orderAcceptsAnAddressInAServiceablePincode() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        when(shippingAddressRepository.findById(99L)).thenReturn(Optional.of(addressInPincode("411001")));
+        when(serviceablePincodeRepository.count()).thenReturn(2L);
+        when(serviceablePincodeRepository.existsById("411001")).thenReturn(true);
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setShippingAddressId(99L);
+
+        assertEquals(42L, service.order(cart, AUTH, null).getOrderId());
+    }
+
+    @Test
+    void orderAcceptsAnyPincodeWhileNoneAreConfigured() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        when(shippingAddressRepository.findById(99L)).thenReturn(Optional.of(addressInPincode("560001")));
+        when(serviceablePincodeRepository.count()).thenReturn(0L);
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setShippingAddressId(99L);
+
+        assertEquals(42L, service.order(cart, AUTH, null).getOrderId());
+        verify(serviceablePincodeRepository, never()).existsById(any());
+    }
+
+    @Test
+    void checkPincodeReportsServiceabilityAndEta() {
+        when(serviceablePincodeRepository.count()).thenReturn(1L);
+        when(serviceablePincodeRepository.findById("411001")).thenReturn(Optional.of(serviceable("411001", 3)));
+        when(serviceablePincodeRepository.findById("560001")).thenReturn(Optional.empty());
+
+        assertTrue(service.checkPincode(" 411001 ").serviceable());
+        assertEquals(3, service.checkPincode("411001").deliveryDays());
+        assertFalse(service.checkPincode("560001").serviceable());
+        assertNull(service.checkPincode("560001").deliveryDays());
+    }
+
+    @Test
+    void checkPincodeSaysServiceableWithNoEtaWhenNothingIsConfigured() {
+        when(serviceablePincodeRepository.count()).thenReturn(0L);
+
+        com.example.orderservice.dto.PincodeServiceability r = service.checkPincode("411001");
+
+        assertTrue(r.serviceable());
+        assertNull(r.deliveryDays());
+    }
+
+    @Test
+    void pincodesMustBeSixDigitsAndDeliveryDaysSane() {
+        assertThrows(ProductException.class, () -> service.checkPincode("12345"));
+        assertThrows(ProductException.class, () -> service.checkPincode("012345"));
+        assertThrows(ProductException.class, () -> service.checkPincode("abcdef"));
+        assertThrows(ProductException.class, () -> service.savePincode(serviceable("411001", 0)));
+        assertThrows(ProductException.class, () -> service.savePincode(serviceable("411001", 31)));
+        verify(serviceablePincodeRepository, never()).save(any());
+    }
+
+    @Test
+    void savePincodeTrimsAndSaves() {
+        when(serviceablePincodeRepository.save(any(com.example.orderservice.entity.ServiceablePincode.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        assertEquals("411001", service.savePincode(serviceable(" 411001 ", 2)).getPincode());
+    }
+
+    @Test
+    void removePincodeRejectsAnUnknownOne() {
+        when(serviceablePincodeRepository.existsById("411001")).thenReturn(false);
+
+        assertThrows(ProductException.class, () -> service.removePincode("411001"));
+        verify(serviceablePincodeRepository, never()).deleteById(any());
+    }
+
+    @Test
+    void orderNormalizesTheDeliverySlot() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setDeliverySlot(" evening ");
+
+        assertEquals("EVENING", service.order(cart, AUTH, null).getDeliverySlot());
+    }
+
+    @Test
+    void orderRejectsAnUnknownDeliverySlotBeforeAnyPayment() {
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setDeliverySlot("MIDNIGHT");
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+
+        verifyNoInteractions(phonepeClient);
     }
 }
