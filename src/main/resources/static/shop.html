@@ -277,6 +277,9 @@
         .account-summary .value { display: block; font-size: 20px; font-weight: 800; }
         .account-summary .label { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
 
+        .order-items { margin: -4px 0 10px 12px; font-size: 0.9em; }
+        .order-item-line { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+        .link-button { background: none; border: none; padding: 0; width: auto; color: var(--primary); cursor: pointer; text-decoration: underline; font-size: inherit; }
         .order-row {
           display: flex;
           justify-content: space-between;
@@ -1229,12 +1232,13 @@
             <strong>Order #${order.orderId}</strong>
             <span class="meta">${escapeHtml(order.status)} &middot; ${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span>
           </div>
-          <div class="price">₹${order.totalPrice.toFixed(2)}</div>
+          <div class="price">₹${order.totalPrice.toFixed(2)}${order.refundedAmount > 0 ? `<span class="meta">₹${order.refundedAmount.toFixed(2)} ${order.paymentMethod === "CASH" ? "taken off" : "refunded"}</span>` : ""}</div>
           <button class="secondary" style="width:auto;" onclick="showInvoice(${order.orderId})">Invoice</button>
           <button class="secondary" style="width:auto;" onclick="reorderMyOrder(${order.orderId})">Buy again</button>
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
           ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
         </div>
+        ${orderItemsHtml(order)}
       `).join("") : `<p style="color:var(--muted);">No orders yet.</p>`;
 
       const addressesHtml = addresses.map(a => `
@@ -1278,6 +1282,66 @@
           <button onclick="addAddress()">Add address</button>
         </div>
       `;
+    }
+
+    // One line per item, with cancel (PLACED) / return (DELIVERED) buttons for single items. Orders placed before
+    // per-item prices were recorded (unitPrice null) can only be cancelled/returned whole, so they get no buttons.
+    function orderItemsHtml(order) {
+      if (!order.orderItems || !order.orderItems.length) return "";
+      const nameById = new Map(products.map(p => [p.productId, p.productName]));
+      const perItemPossible = order.orderItems.every(i => i.unitPrice != null);
+      const totalOutstanding = order.orderItems.reduce((sum, i) => sum + i.outstandingQuantity, 0);
+      return `<div class="order-items">${order.orderItems.map(i => {
+        const name = escapeHtml(nameById.get(i.productId) || `Product #${i.productId}`);
+        const notes = [];
+        if (i.cancelledQuantity) notes.push(`${i.cancelledQuantity} cancelled`);
+        if (i.returnedQuantity) notes.push(`${i.returnedQuantity} returned`);
+        let action = "";
+        // With only one unit left in the whole order, the order-level button does the same thing.
+        if (perItemPossible && i.outstandingQuantity > 0 && totalOutstanding > 1) {
+          if (order.status === "PLACED") {
+            action = `<button class="link-button" onclick="changeMyItem('cancel', ${order.orderId}, ${i.productId}, ${i.outstandingQuantity}, '${order.paymentMethod}')">Cancel item</button>`;
+          } else if (order.status === "DELIVERED") {
+            action = `<button class="link-button" onclick="changeMyItem('return', ${order.orderId}, ${i.productId}, ${i.outstandingQuantity}, '${order.paymentMethod}')">Return item</button>`;
+          }
+        }
+        return `<div class="order-item-line"><span>${i.productQuantity} × ${name}${notes.length ? ` <span class="meta">(${notes.join(", ")})</span>` : ""}</span>${action}</div>`;
+      }).join("")}</div>`;
+    }
+
+    async function changeMyItem(kind, orderId, productId, outstanding, paymentMethod) {
+      let quantity = 1;
+      if (outstanding > 1) {
+        const answer = prompt(`How many to ${kind}? (1-${outstanding})`, "1");
+        if (answer === null) return;
+        quantity = Number(answer);
+        if (!Number.isInteger(quantity) || quantity < 1 || quantity > outstanding) {
+          alert(`Enter a whole number from 1 to ${outstanding}.`);
+          return;
+        }
+      }
+      const params = new URLSearchParams({ quantity: String(quantity) });
+      if (kind === "return") {
+        const reason = prompt("Why are you returning this item?");
+        if (!reason) return;
+        params.set("reason", reason);
+      } else if (!confirm(`Cancel ${quantity} of this item? This can't be undone.`)) {
+        return;
+      }
+      if (paymentMethod !== "CASH") {
+        const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
+        if (!pin) return;
+        params.set("payerPhno", customerPhno);
+        params.set("payerPin", pin);
+      }
+      const response = await authFetch(
+        `${BASE_URL}/cart/${encodeURIComponent(orderId)}/items/${encodeURIComponent(productId)}/${kind}?${params}`,
+        { method: "POST" });
+      if (!response.ok) {
+        alert((await response.text()) || `Could not ${kind} this item.`);
+        return;
+      }
+      loadAccountView();
     }
 
     async function cancelMyOrder(orderId, paymentMethod) {

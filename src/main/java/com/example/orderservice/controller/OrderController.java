@@ -100,6 +100,28 @@ public class OrderController {
         requireOrderAccess(orderId);
         return orderService.returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin);
     }
+    // Per-item versions of cancel/return above: some units of one product in the order. Same access (the order's
+    // signed-in owner, or the service key) and the same PhonePe credential rules for the partial refund.
+    @PostMapping("/{orderId}/items/{productId}/cancel")
+    public Cart cancelItem(@PathVariable long orderId, @PathVariable int productId,
+                           @RequestParam int quantity,
+                           @RequestHeader(value = "Authorization", required = false) String authorization,
+                           @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+                           @RequestParam(required = false) Long payerPhno,
+                           @RequestParam(required = false) String payerPin){
+        requireOrderAccess(orderId);
+        return orderService.cancelItem(orderId, productId, quantity, authorization, idempotencyKey, payerPhno, payerPin);
+    }
+    @PostMapping("/{orderId}/items/{productId}/return")
+    public Cart returnItem(@PathVariable long orderId, @PathVariable int productId,
+                           @RequestParam int quantity, @RequestParam String reason,
+                           @RequestHeader(value = "Authorization", required = false) String authorization,
+                           @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+                           @RequestParam(required = false) Long payerPhno,
+                           @RequestParam(required = false) String payerPin){
+        requireOrderAccess(orderId);
+        return orderService.returnItem(orderId, productId, quantity, reason, authorization, idempotencyKey, payerPhno, payerPin);
+    }
     // Operational actions (warehouse/ops moving an order along), not something the buyer's own token gates -
     // authenticated the same way as every other trusted-caller endpoint here, via X-Service-Key.
     @PostMapping("/{orderId}/ship")

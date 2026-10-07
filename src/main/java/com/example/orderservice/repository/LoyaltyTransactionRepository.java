@@ -16,4 +16,7 @@ public interface LoyaltyTransactionRepository extends JpaRepository<LoyaltyTrans
     // than recomputing it, since the tier multiplier in effect at delivery time may differ from the multiplier
     // in effect at return time.
     Optional<LoyaltyTransaction> findByOrderIdAndType(Long orderId, LoyaltyTransactionType type);
+    // ADJUSTED rows for one order: each per-item return claws back part of what the order earned, so there can
+    // be several - see OrderService.clawBackLoyaltyPoints().
+    List<LoyaltyTransaction> findAllByOrderIdAndType(Long orderId, LoyaltyTransactionType type);
 }
