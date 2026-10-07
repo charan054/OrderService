@@ -25,4 +25,7 @@ public class Coupon {
     private int redemptionCount;
     // Null means unlimited per customer. Enforced via CouponRedemption, one row per (code, customerPhno).
     private Integer perCustomerLimit;
+    // True for codes minted by POST /coupons/bulk: meant for one recipient, so never offered in the customer-facing
+    // suggestions (see OrderService.getAvailableCoupons). System-managed - preserved across saveCoupon updates.
+    private boolean unlisted;
 }

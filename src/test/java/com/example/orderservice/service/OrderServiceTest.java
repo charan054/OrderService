@@ -722,6 +722,19 @@ class OrderServiceTest {
         assertEquals(7, result.getRedemptionCount());
     }
 
+    // An admin editing a bulk code through /coupons/add must not turn it into a publicly listed one.
+    @Test
+    void saveCouponKeepsABulkCodeUnlistedAcrossAnUpdate() {
+        Coupon existing = coupon("GIFT-ABCD2345", 10, true);
+        existing.setUnlisted(true);
+        when(couponRepository.findById("GIFT-ABCD2345")).thenReturn(Optional.of(existing));
+        when(couponRepository.save(any(Coupon.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Coupon result = service.saveCoupon(coupon("GIFT-ABCD2345", 15, true));
+
+        assertTrue(result.isUnlisted());
+    }
+
     // ---------- loyalty points redemption at checkout ----------
 
     @Test
@@ -2324,6 +2337,20 @@ class OrderServiceTest {
     }
 
     // ---------- getAvailableCoupons ----------
+
+    // Bulk-minted codes are for one recipient each - listing them to everyone (and the storefront auto-applying the
+    // first suggestion) would burn them.
+    @Test
+    void availableCouponsNeverShowsUnlistedBulkCodes() {
+        Coupon listed = coupon("SAVE10", 10, true);
+        Coupon bulk = coupon("GIFT-ABCD2345", 50, true);
+        bulk.setUnlisted(true);
+        when(couponRepository.findAll()).thenReturn(List.of(listed, bulk));
+
+        List<CouponSuggestion> result = service.getAvailableCoupons(CUSTOMER);
+
+        assertEquals(List.of("SAVE10"), result.stream().map(CouponSuggestion::code).toList());
+    }
 
     @Test
     void availableCouponsSkipsInactiveExpiredAndExhaustedAndSortsBestFirst() {

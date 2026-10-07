@@ -17,6 +17,14 @@ import java.util.List;
 public class CouponController {
     @Autowired
     private OrderService orderService;
+    @Autowired
+    private com.example.orderservice.service.CouponBatchService batchService;
+
+    // Mints a batch of single-use codes (see CouponBatchService); the response is where the codes are handed over.
+    @PostMapping("/bulk")
+    public com.example.orderservice.dto.BulkCouponResult addBulk(@RequestBody com.example.orderservice.dto.BulkCouponRequest request) {
+        return batchService.generate(request);
+    }
 
     @PostMapping("/add")
     public Coupon addCoupon(@RequestBody Coupon coupon) {
