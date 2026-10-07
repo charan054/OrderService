@@ -850,6 +850,20 @@
             </div>
             <div id="modTableWrap" class="orders-table-wrap"></div>
         </div>
+        <div class="card wide">
+            <div class="card-header">
+                <div class="icon">&#10067;</div>
+                <div class="title-wrap">
+                    <h2>Customer Questions</h2>
+                    <span class="method">GET / PUT / DELETE</span>
+                </div>
+            </div>
+            <p>Questions customers have asked on product pages, oldest first. An answer appears on the product page right away; unanswered questions stay hidden. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadPendingQuestions()">Load Unanswered Questions</button>
+            </div>
+            <div id="qaTableWrap" class="orders-table-wrap"></div>
+        </div>
     </section>
 
     <div id="status" class="status-panel">Ready. Load products first, then add items to cart.</div>
@@ -1225,6 +1239,64 @@
       table.hidden = !showTable;
       document.getElementById("revChart").hidden = showTable;
       document.getElementById("revViewToggle").textContent = showTable ? "View as chart" : "View as table";
+    }
+
+    // ---------- customer questions ----------
+    const QA_URL = "http://localhost:8083/questions";
+    let pendingQuestions = [];
+
+    function renderQuestionsTable() {
+      const wrap = document.getElementById("qaTableWrap");
+      if (!pendingQuestions.length) {
+        wrap.innerHTML = "<p>No unanswered questions.</p>";
+        return;
+      }
+      wrap.innerHTML = `<table class="orders-table"><thead><tr>
+        <th>#</th><th>Product</th><th>Asked by</th><th>Question</th><th>Your answer</th><th>Action</th>
+      </tr></thead><tbody>${pendingQuestions.map((q, i) => `
+        <tr>
+          <td>${q.id}</td>
+          <td>${q.productId}</td>
+          <td>${q.askerPhno}</td>
+          <td style="white-space:normal; min-width:200px;">${escapeHtml(q.question || "")}</td>
+          <td><input type="text" id="qaAnswer${i}" maxlength="1000" placeholder="Type an answer" /></td>
+          <td><button class="blue" onclick="answerQuestion(${i})">Answer</button>
+              <button onclick="deleteQuestion(${i})">Delete</button></td>
+        </tr>`).join("")}</tbody></table>`;
+    }
+
+    async function loadPendingQuestions() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      pendingQuestions = (await apiCall(`${QA_URL}/pending`, { headers: { "X-Service-Key": serviceKey } })) || [];
+      renderQuestionsTable();
+      showStatus(`${pendingQuestions.length} unanswered question(s).`, "success");
+    }
+
+    async function answerQuestion(index) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const q = pendingQuestions[index];
+      const answer = document.getElementById("qaAnswer" + index).value.trim();
+      if (!answer) return showStatus("Please type an answer first.", "error");
+      await apiCall(`${QA_URL}/${q.id}/answer?answer=${encodeURIComponent(answer)}`, {
+        method: "PUT",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      pendingQuestions.splice(index, 1);
+      renderQuestionsTable();
+      showStatus(`Question #${q.id} answered and published.`, "success");
+    }
+
+    async function deleteQuestion(index) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const q = pendingQuestions[index];
+      if (!confirm(`Delete question #${q.id}?`)) return;
+      await apiCall(`${QA_URL}/${q.id}`, { method: "DELETE", headers: { "X-Service-Key": serviceKey } });
+      pendingQuestions.splice(index, 1);
+      renderQuestionsTable();
+      showStatus(`Question #${q.id} deleted.`, "success");
     }
 
     // ---------- customer lookup ----------

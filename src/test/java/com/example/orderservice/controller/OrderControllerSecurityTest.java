@@ -627,6 +627,31 @@ class OrderControllerSecurityTest {
                 .andExpect(status().isForbidden());
     }
 
+    // Product Q&A: reading answers is public, asking is the customer's own, answering is admin-only.
+    @Test
+    void answeredQuestionsArePublic() throws Exception {
+        mockMvc.perform(get("/questions/product").param("productId", "1")).andExpect(status().isOk());
+    }
+
+    @Test
+    void askingAndListingOwnQuestionsNeedOwnSession() throws Exception {
+        mockMvc.perform(post("/questions/ask").param("phno", "9876543210").param("productId", "1").param("question", "Is it waterproof?"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/questions/ask").param("phno", "9000000009").param("productId", "1").param("question", "Is it waterproof?").with(customer()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(get("/questions/mine").param("phno", "9000000009").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/questions/mine").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
+    }
+
+    @Test
+    void answeringAndModeratingQuestionsNeedsTheServiceKey() throws Exception {
+        mockMvc.perform(get("/questions/pending")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/questions/pending").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(put("/questions/1/answer").param("answer", "Yes").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(delete("/questions/1").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/questions/pending").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
     // Pincode serviceability: checking is public (pre-login), managing the list is admin-only.
     @Test
     void pincodeCheckAndSlotsArePublic() throws Exception {

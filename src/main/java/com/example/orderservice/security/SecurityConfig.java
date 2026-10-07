@@ -46,7 +46,7 @@ public class SecurityConfig {
                         // ---- Public ----
                         // Catalog browsing and the storefront's product-detail extras (ratings, reviews, gallery,
                         // frequently-bought-together) - no customer's data.
-                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery", "/pincodes/check", "/pincodes/slots").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery", "/pincodes/check", "/pincodes/slots", "/questions/product").permitAll()
                         // Signing in, and the forgot-PIN proxy to PhonepayService - by definition used before the
                         // customer has a session.
                         .requestMatchers(HttpMethod.POST, "/customer/login/request", "/customer/login/verify", "/customer/logout").permitAll()
@@ -69,12 +69,12 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/customer/session").hasRole("CUSTOMER")
                         .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/history", "/cart/notifications", "/cart/*/invoice", "/cart/*/paymentstatus",
                                 "/wishlist/byphno", "/wishlist/pricedrops", "/waitlist/byphno", "/addresses/byphno",
-                                "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/coupons/available", "/referral/mine").hasAnyRole("CUSTOMER", "SERVICE")
+                                "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/coupons/available", "/referral/mine", "/questions/mine").hasAnyRole("CUSTOMER", "SERVICE")
                         // checkout/cancel/return still also need the buyer's own PhonePe credentials for anything
                         // that moves money (see OrderController) - the session only proves who the customer is.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/reviews", "/cart/reviews/flag", "/cart/*/cancel", "/cart/*/return",
                                 "/cart/*/items/*/cancel", "/cart/*/items/*/return",
-                                "/wishlist/self/add", "/waitlist/self/add", "/addresses/self/add", "/referral/apply").hasAnyRole("CUSTOMER", "SERVICE")
+                                "/wishlist/self/add", "/waitlist/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove", "/waitlist/self/remove", "/addresses/self/remove").hasAnyRole("CUSTOMER", "SERVICE")
 
                         // ---- Service only ----

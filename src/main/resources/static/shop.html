@@ -765,6 +765,14 @@
             <h3>Frequently bought together</h3>
             <div id="modalFbt" class="fbt-strip"></div>
 
+            <h3>Questions &amp; answers</h3>
+            <div id="modalQuestions"></div>
+            <div class="review-form">
+                <input type="text" id="questionText" maxlength="500" placeholder="Ask a question about this product" />
+                <div id="questionMessage" class="error-text hidden"></div>
+                <button onclick="askQuestion()">Ask</button>
+            </div>
+
             <h3>Reviews</h3>
             <div id="modalReviews"></div>
 
@@ -1714,6 +1722,8 @@
       document.getElementById("reviewFormError").classList.add("hidden");
       document.getElementById("reviewerName").value = "";
       document.getElementById("reviewComment").value = "";
+      document.getElementById("questionText").value = "";
+      document.getElementById("questionMessage").classList.add("hidden");
       document.getElementById("productModal").classList.remove("hidden");
 
       const rating = ratingsByProductId.get(productId);
@@ -1721,12 +1731,43 @@
         ? `<span class="stars">${starsFor(rating.averageRating)}</span> ${rating.averageRating.toFixed(1)} (${rating.reviewCount} reviews)`
         : "No reviews yet";
 
-      await Promise.all([loadModalReviews(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
+      await Promise.all([loadModalReviews(productId), loadModalQuestions(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
     }
 
     function closeProductModal() {
       document.getElementById("productModal").classList.add("hidden");
       modalProductId = null;
+    }
+
+    async function loadModalQuestions(productId) {
+      const box = document.getElementById("modalQuestions");
+      const response = await authFetch(`${BASE_URL}/questions/product?productId=${productId}`);
+      const items = response.ok ? await response.json() : [];
+      box.innerHTML = items.length
+        ? items.map(q => `
+          <div class="review-item">
+            <div class="review-meta">Q: ${escapeHtml(q.question)}</div>
+            <div class="review-comment">A: ${escapeHtml(q.answer)}</div>
+          </div>`).join("")
+        : `<p style="color:var(--muted); font-size:14px;">No answered questions yet.</p>`;
+    }
+
+    // The question only becomes visible to other shoppers once the store has answered it.
+    async function askQuestion() {
+      const input = document.getElementById("questionText");
+      const message = document.getElementById("questionMessage");
+      const question = input.value.trim();
+      message.classList.remove("hidden");
+      message.style.color = "";
+      if (question.length < 5) { message.textContent = "Please write at least 5 characters."; return; }
+      const response = await authFetch(`${BASE_URL}/questions/ask?phno=${encodeURIComponent(customerPhno)}&productId=${modalProductId}&question=${encodeURIComponent(question)}`, { method: "POST" });
+      if (response.ok) {
+        input.value = "";
+        message.style.color = "var(--muted)";
+        message.textContent = "Thanks! Your question will show here once we've answered it.";
+      } else {
+        message.textContent = (await response.text()) || "Couldn't send your question. Please try again.";
+      }
     }
 
     async function loadModalReviews(productId) {
