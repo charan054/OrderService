@@ -869,6 +869,23 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128221;</div>
+                <div class="title-wrap">
+                    <h2>Internal Order Notes</h2>
+                    <span class="method">GET / POST / DELETE</span>
+                </div>
+            </div>
+            <p>Private staff notes on an order (never shown to the customer). Enter an order id to read or add notes. Requires the Service Key above.</p>
+            <input type="number" id="noteOrderId" placeholder="Order id" />
+            <input type="text" id="noteText" maxlength="500" placeholder="New note (max 500 characters)" />
+            <div class="orders-actions">
+                <button onclick="loadOrderNotes()">Show Notes</button>
+                <button class="blue" onclick="addOrderNote()">Add Note</button>
+            </div>
+            <div id="notesWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
                     <h2>Review Moderation</h2>
@@ -1382,6 +1399,45 @@
           <tr><td>#${f.orderId}</td><td>${f.customerPhno}</td><td>${stars(f.rating)}</td><td>${f.deliveryRating ? stars(f.deliveryRating) : "-"}</td>
           <td style="white-space:normal;">${escapeHtml(f.comment || "")}</td><td>${new Date(f.createdAt).toLocaleDateString()}</td></tr>`).join("")}</tbody></table>`;
       showStatus(`${s.totalFeedback} feedback entr${s.totalFeedback === 1 ? "y" : "ies"}.`, "success");
+    }
+
+    // ---------- internal order notes ----------
+    const NOTES_URL = "http://localhost:8083/ordernotes";
+
+    async function loadOrderNotes() {
+      const orderId = document.getElementById("noteOrderId").value.trim();
+      if (!orderId) return showStatus("Enter an order id first.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const notes = await apiCall(`${NOTES_URL}?orderId=${encodeURIComponent(orderId)}`, { headers: { "X-Service-Key": serviceKey } });
+      document.getElementById("notesWrap").innerHTML = notes.length
+        ? `<table class="orders-table"><thead><tr><th>When</th><th>Note</th><th></th></tr></thead><tbody>${notes.map(n => `
+            <tr><td>${new Date(n.createdAt).toLocaleString()}</td><td style="white-space:normal;">${escapeHtml(n.note)}</td>
+            <td><button onclick="deleteOrderNote(${n.id})">Delete</button></td></tr>`).join("")}</tbody></table>`
+        : `<p>No notes on order #${escapeHtml(orderId)}.</p>`;
+      showStatus(`${notes.length} note(s) on order #${orderId}.`, "success");
+    }
+
+    async function addOrderNote() {
+      const orderId = document.getElementById("noteOrderId").value.trim();
+      const note = document.getElementById("noteText").value.trim();
+      if (!orderId || !note) return showStatus("Enter an order id and a note.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      await apiCall(`${NOTES_URL}?orderId=${encodeURIComponent(orderId)}&note=${encodeURIComponent(note)}`, {
+        method: "POST",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      document.getElementById("noteText").value = "";
+      await loadOrderNotes();
+    }
+
+    async function deleteOrderNote(noteId) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      if (!confirm("Delete this note?")) return;
+      await apiCall(`${NOTES_URL}/${noteId}`, { method: "DELETE", headers: { "X-Service-Key": serviceKey } });
+      await loadOrderNotes();
     }
 
     // ---------- review moderation ----------
