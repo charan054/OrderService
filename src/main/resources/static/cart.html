@@ -898,6 +898,15 @@
             <p>New vs repeat customers, average order value and your top customers by net spend (orders that still stand, minus refunds). Requires the Service Key above.</p>
             <div class="orders-actions">
                 <button onclick="loadCustomerInsights()">Load Insights</button>
+                <select id="customerSegment" title="Which customers go in the CSV">
+                    <option value="all">All customers</option>
+                    <option value="new">New (one order)</option>
+                    <option value="repeat">Repeat (2+ orders)</option>
+                    <option value="dormant">Dormant</option>
+                    <option value="active">Active (not dormant)</option>
+                </select>
+                <input type="number" id="dormantDays" value="90" min="1" max="3650" style="width:90px;" title="Dormant = no order for this many days" />
+                <button class="blue" onclick="downloadCustomersCsv()">Download Customers CSV</button>
             </div>
             <div id="insightsWrap" class="orders-table-wrap"></div>
         </div>
@@ -1499,6 +1508,28 @@
         <table class="orders-table"><thead><tr><th>#</th><th>Customer</th><th>Phone</th><th>Orders</th><th>Net spend</th></tr></thead><tbody>${r.topCustomers.map((c, i) => `
           <tr><td>${i + 1}</td><td>${escapeHtml(c.name || "")}</td><td>${c.phno}</td><td>${c.orders}</td><td class="num">${money(c.netSpend)}</td></tr>`).join("")}</tbody></table>`;
       showStatus("Customer insights loaded.", "success");
+    }
+
+    async function downloadCustomersCsv() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const segment = document.getElementById("customerSegment").value;
+      const dormantDays = Number(document.getElementById("dormantDays").value) || 90;
+      try {
+        const response = await fetch(`${BASE_URL}/analytics/customers/export?segment=${encodeURIComponent(segment)}&dormantDays=${dormantDays}`, { headers: { "X-Service-Key": serviceKey } });
+        if (!response.ok) throw new Error((await response.text()) || `HTTP Error: ${response.status}`);
+        const blob = await response.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `customers-${segment}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+        showStatus(`customers-${segment}.csv downloaded.`, "success");
+      } catch (error) {
+        showStatus("CSV download failed: " + error.message, "error");
+      }
     }
 
     // ---------- cancellation reasons ----------
