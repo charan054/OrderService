@@ -67,7 +67,7 @@ public class SecurityConfig {
 
                         // ---- Customer (own data only, see CustomerAccess) or service ----
                         .requestMatchers(HttpMethod.GET, "/customer/session").hasRole("CUSTOMER")
-                        .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/notifications", "/cart/*/invoice", "/cart/*/paymentstatus",
+                        .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/history", "/cart/notifications", "/cart/*/invoice", "/cart/*/paymentstatus",
                                 "/wishlist/byphno", "/wishlist/pricedrops", "/waitlist/byphno", "/addresses/byphno",
                                 "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/coupons/available", "/referral/mine").hasAnyRole("CUSTOMER", "SERVICE")
                         // checkout/cancel/return still also need the buyer's own PhonePe credentials for anything

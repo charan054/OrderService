@@ -43,6 +43,7 @@ import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.PaymentMethod;
+import com.example.orderservice.dto.OrderHistoryPage;
 import com.example.orderservice.entity.ServiceablePincode;
 import com.example.orderservice.entity.ShippingAddress;
 import com.example.orderservice.dto.PincodeServiceability;
@@ -1362,6 +1363,46 @@ public class OrderService {
         validatePhno(phno);
         return orderRepository.findBycustomerPhno(phno);
     }
+    static final int MAX_HISTORY_PAGE_SIZE = 50;
+
+    // A customer's own orders, newest first, optionally narrowed by status and by the day the order was placed
+    // (UTC, inclusive both ends - same convention as the admin searchOrders()), then paged. Filtering is in memory:
+    // one customer's orders are few, unlike the admin search over everyone's.
+    public OrderHistoryPage getOrderHistory(long phno, String status, java.time.LocalDate from, java.time.LocalDate to,
+                                            int page, int size) {
+        validatePhno(phno);
+        if (page < 0) {
+            throw new ProductException("Page must be 0 or more");
+        }
+        if (size < 1 || size > MAX_HISTORY_PAGE_SIZE) {
+            throw new ProductException("Page size must be between 1 and " + MAX_HISTORY_PAGE_SIZE);
+        }
+        if (from != null && to != null && to.isBefore(from)) {
+            throw new ProductException("'to' date is before 'from' date");
+        }
+        OrderStatus wantedStatus = parseEnumFilter(OrderStatus.class, status, "status");
+        Instant fromInstant = from == null ? null : from.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+        Instant toExclusive = to == null ? null : to.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
+
+        List<Cart> matching = new ArrayList<>();
+        for (Cart order : orderRepository.findBycustomerPhno(phno)) {
+            if (wantedStatus != null && order.getStatus() != wantedStatus) continue;
+            if (fromInstant != null || toExclusive != null) {
+                Instant placedAt = trackingEventRepository.findByOrderIdOrderByTimestampAsc(order.getOrderId()).stream()
+                        .map(TrackingEvent::getTimestamp).findFirst().orElse(null);
+                if (placedAt == null) continue;
+                if (fromInstant != null && placedAt.isBefore(fromInstant)) continue;
+                if (toExclusive != null && !placedAt.isBefore(toExclusive)) continue;
+            }
+            matching.add(order);
+        }
+        matching.sort(Comparator.comparing(Cart::getOrderId).reversed());
+        int fromIndex = (int) Math.min((long) page * size, matching.size());
+        int toIndex = Math.min(fromIndex + size, matching.size());
+        int totalPages = (matching.size() + size - 1) / size;
+        return new OrderHistoryPage(new ArrayList<>(matching.subList(fromIndex, toIndex)), page, size, matching.size(), totalPages);
+    }
+
     public List<Product> getProducts()
     {
         List<Product> products = productClient.findAll();

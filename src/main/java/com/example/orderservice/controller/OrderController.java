@@ -3,6 +3,7 @@ package com.example.orderservice.controller;
 import com.example.orderservice.security.CustomerAccess;
 import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.ForgotPinRequest;
+import com.example.orderservice.dto.OrderHistoryPage;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.ProductGalleryImage;
@@ -253,6 +254,18 @@ public class OrderController {
     public List<Cart> findByPhno(long phno){
         CustomerAccess.requireSelfOrService(phno);
         return orderService.ordersOfPhno(phno);
+    }
+    // Signed-in customer (own phone number only) or service: one page of that customer's orders, newest first,
+    // filtered by status and/or placed-date range (yyyy-MM-dd).
+    @GetMapping("/history")
+    public OrderHistoryPage history(@RequestParam long phno,
+                                    @RequestParam(required = false) String status,
+                                    @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+                                    @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to,
+                                    @RequestParam(defaultValue = "0") int page,
+                                    @RequestParam(defaultValue = "10") int size){
+        CustomerAccess.requireSelfOrService(phno);
+        return orderService.getOrderHistory(phno, status, from, to, page, size);
     }
     @GetMapping("/all")
     public List<Cart> getAll(){
