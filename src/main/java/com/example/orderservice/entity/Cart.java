@@ -19,6 +19,7 @@ import java.util.List;
         "pointsRedeemed",
         "totalPrice",
         "shippingAddressId",
+        "deliveryNote",
         "paymentMethod",
         "paid",
         "status"
@@ -46,6 +47,10 @@ public class Cart {
     // saving it as a record of which saved address the order shipped to. Purely informational once saved - like
     // couponCode, re-editing this field after the fact has no effect on anything.
     private Long shippingAddressId;
+    // Optional free-text instruction from the buyer at checkout ("leave with security", ...). Trimmed and capped at
+    // MAX_DELIVERY_NOTE_LENGTH by OrderService.order(); shown on the invoice and in the admin orders table/CSV.
+    @Column(length = 200)
+    private String deliveryNote;
     // Defaults to PHONEPE when the caller doesn't set it, so existing callers that only ever paid through
     // PhonepayService (the admin dashboard, existing tests) keep working unchanged. CASH skips the PhonepayService
     // charge entirely in order() - see OrderService.order().

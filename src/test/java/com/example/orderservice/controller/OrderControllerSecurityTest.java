@@ -32,6 +32,7 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -500,5 +501,33 @@ class OrderControllerSecurityTest {
     @Test
     void allCouponsListingStillRequiresTheKey() throws Exception {
         mockMvc.perform(get("/coupons/all")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void adminOrderSearchWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(get("/cart/orders/search")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void adminOrderSearchWithValidKeySucceeds() throws Exception {
+        mockMvc.perform(get("/cart/orders/search").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
+    @Test
+    void adminOrderExportWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(get("/cart/orders/export")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void adminOrderExportWithValidKeyReturnsCsv() throws Exception {
+        mockMvc.perform(get("/cart/orders/export").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("orders.csv")));
+    }
+
+    @Test
+    void adminOrderSearchWithABadStatusFilterIsABadRequest() throws Exception {
+        mockMvc.perform(get("/cart/orders/search").param("status", "bogus").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isBadRequest());
     }
 }

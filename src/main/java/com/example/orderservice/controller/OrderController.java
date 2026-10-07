@@ -1,5 +1,6 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.ForgotPinRequest;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
 import com.example.orderservice.dto.Product;
@@ -11,6 +12,7 @@ import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.SalesAnalytics;
+import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
@@ -167,7 +169,7 @@ public class OrderController {
     // Public, same catalog-browsing trust level as /cart/display - straight proxy to ProductService's own
     // public review listing (see OrderService.getProductReviews for why this exists at all).
     @GetMapping("/reviews")
-    public List<ProductReview> getReviews(@RequestParam long productId,
+    public List<StorefrontReview> getReviews(@RequestParam long productId,
                                            @RequestParam(required = false) Integer page,
                                            @RequestParam(required = false) Integer size) {
         return orderService.getProductReviews(productId, page, size);
@@ -175,7 +177,7 @@ public class OrderController {
     // Public, same self-service trust level as posting to your own wishlist/addresses - a customer reviewing a
     // product they browsed needs no X-Service-Key, mirrors ProductService's own review posting being public too.
     @PostMapping("/reviews")
-    public ProductReview addReview(@RequestParam long productId, @RequestBody ReviewSubmission review) {
+    public StorefrontReview addReview(@RequestParam long productId, @RequestBody ReviewSubmission review) {
         return orderService.addProductReview(productId, review.reviewerName(), review.reviewerPhno(), review.rating(), review.comment());
     }
     // Public, same catalog-browsing trust level as /cart/display - straight proxy to ProductService's own
@@ -197,6 +199,25 @@ public class OrderController {
     @GetMapping("/analytics")
     public SalesAnalytics getSalesAnalytics(){
         return orderService.getSalesAnalytics();
+    }
+    // Admin orders table + CSV download (X-Service-Key gated by default). Dates are yyyy-MM-dd, inclusive.
+    @GetMapping("/orders/search")
+    public List<AdminOrderRow> searchOrders(@RequestParam(required = false) String status,
+                                            @RequestParam(required = false) String paymentMethod,
+                                            @RequestParam(required = false) Long phno,
+                                            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+                                            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to){
+        return orderService.searchOrders(status, paymentMethod, phno, from, to);
+    }
+    @GetMapping(value = "/orders/export", produces = "text/csv")
+    public org.springframework.http.ResponseEntity<String> exportOrders(@RequestParam(required = false) String status,
+                                            @RequestParam(required = false) String paymentMethod,
+                                            @RequestParam(required = false) Long phno,
+                                            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+                                            @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to){
+        return org.springframework.http.ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=\"orders.csv\"")
+                .body(orderService.exportOrdersCsv(status, paymentMethod, phno, from, to));
     }
     // Admin-only restock report (X-Service-Key gated by default, like /analytics) - see OrderService.getLowStockReport().
     @GetMapping("/lowstock")

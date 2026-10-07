@@ -17,10 +17,12 @@ import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.ReviewSubmission;
+import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.CouponSuggestion;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.SalesAnalytics;
+import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.dto.TopSellingProduct;
 import com.example.orderservice.dto.UpiCollectRequestResponse;
 import com.example.orderservice.dto.WaitlistStatus;
@@ -1923,7 +1925,7 @@ class OrderServiceTest {
         when(productClient.getReviews(1, 0, 20))
                 .thenReturn(new ProductReviewsResult(List.of(new ProductReview(1, "Alice", 9876543210L, 5, "Great!", LocalDateTime.now()))));
 
-        List<ProductReview> result = service.getProductReviews(1, null, null);
+        List<StorefrontReview> result = service.getProductReviews(1, null, null);
 
         assertEquals(1, result.size());
         assertEquals("Alice", result.get(0).reviewerName());
@@ -1938,13 +1940,49 @@ class OrderServiceTest {
     }
 
     @Test
-    void addProductReviewDelegatesToProductClient() {
+    void getProductReviewsMarksOnlyRealKeptBuyersAsVerified() {
+        long buyer = 9876543210L, cancelledBuyer = 9876543211L, pendingBuyer = 9876543212L,
+                otherProductBuyer = 9876543213L, stranger = 9876543214L;
+        when(productClient.getReviews(1, 0, 20)).thenReturn(new ProductReviewsResult(List.of(
+                new ProductReview(1, "Buyer", buyer, 5, "a", LocalDateTime.now()),
+                new ProductReview(2, "Cancelled", cancelledBuyer, 5, "b", LocalDateTime.now()),
+                new ProductReview(3, "Pending", pendingBuyer, 5, "c", LocalDateTime.now()),
+                new ProductReview(4, "Other", otherProductBuyer, 5, "d", LocalDateTime.now()),
+                new ProductReview(5, "Stranger", stranger, 5, "e", LocalDateTime.now()),
+                new ProductReview(6, "Buyer again", buyer, 4, "f", LocalDateTime.now()))));
+        Cart kept = cart(buyer, item(1, 1));
+        kept.setStatus(OrderStatus.RETURNED);
+        Cart cancelled = cart(cancelledBuyer, item(1, 1));
+        cancelled.setStatus(OrderStatus.CANCELLED);
+        Cart pending = cart(pendingBuyer, item(1, 1));
+        pending.setStatus(OrderStatus.PENDING_PAYMENT);
+        Cart otherProduct = cart(otherProductBuyer, item(2, 1));
+        otherProduct.setStatus(OrderStatus.DELIVERED);
+        when(orderRepository.findBycustomerPhno(buyer)).thenReturn(List.of(kept));
+        when(orderRepository.findBycustomerPhno(cancelledBuyer)).thenReturn(List.of(cancelled));
+        when(orderRepository.findBycustomerPhno(pendingBuyer)).thenReturn(List.of(pending));
+        when(orderRepository.findBycustomerPhno(otherProductBuyer)).thenReturn(List.of(otherProduct));
+        when(orderRepository.findBycustomerPhno(stranger)).thenReturn(List.of());
+
+        List<StorefrontReview> result = service.getProductReviews(1, null, null);
+
+        assertEquals(List.of(true, false, false, false, false, true),
+                result.stream().map(StorefrontReview::verifiedPurchase).toList());
+        verify(orderRepository, times(1)).findBycustomerPhno(buyer);
+    }
+
+    @Test
+    void addProductReviewDelegatesToProductClientAndFlagsVerification() {
         ProductReview saved = new ProductReview(1, "Bob", 9876543210L, 4, "Good", LocalDateTime.now());
         when(productClient.addReview(eq(1L), any())).thenReturn(saved);
+        Cart bought = cart(9876543210L, item(1, 1));
+        bought.setStatus(OrderStatus.DELIVERED);
+        when(orderRepository.findBycustomerPhno(9876543210L)).thenReturn(List.of(bought));
 
-        ProductReview result = service.addProductReview(1, "Bob", 9876543210L, 4, "Good");
+        StorefrontReview result = service.addProductReview(1, "Bob", 9876543210L, 4, "Good");
 
-        assertEquals(saved, result);
+        assertEquals("Bob", result.reviewerName());
+        assertTrue(result.verifiedPurchase());
         verify(productClient).addReview(1L, new ReviewSubmission("Bob", 9876543210L, 4, "Good"));
     }
 
@@ -2071,6 +2109,125 @@ class OrderServiceTest {
     @Test
     void availableCouponsRejectsAnInvalidPhoneNumber() {
         assertThrows(RuntimeException.class, () -> service.getAvailableCoupons(123));
+    }
+
+    // ---------- searchOrders / exportOrdersCsv ----------
+
+    private Cart adminOrder(long id, long phno, OrderStatus status, PaymentMethod method, String name) {
+        Cart c = cart(phno, item(1, 2));
+        c.setOrderId(id);
+        c.setCustomerName(name);
+        c.setStatus(status);
+        c.setPaymentMethod(method);
+        c.setTotalPrice(100.0);
+        return c;
+    }
+
+    private TrackingEvent trackedAt(long orderId, String instant) {
+        TrackingEvent e = new TrackingEvent();
+        e.setOrderId(orderId);
+        e.setTimestamp(Instant.parse(instant));
+        return e;
+    }
+
+    @Test
+    void searchOrdersFiltersByStatusMethodAndPhoneNewestFirst() {
+        when(orderRepository.findAll()).thenReturn(List.of(
+                adminOrder(1, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "A"),
+                adminOrder(2, CUSTOMER, OrderStatus.DELIVERED, PaymentMethod.CASH, "B"),
+                adminOrder(3, CUSTOMER, OrderStatus.PLACED, PaymentMethod.PHONEPE, "C"),
+                adminOrder(4, CUSTOMER + 1, OrderStatus.PLACED, PaymentMethod.CASH, "D"),
+                adminOrder(5, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "E")));
+        when(trackingEventRepository.findAll()).thenReturn(List.of());
+
+        List<AdminOrderRow> rows = service.searchOrders("placed", "cash", CUSTOMER, null, null);
+
+        assertEquals(List.of(5L, 1L), rows.stream().map(AdminOrderRow::orderId).toList());
+        assertEquals("1 x 2", rows.get(0).items());
+    }
+
+    @Test
+    void searchOrdersDateRangeUsesFirstTrackingEventAndExcludesUndatedOrders() {
+        when(orderRepository.findAll()).thenReturn(List.of(
+                adminOrder(1, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "A"),
+                adminOrder(2, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "B"),
+                adminOrder(3, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "C"),
+                adminOrder(4, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "D")));
+        when(trackingEventRepository.findAll()).thenReturn(List.of(
+                trackedAt(1, "2026-10-01T23:59:59Z"),
+                trackedAt(1, "2026-10-05T00:00:00Z"),
+                trackedAt(2, "2026-10-02T00:00:00Z"),
+                trackedAt(3, "2026-10-03T23:59:59Z")));
+
+        List<AdminOrderRow> rows = service.searchOrders(null, null, null,
+                java.time.LocalDate.parse("2026-10-02"), java.time.LocalDate.parse("2026-10-03"));
+
+        assertEquals(List.of(3L, 2L), rows.stream().map(AdminOrderRow::orderId).toList());
+    }
+
+    @Test
+    void searchOrdersRejectsAnUnknownStatusOrPaymentMethod() {
+        assertThrows(ProductException.class, () -> service.searchOrders("bogus", null, null, null, null));
+        assertThrows(ProductException.class, () -> service.searchOrders(null, "bitcoin", null, null, null));
+    }
+
+    @Test
+    void exportOrdersCsvQuotesCellsAndNeutralisesFormulas() {
+        Cart tricky = adminOrder(7, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "Smith, \"Bob\"");
+        Cart formula = adminOrder(8, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "=HYPERLINK(\"x\")");
+        when(orderRepository.findAll()).thenReturn(List.of(tricky, formula));
+        when(trackingEventRepository.findAll()).thenReturn(List.of());
+
+        String csv = service.exportOrdersCsv(null, null, null, null, null);
+        String[] lines = csv.split("\r\n");
+
+        assertTrue(lines[0].startsWith("orderId,placedAt,customerName"));
+        assertEquals(3, lines.length);
+        assertTrue(lines[1].startsWith("8,,\"'=HYPERLINK(\"\"x\"\")\","));
+        assertTrue(lines[2].startsWith("7,,\"Smith, \"\"Bob\"\"\","));
+    }
+
+    // ---------- delivery note ----------
+
+    @Test
+    void orderRejectsAnOverlongDeliveryNoteBeforeAnyPayment() {
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setDeliveryNote("x".repeat(201));
+
+        assertThrows(ProductException.class, () -> service.order(cart, "Bearer t", "key"));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void orderTrimsTheDeliveryNoteAndTurnsABlankOneIntoNull() {
+        Cart noted = cart(CUSTOMER, item(1, 1));
+        noted.setPaymentMethod(PaymentMethod.CASH);
+        noted.setDeliveryNote("  leave with security  ");
+        Cart blank = cart(CUSTOMER, item(1, 1));
+        blank.setPaymentMethod(PaymentMethod.CASH);
+        blank.setDeliveryNote("   ");
+        when(productClient.getProductById(1)).thenReturn(product(1, 10.0, 5));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(inv -> {
+            Cart saved = inv.getArgument(0);
+            saved.setOrderId(1L);
+            return saved;
+        });
+
+        assertEquals("leave with security", service.order(noted, null, "k1").getDeliveryNote());
+        assertNull(service.order(blank, null, "k2").getDeliveryNote());
+    }
+
+    @Test
+    void exportOrdersCsvIncludesTheDeliveryNote() {
+        Cart order = adminOrder(7, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "Ann");
+        order.setDeliveryNote("Call, don't ring");
+        when(orderRepository.findAll()).thenReturn(List.of(order));
+        when(trackingEventRepository.findAll()).thenReturn(List.of());
+
+        String csv = service.exportOrdersCsv(null, null, null, null, null);
+
+        assertTrue(csv.split("\r\n")[0].endsWith(",deliveryNote"));
+        assertTrue(csv.split("\r\n")[1].endsWith(",\"Call, don't ring\""));
     }
 
     // ---------- getLowStockReport ----------

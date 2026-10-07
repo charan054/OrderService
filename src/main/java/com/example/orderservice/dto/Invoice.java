@@ -9,7 +9,7 @@ import java.util.List;
 public record Invoice(long orderId, Instant placedAt, String customerName, long customerPhno,
                       List<Line> lines, String couponCode, double discountAmount, int pointsRedeemed,
                       double totalPrice, String paymentMethod, boolean paid, String status,
-                      String shippingAddress) {
+                      String shippingAddress, String deliveryNote) {
     public record Line(int productId, String productName, int quantity, double unitPrice, double lineTotal) {
     }
 }
