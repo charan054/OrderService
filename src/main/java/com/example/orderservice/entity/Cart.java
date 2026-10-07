@@ -86,6 +86,12 @@ public class Cart {
     // optional free-text note. Null for an order that wasn't cancelled, or was cancelled without giving one.
     @Column(length = 40)
     private String cancelReason;
+    // Who is carrying the parcel and how to follow it - recorded by whoever ships the order (optional, either can be
+    // given alone) and shown to the buyer. Set via OrderService.ship()/updateShipment().
+    @Column(length = 60)
+    private String carrier;
+    @Column(length = 60)
+    private String trackingNumber;
     @Column(length = 200)
     private String cancelNote;
     // Set only for a PHONEPE order placed via a UPI collect request (see OrderService.order()'s payerUpiId

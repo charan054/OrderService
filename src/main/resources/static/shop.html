@@ -1418,6 +1418,7 @@
           <div>
             <strong>Order #${order.orderId}</strong>
             <span class="meta">${escapeHtml(order.status)} &middot; ${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span>
+            ${order.carrier || order.trackingNumber ? `<span class="meta">Shipped${order.carrier ? " via " + escapeHtml(order.carrier) : ""}${order.trackingNumber ? ", tracking " + escapeHtml(order.trackingNumber) : ""}</span>` : ""}
           </div>
           <div class="price">₹${order.totalPrice.toFixed(2)}${order.refundedAmount > 0 ? `<span class="meta">₹${order.refundedAmount.toFixed(2)} ${order.paymentMethod === "CASH" ? "taken off" : "refunded"}</span>` : ""}</div>
           <button class="secondary" style="width:auto;" onclick="showInvoice(${order.orderId})">Invoice</button>

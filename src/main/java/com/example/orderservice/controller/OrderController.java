@@ -154,8 +154,17 @@ public class OrderController {
     // Operational actions (warehouse/ops moving an order along), not something the buyer's own token gates -
     // authenticated the same way as every other trusted-caller endpoint here, via X-Service-Key.
     @PostMapping("/{orderId}/ship")
-    public Cart shipOrder(@PathVariable long orderId){
-        return orderService.ship(orderId);
+    public Cart shipOrder(@PathVariable long orderId,
+                          @RequestParam(required = false) String carrier,
+                          @RequestParam(required = false) String trackingNumber){
+        return orderService.ship(orderId, carrier, trackingNumber);
+    }
+    // Service key (default rule): fix the carrier/tracking number of an already-shipped order.
+    @PutMapping("/{orderId}/shipment")
+    public Cart updateShipment(@PathVariable long orderId,
+                               @RequestParam(required = false) String carrier,
+                               @RequestParam(required = false) String trackingNumber){
+        return orderService.updateShipment(orderId, carrier, trackingNumber);
     }
     // Service-key only like ship/deliver: body is a JSON array of order ids, at most 100 per call.
     @PostMapping("/bulk/ship")

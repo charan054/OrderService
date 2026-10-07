@@ -3624,4 +3624,67 @@ class OrderServiceTest {
         when(orderRepository.findById(9L)).thenReturn(Optional.empty());
         assertThrows(OrderNotFoundException.class, () -> service.rescheduleDelivery(9L, "EVENING", null));
     }
+
+    // ---------- shipment details ----------
+
+    @Test
+    void shipRecordsTheCarrierAndTrackingNumber() {
+        Cart cart = placedCashOrder(42L);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.ship(42L, " Delhivery ", " DL123 ");
+
+        assertEquals(OrderStatus.SHIPPED, result.getStatus());
+        assertEquals("Delhivery", result.getCarrier());
+        assertEquals("DL123", result.getTrackingNumber());
+    }
+
+    @Test
+    void shipWithoutShipmentDetailsStillWorks() {
+        Cart cart = placedCashOrder(42L);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.ship(42L);
+
+        assertNull(result.getCarrier());
+        assertNull(result.getTrackingNumber());
+    }
+
+    @Test
+    void shipRejectsTooLongShipmentFieldsBeforeTouchingTheOrder() {
+        assertThrows(ProductException.class, () -> service.ship(42L, "x".repeat(61), null));
+        assertThrows(ProductException.class, () -> service.ship(42L, null, "y".repeat(61)));
+        verifyNoInteractions(orderRepository);
+    }
+
+    @Test
+    void updateShipmentChangesOnlyWhatWasSentAndOnlyWhileShipped() {
+        Cart cart = placedCashOrder(42L);
+        cart.setStatus(OrderStatus.SHIPPED);
+        cart.setCarrier("Old Courier");
+        cart.setTrackingNumber("OLD1");
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.updateShipment(42L, null, "NEW9");
+
+        assertEquals("Old Courier", result.getCarrier());
+        assertEquals("NEW9", result.getTrackingNumber());
+
+        Cart result2 = service.updateShipment(42L, "", null);
+        assertNull(result2.getCarrier());
+        assertEquals("NEW9", result2.getTrackingNumber());
+    }
+
+    @Test
+    void updateShipmentRefusesAnOrderThatIsNotShippedOrHasNothingToChange() {
+        Cart placed = placedCashOrder(42L);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(placed));
+
+        assertThrows(ProductException.class, () -> service.updateShipment(42L, "X", null));
+        assertThrows(ProductException.class, () -> service.updateShipment(42L, null, null));
+        verify(orderRepository, never()).save(any());
+    }
 }

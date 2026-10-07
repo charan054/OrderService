@@ -105,7 +105,8 @@ public class CustomerNotifier {
             case PLACED -> "Thanks for your order #" + order.getOrderId() + " - we have it and will pack it shortly."
                     + (order.getDiscountAmount() > 0
                     ? "\nYou saved Rs. " + String.format(Locale.ROOT, "%.2f", order.getDiscountAmount()) + " with your coupon." : "");
-            case SHIPPED -> "Good news - your order #" + order.getOrderId() + " is on its way. It usually arrives within 3 days.";
+            case SHIPPED -> "Good news - your order #" + order.getOrderId() + " is on its way. It usually arrives within 3 days."
+                    + shipmentLine(order);
             case DELIVERED -> "Your order #" + order.getOrderId() + " has been delivered. Thanks for shopping with us!";
             case CANCELLED -> "Your order #" + order.getOrderId() + " has been cancelled."
                     + (detail == null || detail.isBlank() ? "" : "\nReason: " + detail + ".")
@@ -119,6 +120,18 @@ public class CustomerNotifier {
         };
         return "Hi " + name + ",\n\n" + lead + "\n\nOrder total: Rs. " + total + cashNote
                 + "\nYou can follow every step under \"My notifications\" and \"My account\" in the shop.\n";
+    }
+
+    // "Shipped via X, tracking number Y." - whichever of the two was recorded; empty when neither was.
+    private static String shipmentLine(Cart order) {
+        boolean hasCarrier = order.getCarrier() != null && !order.getCarrier().isBlank();
+        boolean hasTracking = order.getTrackingNumber() != null && !order.getTrackingNumber().isBlank();
+        if (!hasCarrier && !hasTracking) {
+            return "";
+        }
+        return "\n" + (hasCarrier ? "Carrier: " + order.getCarrier() : "")
+                + (hasCarrier && hasTracking ? ", " : "")
+                + (hasTracking ? "tracking number: " + order.getTrackingNumber() : "") + ".";
     }
 
     private static String refundLine(Cart order, double amount) {
