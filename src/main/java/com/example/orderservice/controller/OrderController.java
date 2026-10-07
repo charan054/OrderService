@@ -15,6 +15,8 @@ import com.example.orderservice.dto.ResetPinRequest;
 import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.dto.GuestOrderSummary;
 import com.example.orderservice.dto.Invoice;
+import com.example.orderservice.dto.InvoiceEmailResult;
+import com.example.orderservice.service.InvoiceEmailService;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.ModerationReview;
 import com.example.orderservice.dto.SalesAnalytics;
@@ -44,6 +46,8 @@ public class OrderController {
     private OrderService orderService;
     @Autowired
     private StockAlertService stockAlertService;
+    @Autowired
+    private InvoiceEmailService invoiceEmailService;
     @Autowired
     private DigestService digestService;
     // Authorization is the buyer's OWN PhonepayService session token ("Bearer <token>") - that is who gets
@@ -210,6 +214,12 @@ public class OrderController {
     public Invoice getInvoice(@PathVariable long orderId, @RequestParam long phno){
         CustomerAccess.requireSelfOrService(phno);
         return orderService.getInvoice(orderId, phno);
+    }
+    // Emails the invoice to the customer's VERIFIED address (the caller can't choose one); rate-limited per order.
+    @PostMapping("/{orderId}/invoice/email")
+    public InvoiceEmailResult emailInvoice(@PathVariable long orderId, @RequestParam long phno){
+        CustomerAccess.requireSelfOrService(phno);
+        return invoiceEmailService.send(orderId, phno);
     }
     // Public by order id like tracking above - the audit trail of notifications dispatched for this order.
     @GetMapping("/{orderId}/notifications")
