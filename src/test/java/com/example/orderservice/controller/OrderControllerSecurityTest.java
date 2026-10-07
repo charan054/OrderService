@@ -773,6 +773,15 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void customerInsightsAreServiceKeyOnly() throws Exception {
+        mockMvc.perform(get("/cart/analytics/customers")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/analytics/customers").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/cart/analytics/customers").param("top", "0").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/cart/analytics/customers").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
+    @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
     }
