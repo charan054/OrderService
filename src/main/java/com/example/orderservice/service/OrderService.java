@@ -141,6 +141,7 @@ public class OrderService {
     public Cart order(Cart cart, String authorization, String idempotencyKey, Long payerPhno, String payerPin, String payerUpiId)
     {
         validatePhno(cart.getCustomerPhno());
+        sanitizeNewOrder(cart);
         normalizeDeliveryNote(cart);
         if (cart.getPaymentMethod() == null) {
             cart.setPaymentMethod(PaymentMethod.PHONEPE);
@@ -211,6 +212,40 @@ public class OrderService {
                 + " Items: " + result.getOrderItems().size()
                 + " Total: " + result.getTotalPrice());
         return result;
+    }
+
+    // The request body is deserialized straight into the entity, so a caller could otherwise (a) send an orderId
+    // or item ids that make save() overwrite SOMEONE ELSE'S existing order instead of creating one, (b) send
+    // zero/negative quantities (negative price, and a "negative" stock decrement that ADDS stock), or pre-set
+    // system-managed fields like refundedAmount. Only what the buyer legitimately chooses is kept.
+    private void sanitizeNewOrder(Cart cart) {
+        if (cart.getOrderItems() == null || cart.getOrderItems().isEmpty()) {
+            throw new ProductException("An order needs at least one item");
+        }
+        Map<Integer, OrderItem> merged = new java.util.LinkedHashMap<>();
+        for (OrderItem item : cart.getOrderItems()) {
+            if (item == null || item.getProductQuantity() < 1) {
+                throw new ProductException("Quantity must be at least 1");
+            }
+            // Two lines for one product would each pass the stock check alone but together could exceed it.
+            OrderItem existing = merged.get(item.getProductId());
+            if (existing != null) {
+                existing.setProductQuantity(existing.getProductQuantity() + item.getProductQuantity());
+            } else {
+                item.setId(null);
+                item.setOrderId(null);
+                item.setReturnReason(null);
+                merged.put(item.getProductId(), item);
+            }
+        }
+        cart.setOrderItems(new ArrayList<>(merged.values()));
+        cart.setOrderId(null);
+        cart.setRefundedAmount(0);
+        cart.setReturnReason(null);
+        cart.setPaymentTransactionId(null);
+        cart.setUpiId(null);
+        cart.setPaymentDeadline(null);
+        cart.setDiscountAmount(0);
     }
 
     private static final long UPI_COLLECT_TIMEOUT_MINUTES = 4;
@@ -315,6 +350,8 @@ public class OrderService {
     private Cart cancelUnpaidOrder(Cart cart, String reason) {
         for (OrderItem orderItem : cart.getOrderItems()) {
             productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
+            // Same bookkeeping as cancel(): an item that was never going to be delivered shows as cancelled.
+            orderItem.setCancelledQuantity(orderItem.getProductQuantity() - orderItem.getReturnedQuantity());
         }
         cart.setStatus(OrderStatus.CANCELLED);
         cart.setPaymentDeadline(null);
@@ -1165,7 +1202,23 @@ public class OrderService {
     }
     public List<Product> getProducts()
     {
-        return productClient.findAll();
+        List<Product> products = productClient.findAll();
+        products.forEach(this::absolutizeImageUrl);
+        return products;
+    }
+
+    // Images uploaded before ProductService stored absolute URLs come back as "/uploads/<file>", which the
+    // storefront would resolve against THIS service's origin (a 401 here) - point them at ProductService instead.
+    private static final String PRODUCT_SERVICE_ORIGIN = "http://localhost:8082";
+
+    private void absolutizeImageUrl(Product p) {
+        if (p != null) {
+            p.setProductImageUrl(absolutizeImageUrl(p.getProductImageUrl()));
+        }
+    }
+
+    private static String absolutizeImageUrl(String url) {
+        return url != null && url.startsWith("/") ? PRODUCT_SERVICE_ORIGIN + url : url;
     }
 
     // MAX_SEARCH_RESULTS caps the single page requested from ProductService's own paginated /product/search -
@@ -1174,7 +1227,9 @@ public class OrderService {
     private static final int MAX_SEARCH_RESULTS = 200;
 
     public List<Product> searchProducts(String name, String category) {
-        return productClient.search(blankToNull(name), blankToNull(category), MAX_SEARCH_RESULTS).content();
+        List<Product> found = productClient.search(blankToNull(name), blankToNull(category), MAX_SEARCH_RESULTS).content();
+        found.forEach(this::absolutizeImageUrl);
+        return found;
     }
 
     private static String blankToNull(String value) {
@@ -1233,7 +1288,9 @@ public class OrderService {
     // Straight proxy to ProductService's own public gallery listing - same "shop.html only calls its own
     // origin" reasoning as getProductReviews() above.
     public List<ProductGalleryImage> getGalleryImages(long productId) {
-        return productClient.getGalleryImages(productId);
+        return productClient.getGalleryImages(productId).stream()
+                .map(i -> new ProductGalleryImage(i.id(), i.productId(), absolutizeImageUrl(i.imageUrl())))
+                .toList();
     }
 
     private static final int DEFAULT_FREQUENTLY_BOUGHT_TOGETHER_LIMIT = 5;
@@ -1386,7 +1443,7 @@ public class OrderService {
         for (Cart cart : countedOrders) {
             List<OrderItem> items = cart.getOrderItems();
             if (items == null) continue;
-            if (cart.getStatus() == OrderStatus.RETURNED) continue;
+            if (cart.getStatus() == OrderStatus.RETURNED || cart.getStatus() == OrderStatus.PENDING_PAYMENT) continue;
             for (OrderItem item : items) {
                 int kept = item.getOutstandingQuantity();
                 if (kept <= 0) continue;
@@ -1443,6 +1500,11 @@ public class OrderService {
         List<Cart> carts = orderRepository.findBycustomerPhno(phno);
 
         for (Cart cart : carts) {
+            // Only an order that hasn't shipped can still lose a line: cancelled/returned ones already put their
+            // stock back (restocking again would inflate it), shipped/delivered ones are history.
+            if (cart.getStatus() != OrderStatus.PLACED) {
+                continue;
+            }
             List<OrderItem> orderItems = cart.getOrderItems();
             double price = cart.getTotalPrice();
             for(int i=0;i<orderItems.size();i++)
@@ -1702,6 +1764,14 @@ public class OrderService {
                 || address.getState() == null || address.getState().isBlank()
                 || address.getPincode() == null || address.getPincode().isBlank()) {
             throw new ProductException("Address line 1, city, state and pincode are required");
+        }
+        // An id in the body makes save() update that row - only allowed for the caller's own address, otherwise
+        // anyone could overwrite (and take over) another customer's saved address.
+        if (address.getId() != null) {
+            ShippingAddress current = shippingAddressRepository.findById(address.getId()).orElse(null);
+            if (current == null || current.getCustomerPhno() != address.getCustomerPhno()) {
+                throw new OrderNotFoundException("Address not found");
+            }
         }
         if (address.isDefault()) {
             List<ShippingAddress> existingDefaults = shippingAddressRepository

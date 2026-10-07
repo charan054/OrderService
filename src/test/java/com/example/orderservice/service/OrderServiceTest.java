@@ -247,6 +247,62 @@ class OrderServiceTest {
         verify(orderRepository, never()).save(any());
     }
 
+    @Test
+    void orderRejectsZeroOrNegativeQuantitiesBeforeAnythingHappens() {
+        for (int qty : new int[]{0, -3}) {
+            Cart cart = cart(CUSTOMER, item(1, qty));
+            assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+        }
+        verifyNoInteractions(phonepeClient);
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void orderRejectsAnOrderWithNoItems() {
+        assertThrows(ProductException.class, () -> service.order(cart(CUSTOMER), AUTH, null));
+        verify(orderRepository, never()).save(any());
+    }
+
+    // Two lines for the same product must be checked against stock together, not one at a time.
+    @Test
+    void orderMergesDuplicateProductLinesBeforeTheStockCheck() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 45.0, 5));
+        Cart cart = cart(CUSTOMER, item(1, 3), item(1, 3));
+
+        assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+        verify(orderRepository, never()).save(any());
+    }
+
+    // The body is deserialized into the entity: a client-supplied orderId/item id would make save() overwrite an
+    // existing (someone else's) order, so they are discarded.
+    @Test
+    void orderIgnoresClientSuppliedIdsAndSystemManagedFields() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 45.0, 5));
+        OrderItem it = item(1, 1);
+        it.setId(555L);
+        it.setOrderId(999L);
+        Cart cart = cart(CUSTOMER, it);
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setOrderId(999L);
+        cart.setRefundedAmount(1000);
+        java.util.List<Object[]> atSave = new ArrayList<>();
+        when(orderRepository.save(any())).thenAnswer(inv -> {
+            Cart c = inv.getArgument(0);
+            atSave.add(new Object[]{c.getOrderId(), c.getRefundedAmount(), c.getOrderItems().get(0).getId()});
+            if (c.getOrderId() == null) {
+                c.setOrderId(1L);
+            }
+            return c;
+        });
+
+        service.order(cart, AUTH, null);
+
+        assertEquals(null, atSave.get(0)[0]);
+        assertEquals(0.0, atSave.get(0)[1]);
+        assertEquals(null, atSave.get(0)[2]);
+    }
+
     // A declined payment (insufficient funds, expired session, ...) must leave no order and no stock touched -
     // the whole point of charging BEFORE saving the cart or decrementing stock.
     @Test
@@ -1874,6 +1930,20 @@ class OrderServiceTest {
     }
 
     @Test
+    void deleteProductLeavesNonPlacedOrdersAloneSoStockIsNotRestoredTwice() {
+        OrderItem it = item(1, 2);
+        it.setId(101L);
+        Cart cancelled = cart(CUSTOMER, it);
+        cancelled.setStatus(OrderStatus.CANCELLED);
+        when(orderRepository.findBycustomerPhno(CUSTOMER)).thenReturn(List.of(cancelled));
+
+        service.deleteProduct(CUSTOMER, 1);
+
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        assertEquals(1, cancelled.getOrderItems().size());
+    }
+
+    @Test
     void deleteProductRejectsAnInvalidPhoneNumber() {
         assertThrows(ProductException.class, () -> service.deleteProduct(555, 1));
     }
@@ -1884,6 +1954,20 @@ class OrderServiceTest {
     void getProductsDelegatesToTheProductClient() {
         when(productClient.findAll()).thenReturn(List.of(product(1, 9.99, 10)));
         assertEquals(1, service.getProducts().size());
+    }
+
+    @Test
+    void getProductsMakesRelativeImageUrlsPointAtProductService() {
+        Product p = product(1, 10.0, 5);
+        p.setProductImageUrl("/uploads/a.png");
+        Product q = product(2, 10.0, 5);
+        q.setProductImageUrl("http://cdn.example/x.png");
+        when(productClient.findAll()).thenReturn(List.of(p, q));
+
+        List<Product> result = service.getProducts();
+
+        assertEquals("http://localhost:8082/uploads/a.png", result.get(0).getProductImageUrl());
+        assertEquals("http://cdn.example/x.png", result.get(1).getProductImageUrl());
     }
 
     // ---------- searchProducts ----------
@@ -2351,6 +2435,24 @@ class OrderServiceTest {
     }
 
     @Test
+    void saveAddressCannotOverwriteAnotherCustomersAddress() {
+        ShippingAddress victim = new ShippingAddress();
+        victim.setId(7L);
+        victim.setCustomerPhno(9000000001L);
+        when(shippingAddressRepository.findById(7L)).thenReturn(Optional.of(victim));
+        ShippingAddress attack = new ShippingAddress();
+        attack.setId(7L);
+        attack.setCustomerPhno(CUSTOMER);
+        attack.setLine1("x");
+        attack.setCity("c");
+        attack.setState("s");
+        attack.setPincode("560001");
+
+        assertThrows(OrderNotFoundException.class, () -> service.saveAddress(attack));
+        verify(shippingAddressRepository, never()).save(any());
+    }
+
+    @Test
     void saveAddressRejectsAnInvalidPhoneNumber() {
         ShippingAddress a = address(555, false);
         assertThrows(ProductException.class, () -> service.saveAddress(a));
@@ -2386,6 +2488,7 @@ class OrderServiceTest {
         when(shippingAddressRepository.save(oldDefault)).thenReturn(oldDefault);
         ShippingAddress newDefault = address(CUSTOMER, true);
         newDefault.setId(2L);
+        when(shippingAddressRepository.findById(2L)).thenReturn(Optional.of(newDefault));
         when(shippingAddressRepository.save(newDefault)).thenReturn(newDefault);
 
         service.saveAddress(newDefault);
