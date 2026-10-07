@@ -115,6 +115,8 @@ public class OrderService {
     @Autowired
     private CustomerNotifier customerNotifier;
     @Autowired
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
+    @Autowired
     ProductClient productClient;
     @Autowired
     PhonepeClient phonepeClient;
@@ -1028,6 +1030,11 @@ public class OrderService {
         recordTracking(result.getOrderId(), OrderStatus.DELIVERED);
         earnLoyaltyPoints(result);
         customerNotifier.notifyStatusChange(result, OrderStatus.DELIVERED);
+        try {
+            eventPublisher.publishEvent(new OrderDeliveredEvent(result));
+        } catch (RuntimeException e) {
+            log.error("Order delivered listener failed for order {}: {}", result.getOrderId(), e.getMessage());
+        }
         sendNotification("Order delivered. OrderId: " + result.getOrderId());
         return result;
     }

@@ -138,6 +138,8 @@ class OrderServiceTest {
     private OrderKafkaProducer orderKafkaProducer;
     @Mock
     private CustomerNotifier customerNotifier;
+    @Mock
+    private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     private OrderService service;
@@ -1484,6 +1486,20 @@ class OrderServiceTest {
 
         assertThrows(ProductException.class, () -> service.ship(42L));
         verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void deliverPublishesAnOrderDeliveredEventAndAFailingListenerNeverFailsTheDelivery() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setStatus(OrderStatus.SHIPPED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        org.mockito.Mockito.doThrow(new IllegalStateException("listener broke")).when(eventPublisher).publishEvent(any(Object.class));
+
+        Cart result = service.deliver(42L);
+
+        assertEquals(OrderStatus.DELIVERED, result.getStatus());
+        verify(eventPublisher).publishEvent(new OrderDeliveredEvent(cart));
     }
 
     @Test
