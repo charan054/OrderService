@@ -136,6 +136,9 @@ public class CustomerNotifier {
 
     private static String refundLine(Cart order, double amount) {
         String formatted = String.format(Locale.ROOT, "%.2f", amount);
+        if ("STORE_CREDIT".equals(order.getRefundDestination())) {
+            return "Rs. " + formatted + " has been added to your Charan Mart store credit.";
+        }
         boolean cash = order.getPaymentMethod() != null && order.getPaymentMethod().name().equals("CASH");
         return cash ? "Rs. " + formatted + " is no longer due." : "Rs. " + formatted + " has been refunded to your PhonePe account.";
     }

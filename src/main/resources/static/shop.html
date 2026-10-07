@@ -708,6 +708,10 @@
                 <div id="couponSuggestions" class="coupon-chips"></div>
                 <input type="number" id="pointsRedeemed" min="0" placeholder="Loyalty points to redeem (optional)" />
                 <p id="loyaltyHint" style="font-size:12px; color:var(--muted); margin:-6px 0 12px;"></p>
+                <div id="storeCreditBox" class="hidden">
+                    <input type="number" id="storeCreditToUse" min="0" step="0.01" placeholder="Store credit to use, ₹ (optional)" />
+                    <p id="storeCreditHint" style="font-size:12px; color:var(--muted); margin:-6px 0 12px;"></p>
+                </div>
 
                 <div id="payOptions">
                     <label class="pay-option selected" id="payPhonepeOption">
@@ -1058,6 +1062,7 @@
       loadLoyaltyBalance();
       loadCouponSuggestions();
       loadCodEligibility();
+      loadStoreCredit();
       loadAddressOptions();
     }
 
@@ -1178,6 +1183,30 @@
     }
 
     updateThemeIcon();
+
+    // Store credit balance for the checkout field (hidden while the balance is zero).
+    let storeCreditBalance = 0;
+    async function loadStoreCredit() {
+      storeCreditBalance = 0;
+      try {
+        const response = await authFetch(`${BASE_URL}/storecredit/byphno?phno=${encodeURIComponent(customerPhno)}`);
+        if (response.ok) storeCreditBalance = (await response.json()).balance;
+      } catch (e) { /* treat as none */ }
+      document.getElementById("storeCreditBox").classList.toggle("hidden", !(storeCreditBalance > 0));
+      document.getElementById("storeCreditHint").textContent = storeCreditBalance > 0
+        ? `You have ₹${storeCreditBalance.toFixed(2)} store credit. It comes off after any coupon and points.` : "";
+    }
+
+    // For an online order: refund to store credit (instant, no PIN) or back to PhonePe (needs the PIN). Returns
+    // the extra query params to send, or null if the customer backed out.
+    function refundChoiceParams() {
+      const toCredit = confirm("Refund to your Charan Mart store credit instead of PhonePe?\n\n"
+        + "OK = store credit (instant, no PIN needed)\nCancel = back to your PhonePe account");
+      if (toCredit) return { refundTo: "STORE_CREDIT" };
+      const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
+      if (!pin) return null;
+      return { payerPhno: customerPhno, payerPin: pin };
+    }
 
     async function loadLoyaltyBalance() {
       const response = await authFetch(`${BASE_URL}/loyalty/byphno?phno=${encodeURIComponent(customerPhno)}`);
@@ -1404,6 +1433,8 @@
       const waitlist = waitlistResponse.ok ? await waitlistResponse.json() : [];
       const referralResponse = await authFetch(`${BASE_URL}/referral/mine?phno=${encodeURIComponent(customerPhno)}`);
       const referral = referralResponse.ok ? await referralResponse.json() : null;
+      const creditResponse = await authFetch(`${BASE_URL}/storecredit/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const storeCredit = creditResponse.ok ? await creditResponse.json() : null;
       const prefsResponse = await authFetch(`${BASE_URL}/prefs/mine?phno=${encodeURIComponent(customerPhno)}`);
       const emailPrefs = prefsResponse.ok ? await prefsResponse.json() : null;
 
@@ -1462,6 +1493,7 @@
         ${profileHtml}
         <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="downloadMyData()">Download my data</button>
           <span class="meta">Everything we store about you, as a JSON file.</span></p>
+        ${storeCreditHtml(storeCredit)}
         ${emailPrefs ? `<p style="margin:8px 0;"><label style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="marketingEmails" style="width:auto;" ${emailPrefs.marketingEmails ? "checked" : ""} onchange="setMarketingEmails(this)" />
           Email me cart reminders, restock / price-drop alerts and points-expiry warnings</label>
@@ -1534,10 +1566,9 @@
         return;
       }
       if (paymentMethod !== "CASH") {
-        const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
-        if (!pin) return;
-        params.set("payerPhno", customerPhno);
-        params.set("payerPin", pin);
+        const choice = refundChoiceParams();
+        if (!choice) return;
+        Object.entries(choice).forEach(([k, v]) => params.set(k, v));
       }
       const response = await authFetch(
         `${BASE_URL}/cart/${encodeURIComponent(orderId)}/items/${encodeURIComponent(productId)}/${kind}?${params}`,
@@ -1562,6 +1593,16 @@
       link.click();
       link.remove();
       URL.revokeObjectURL(link.href);
+    }
+
+    function storeCreditHtml(credit) {
+      if (!credit || (credit.balance <= 0 && !credit.transactions.length)) return "";
+      const label = { REFUND: "Refund", SPENT: "Used at checkout", REVERSED: "Returned (payment failed)", ADJUSTED: "Adjustment" };
+      const rows = credit.transactions.slice(0, 5).map(t => `
+        <div class="meta">${new Date(t.createdAt).toLocaleDateString()} &middot; ${label[t.type] || escapeHtml(t.type)}${t.orderId ? " (order #" + t.orderId + ")" : ""}
+          &middot; ${t.amount >= 0 ? "+" : "-"}₹${Math.abs(t.amount).toFixed(2)}</div>`).join("");
+      return `<div style="margin:12px 0;"><strong>Store credit: ₹${credit.balance.toFixed(2)}</strong>
+        <span class="meta">Use it at checkout. Refunds can be taken as store credit instantly.</span>${rows}</div>`;
     }
 
     async function setMarketingEmails(box) {
@@ -1630,9 +1671,9 @@
 
       let query = "";
       if (paymentMethod !== "CASH") {
-        const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
-        if (!pin) return;
-        query = `?payerPhno=${encodeURIComponent(customerPhno)}&payerPin=${encodeURIComponent(pin)}`;
+        const choice = refundChoiceParams();
+        if (!choice) return;
+        query = "?" + new URLSearchParams(choice);
       }
       if (picked) query += (query ? "&" : "?") + `reason=${picked[0]}`;
 
@@ -1651,9 +1692,9 @@
 
       let query = `?reason=${encodeURIComponent(reason)}`;
       if (paymentMethod !== "CASH") {
-        const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
-        if (!pin) return;
-        query += `&payerPhno=${encodeURIComponent(customerPhno)}&payerPin=${encodeURIComponent(pin)}`;
+        const choice = refundChoiceParams();
+        if (!choice) return;
+        query += "&" + new URLSearchParams(choice);
       }
 
       const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/return${query}`, { method: "POST" });
@@ -2021,6 +2062,7 @@
       const adj = [];
       if (inv.discountAmount > 0) adj.push(`<tr><td colspan="3" class="r">Coupon${inv.couponCode ? " (" + escapeHtml(inv.couponCode) + ")" : ""}</td><td class="r">-${money(inv.discountAmount)}</td></tr>`);
       if (inv.pointsRedeemed > 0) adj.push(`<tr><td colspan="3" class="r">Loyalty points redeemed</td><td class="r">-${money(inv.pointsRedeemed)}</td></tr>`);
+      if (inv.storeCreditUsed > 0) adj.push(`<tr><td colspan="3" class="r">Store credit used</td><td class="r">-${money(inv.storeCreditUsed)}</td></tr>`);
       const html = `<!doctype html><html><head><meta charset="utf-8"><title>Invoice #${inv.orderId}</title>
         <style>body{font-family:Arial,sans-serif;max-width:640px;margin:30px auto;color:#222}h1{margin:0}table{width:100%;border-collapse:collapse;margin-top:16px}
         th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left}.r{text-align:right}.total td{font-weight:bold;border-top:2px solid #222}
@@ -2304,6 +2346,7 @@
         paymentMethod: method === "UPI" ? "PHONEPE" : method,
         couponCode: couponCode || null,
         pointsRedeemed: pointsRedeemed ? Number(pointsRedeemed) : null,
+        storeCreditUsed: document.getElementById("storeCreditToUse").value.trim() ? Number(document.getElementById("storeCreditToUse").value) : null,
         shippingAddressId: shippingAddressId ? Number(shippingAddressId) : null,
         deliveryNote: document.getElementById("deliveryNote").value.trim() || null,
         deliverySlot: document.getElementById("deliverySlot").value || null
@@ -2344,6 +2387,8 @@
         document.getElementById("deliveryNote").value = "";
         document.getElementById("deliverySlot").value = "";
         document.getElementById("pointsRedeemed").value = "";
+        document.getElementById("storeCreditToUse").value = "";
+        loadStoreCredit();
 
         if (order.status === "PENDING_PAYMENT") {
           setCheckoutStatus(

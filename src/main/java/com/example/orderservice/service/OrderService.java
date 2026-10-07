@@ -34,6 +34,7 @@ import com.example.orderservice.dto.WaitlistStatus;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
+import com.example.orderservice.entity.StoreCreditTransaction;
 import com.example.orderservice.entity.CouponRedemption;
 import com.example.orderservice.entity.LoyaltyAccount;
 import com.example.orderservice.entity.LoyaltyTier;
@@ -125,6 +126,12 @@ public class OrderService {
     @Autowired
     private CodRiskService codRiskService;
     @Autowired
+    private StoreCreditService storeCreditService;
+    // Cash already collected on a cancelled/returned order is paid back as store credit (there is no other way to
+    // send it back from here). Off = it is only recorded as no longer due, as before.
+    @Value("${store-credit.cash-refunds:true}")
+    private boolean cashRefundsToStoreCredit;
+    @Autowired
     private org.springframework.context.ApplicationEventPublisher eventPublisher;
     @Autowired
     ProductClient productClient;
@@ -187,7 +194,9 @@ public class OrderService {
         // Same fail-fast reasoning, applied on top of the coupon discount: redeeming more points than the
         // customer's balance actually holds, or more than what's left to pay, must fail before any payment.
         double pointsDiscount = resolvePointsRedemption(cart, price - discount);
-        double finalPrice = price - discount - pointsDiscount;
+        // Store credit comes off last, after coupon and points - same fail-fast validation (see resolveStoreCredit).
+        double creditUsed = resolveStoreCredit(cart, price - discount - pointsDiscount);
+        double finalPrice = price - discount - pointsDiscount - creditUsed;
         // Same fail-fast reasoning as stock/coupon above: an address that doesn't exist, or belongs to someone
         // else's phone number, must reject the order before any payment is attempted.
         validateShippingAddress(cart);
@@ -198,18 +207,35 @@ public class OrderService {
         }
 
         if (cart.getPaymentMethod() == PaymentMethod.PHONEPE && payerUpiId != null && !payerUpiId.isBlank()) {
+            if (creditUsed > 0) {
+                throw new ProductException("Store credit can't be combined with a UPI collect payment yet - pay with your PhonePe PIN or cash on delivery");
+            }
             return createPendingUpiOrder(cart, finalPrice, discount, payerUpiId);
         }
 
         // Cash on delivery never touches PhonepayService at all - nothing is charged now, so there is nothing to
         // refund later either (see cancel()/returnOrder()).
+        // Store credit is taken BEFORE charging, under a row lock, so two checkouts can't both spend the same
+        // balance; if the charge then fails it is given straight back.
+        StoreCreditTransaction creditTx = creditUsed > 0
+                ? storeCreditService.spend(cart.getCustomerPhno(), creditUsed, null, "Used at checkout") : null;
+        // Coupon, points and store credit together can cover the whole order - then there is nothing to charge.
+        boolean nothingToCharge = finalPrice < 0.005;
         PaymentResponse payment = null;
-        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
+        if (cart.getPaymentMethod() != PaymentMethod.CASH && !nothingToCharge) {
             // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the
             // payment (insufficient funds, expired session, locked account, bank down, ...) nothing here should
             // exist either.
-            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
-            payment = charge(token, finalPrice, idempotencyKey);
+            try {
+                String token = resolveBuyerToken(authorization, payerPhno, payerPin);
+                payment = charge(token, finalPrice, idempotencyKey);
+            } catch (RuntimeException e) {
+                if (creditTx != null) {
+                    storeCreditService.credit(cart.getCustomerPhno(), creditUsed, StoreCreditTransaction.Type.REVERSED,
+                            null, "Payment failed - store credit returned");
+                }
+                throw e;
+            }
         }
         recordCouponRedemption(cart.getCouponCode(), cart.getCustomerPhno());
         cart.setTotalPrice(finalPrice);
@@ -218,7 +244,7 @@ public class OrderService {
         cart.setPaymentTransactionId(payment != null ? payment.transactionId() : null);
         // A PHONEPE order is paid the instant its charge above succeeds; a CASH order isn't paid yet - see
         // markPaid().
-        cart.setPaid(payment != null);
+        cart.setPaid(payment != null || nothingToCharge);
         Cart saved=orderRepository.save(cart);
         for(OrderItem orderItem : saved.getOrderItems())
         {
@@ -226,6 +252,7 @@ public class OrderService {
             productClient.updateProductStock(serviceApiKey, orderItem.getProductId(),-orderItem.getProductQuantity());
         }
         Cart result = orderRepository.save(saved);
+        storeCreditService.linkOrder(creditTx, result.getOrderId());
         recordTracking(result.getOrderId(), OrderStatus.PLACED);
         redeemLoyaltyPoints(result.getCustomerPhno(), result.getPointsRedeemed(), result.getOrderId());
         sendNotification("Order placed successfully. OrderId: " + result.getOrderId()
@@ -263,6 +290,7 @@ public class OrderService {
         cart.setOrderItems(new ArrayList<>(merged.values()));
         cart.setOrderId(null);
         cart.setRefundedAmount(0);
+        cart.setStoreCreditRefunded(0);
         cart.setReturnReason(null);
         cart.setPaymentTransactionId(null);
         cart.setUpiId(null);
@@ -451,6 +479,15 @@ public class OrderService {
     // is refunded, same fail-fast reasoning as everywhere else in this service.
     public Cart cancel(long orderId, String authorization, String idempotencyKey, Long payerPhno, String payerPin,
                        String reason, String note) {
+        return cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin, reason, note, null);
+    }
+
+    // refundTo = STORE_CREDIT pays the refund into the customer's store credit instead of back through PhonePe
+    // (instant, and needs no PhonePe credentials); null or ORIGINAL keeps the normal refund. Same for the
+    // return/item-level methods below.
+    public Cart cancel(long orderId, String authorization, String idempotencyKey, Long payerPhno, String payerPin,
+                       String reason, String note, String refundTo) {
+        boolean toStoreCredit = refundsToStoreCredit(refundTo);
         String reasonCode = reason == null || reason.isBlank() ? null : reason.trim().toUpperCase(java.util.Locale.ROOT);
         if (reasonCode != null && !CANCEL_REASONS.contains(reasonCode)) {
             throw new ProductException("Unknown cancellation reason. Choose one of: " + String.join(", ", CANCEL_REASONS));
@@ -470,23 +507,22 @@ public class OrderService {
         // A CASH order was never charged through PhonepayService, so it has no paymentTransactionId to refund -
         // that's expected, not the "this order cannot be cancelled" guard below (which instead catches a PHONEPE
         // order that's somehow missing its transaction id, a real data-integrity problem).
-        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
-            if (cart.getPaymentTransactionId() == null) {
-                throw new ProductException("This order cannot be cancelled");
-            }
-            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
-            // No amount: PhonepayService refunds whatever is still unrefunded, i.e. everything minus any
-            // per-item cancellations already paid back.
-            refund(token, cart.getPaymentTransactionId(), null, idempotencyKey);
+        if (cart.getPaymentMethod() != PaymentMethod.CASH && cart.getPaymentTransactionId() == null && !paidWithoutCharge(cart)) {
+            throw new ProductException("This order cannot be cancelled");
         }
 
         double refundedNow = remainingRefundable(cart);
+        // No amount for a PhonePe refund: PhonepayService refunds whatever is still unrefunded, i.e. everything
+        // minus any per-item cancellations already paid back.
+        String destination = payBack(cart, refundedNow, null, toStoreCredit, authorization, idempotencyKey, payerPhno, payerPin);
+        restoreStoreCreditUsed(cart, null);
         closeOutstanding(cart, false);
         cart.setRefundedAmount(cart.getTotalPrice());
         cart.setStatus(OrderStatus.CANCELLED);
         cart.setCancelReason(reasonCode);
         cart.setCancelNote(cancelNote);
         Cart result = orderRepository.save(cart);
+        result.setRefundDestination(destination);
         recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
         sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
@@ -551,6 +587,12 @@ public class OrderService {
     // payerPhno/payerPin mirror cancel()'s storefront path - the customer-facing return button has no stored
     // session token either, only a phone+PIN entered fresh for this one call (see resolveBuyerToken).
     public Cart returnOrder(long orderId, String authorization, String idempotencyKey, String reason, Long payerPhno, String payerPin) {
+        return returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin, null);
+    }
+
+    public Cart returnOrder(long orderId, String authorization, String idempotencyKey, String reason, Long payerPhno,
+                            String payerPin, String refundTo) {
+        boolean toStoreCredit = refundsToStoreCredit(refundTo);
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A return reason is required");
         }
@@ -560,23 +602,21 @@ public class OrderService {
             throw new ProductException("Only a delivered order can be returned");
         }
         // Same CASH exception as cancel() above - never charged, so nothing to refund.
-        if (cart.getPaymentMethod() != PaymentMethod.CASH && cart.getPaymentTransactionId() == null) {
+        if (cart.getPaymentMethod() != PaymentMethod.CASH && cart.getPaymentTransactionId() == null && !paidWithoutCharge(cart)) {
             throw new ProductException("This order cannot be returned");
         }
 
         requireWithinReturnWindow(orderId);
 
-        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
-            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
-            refund(token, cart.getPaymentTransactionId(), null, idempotencyKey);
-        }
-
         double refundedNow = remainingRefundable(cart);
+        String destination = payBack(cart, refundedNow, null, toStoreCredit, authorization, idempotencyKey, payerPhno, payerPin);
+        restoreStoreCreditUsed(cart, null);
         closeOutstanding(cart, true);
         cart.setRefundedAmount(cart.getTotalPrice());
         cart.setStatus(OrderStatus.RETURNED);
         cart.setReturnReason(reason);
         Cart result = orderRepository.save(cart);
+        result.setRefundDestination(destination);
         recordTracking(result.getOrderId(), OrderStatus.RETURNED);
         clawBackLoyaltyPoints(result, null);
         sendNotification("Order returned successfully. OrderId: " + result.getOrderId()
@@ -605,6 +645,12 @@ public class OrderService {
     // units makes the whole order CANCELLED, exactly as cancel() would have. Same buyer-credential rules as cancel().
     public Cart cancelItem(long orderId, int productId, int quantity, String authorization, String idempotencyKey,
                            Long payerPhno, String payerPin) {
+        return cancelItem(orderId, productId, quantity, authorization, idempotencyKey, payerPhno, payerPin, null);
+    }
+
+    public Cart cancelItem(long orderId, int productId, int quantity, String authorization, String idempotencyKey,
+                           Long payerPhno, String payerPin, String refundTo) {
+        boolean toStoreCredit = refundsToStoreCredit(refundTo);
         Cart cart = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
         if (cart.getStatus() != OrderStatus.PLACED) {
@@ -612,7 +658,10 @@ public class OrderService {
         }
         OrderItem item = itemToAdjust(cart, productId, quantity);
         double refundAmount = partialRefundAmount(cart, item, quantity);
-        refundPartOfOrder(cart, refundAmount, authorization, idempotencyKey, payerPhno, payerPin, "cancelled");
+        Double creditShare = isLastOutstanding(cart, quantity) ? null : itemShare(cart, item, quantity);
+        String destination = refundPartOfOrder(cart, refundAmount, authorization, idempotencyKey, payerPhno, payerPin,
+                "cancelled", toStoreCredit);
+        restoreStoreCreditUsed(cart, creditShare);
 
         item.setCancelledQuantity(item.getCancelledQuantity() + quantity);
         productClient.updateProductStock(serviceApiKey, productId, quantity);
@@ -622,6 +671,7 @@ public class OrderService {
             cart.setStatus(OrderStatus.CANCELLED);
         }
         Cart result = orderRepository.save(cart);
+        result.setRefundDestination(destination);
         if (nothingLeft) {
             recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
         }
@@ -640,6 +690,12 @@ public class OrderService {
     // points the order earned. Returning the last outstanding units makes the whole order RETURNED.
     public Cart returnItem(long orderId, int productId, int quantity, String reason, String authorization,
                            String idempotencyKey, Long payerPhno, String payerPin) {
+        return returnItem(orderId, productId, quantity, reason, authorization, idempotencyKey, payerPhno, payerPin, null);
+    }
+
+    public Cart returnItem(long orderId, int productId, int quantity, String reason, String authorization,
+                           String idempotencyKey, Long payerPhno, String payerPin, String refundTo) {
+        boolean toStoreCredit = refundsToStoreCredit(refundTo);
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A return reason is required");
         }
@@ -652,7 +708,10 @@ public class OrderService {
         requireWithinReturnWindow(orderId);
         double share = itemShare(cart, item, quantity);
         double refundAmount = partialRefundAmount(cart, item, quantity);
-        refundPartOfOrder(cart, refundAmount, authorization, idempotencyKey, payerPhno, payerPin, "returned");
+        boolean lastUnits = isLastOutstanding(cart, quantity);
+        String destination = refundPartOfOrder(cart, refundAmount, authorization, idempotencyKey, payerPhno, payerPin,
+                "returned", toStoreCredit);
+        restoreStoreCreditUsed(cart, lastUnits ? null : share);
 
         item.setReturnedQuantity(item.getReturnedQuantity() + quantity);
         item.setReturnReason(reason.trim());
@@ -664,6 +723,7 @@ public class OrderService {
             cart.setReturnReason(reason.trim());
         }
         Cart result = orderRepository.save(cart);
+        result.setRefundDestination(destination);
         if (nothingLeft) {
             recordTracking(result.getOrderId(), OrderStatus.RETURNED);
         }
@@ -720,17 +780,94 @@ public class OrderService {
         return Math.max(0, roundMoney(cart.getTotalPrice() - cart.getRefundedAmount()));
     }
 
-    // Only a PhonePe order has money to send back; a cash order just owes less (recorded by the caller).
-    private void refundPartOfOrder(Cart cart, double amount, String authorization, String idempotencyKey,
-                                   Long payerPhno, String payerPin, String what) {
-        if (cart.getPaymentMethod() == PaymentMethod.CASH || amount <= 0) {
-            return;
+    // A per-item refund of `amount` (see payBack for where it goes). Returns the destination, as payBack does.
+    private String refundPartOfOrder(Cart cart, double amount, String authorization, String idempotencyKey,
+                                     Long payerPhno, String payerPin, String what, boolean toStoreCredit) {
+        if (amount <= 0) {
+            return null;
         }
-        if (cart.getPaymentTransactionId() == null) {
+        if (cart.getPaymentMethod() != PaymentMethod.CASH && !toStoreCredit && cart.getPaymentTransactionId() == null) {
             throw new ProductException("This item cannot be " + what);
         }
+        return payBack(cart, amount, BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP), toStoreCredit,
+                authorization, idempotencyKey, payerPhno, payerPin);
+    }
+
+    static final String STORE_CREDIT = "STORE_CREDIT";
+
+    // Sends `amount` of what the customer paid back to them:
+    //  - cash order: cash already collected becomes store credit (store-credit.cash-refunds); cash not yet
+    //    collected has nothing to send - it simply isn't due any more (the caller records that);
+    //  - online order, customer chose store credit: straight into their store credit, no PhonePe call;
+    //  - otherwise a PhonePe refund (phonepeAmount null = everything still unrefunded on the payment).
+    // Returns STORE_CREDIT when the money went to store credit, null otherwise.
+    private String payBack(Cart cart, double amount, BigDecimal phonepeAmount, boolean toStoreCredit,
+                           String authorization, String idempotencyKey, Long payerPhno, String payerPin) {
+        if (cart.getPaymentMethod() == PaymentMethod.CASH) {
+            if (amount > 0 && cart.isPaid() && cashRefundsToStoreCredit) {
+                storeCreditService.credit(cart.getCustomerPhno(), amount, StoreCreditTransaction.Type.REFUND,
+                        cart.getOrderId(), "Refund for order #" + cart.getOrderId() + " (cash collected)");
+                return STORE_CREDIT;
+            }
+            return null;
+        }
+        if (toStoreCredit) {
+            if (amount > 0) {
+                storeCreditService.credit(cart.getCustomerPhno(), amount, StoreCreditTransaction.Type.REFUND,
+                        cart.getOrderId(), "Refund for order #" + cart.getOrderId());
+                return STORE_CREDIT;
+            }
+            return null;
+        }
+        if (paidWithoutCharge(cart)) {
+            return null;
+        }
         String token = resolveBuyerToken(authorization, payerPhno, payerPin);
-        refund(token, cart.getPaymentTransactionId(), BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP), idempotencyKey);
+        refund(token, cart.getPaymentTransactionId(), phonepeAmount, idempotencyKey);
+        return null;
+    }
+
+    // Gives back the store credit this order was paid with: everything still outstanding (share null - a whole
+    // cancel/return, or the last units), otherwise the item's proportional share, never more than is left.
+    private double restoreStoreCreditUsed(Cart cart, Double share) {
+        double used = cart.getStoreCreditUsed() == null ? 0 : cart.getStoreCreditUsed();
+        double left = roundMoney(used - cart.getStoreCreditRefunded());
+        if (left <= 0) {
+            return 0;
+        }
+        double amount = share == null ? left : Math.min(roundMoney(used * share), left);
+        if (amount <= 0) {
+            return 0;
+        }
+        storeCreditService.credit(cart.getCustomerPhno(), amount, StoreCreditTransaction.Type.REFUND, cart.getOrderId(),
+                "Store credit used on order #" + cart.getOrderId() + " given back");
+        cart.setStoreCreditRefunded(roundMoney(cart.getStoreCreditRefunded() + amount));
+        return amount;
+    }
+
+    // An online order that coupon/points/store credit covered completely: marked paid without any PhonePe charge,
+    // so there is no payment to refund through PhonePe either.
+    private static boolean paidWithoutCharge(Cart cart) {
+        return cart.getPaymentMethod() != PaymentMethod.CASH && cart.getPaymentTransactionId() == null
+                && cart.isPaid() && cart.getTotalPrice() < 0.005;
+    }
+
+    private static boolean isLastOutstanding(Cart cart, int quantity) {
+        return cart.getOrderItems().stream().mapToInt(OrderItem::getOutstandingQuantity).sum() - quantity == 0;
+    }
+
+    private static boolean refundsToStoreCredit(String refundTo) {
+        if (refundTo == null || refundTo.isBlank()) {
+            return false;
+        }
+        String value = refundTo.trim().toUpperCase(java.util.Locale.ROOT);
+        if (value.equals(STORE_CREDIT)) {
+            return true;
+        }
+        if (value.equals("ORIGINAL")) {
+            return false;
+        }
+        throw new ProductException("refundTo must be STORE_CREDIT or ORIGINAL");
     }
 
     // Whole-order cancel/return: puts back in stock only what earlier per-item changes haven't already, and
@@ -837,6 +974,29 @@ public class OrderService {
             throw new ProductException("Cannot redeem more points than the order total after any coupon discount");
         }
         return requested;
+    }
+
+    // Store credit to use at checkout (rupees, optional). Same rules as points: more than the balance, or more than
+    // what's left to pay after coupon and points, fails before anything happens rather than being quietly capped.
+    private double resolveStoreCredit(Cart cart, double remainingPrice) {
+        Double requested = cart.getStoreCreditUsed();
+        if (requested == null || requested == 0) {
+            cart.setStoreCreditUsed(null);
+            return 0;
+        }
+        if (requested < 0 || requested.isNaN() || requested.isInfinite()) {
+            throw new ProductException("Store credit to use cannot be negative");
+        }
+        double value = roundMoney(requested);
+        double balance = storeCreditService.balance(cart.getCustomerPhno());
+        if (value > balance + 0.0001) {
+            throw new ProductException("You only have Rs. " + String.format(java.util.Locale.ROOT, "%.2f", balance) + " store credit");
+        }
+        if (value > roundMoney(remainingPrice) + 0.0001) {
+            throw new ProductException("Cannot use more store credit than the order total after any coupon and points");
+        }
+        cart.setStoreCreditUsed(value);
+        return value;
     }
 
     // Only called after a successful charge (see order()) - a failed/declined payment must not consume points,
@@ -1368,7 +1528,8 @@ public class OrderService {
         }
         return new Invoice(orderId, placedAt, order.getCustomerName(), order.getCustomerPhno(), lines,
                 order.getCouponCode(), order.getDiscountAmount(),
-                order.getPointsRedeemed() == null ? 0 : order.getPointsRedeemed(), order.getTotalPrice(),
+                order.getPointsRedeemed() == null ? 0 : order.getPointsRedeemed(),
+                order.getStoreCreditUsed() == null ? 0 : order.getStoreCreditUsed(), order.getTotalPrice(),
                 order.getRefundedAmount(),
                 String.valueOf(order.getPaymentMethod()), order.isPaid(), String.valueOf(order.getStatus()), address,
                 order.getDeliveryNote(), order.getDeliverySlot());

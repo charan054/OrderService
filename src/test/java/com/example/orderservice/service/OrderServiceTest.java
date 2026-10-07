@@ -1,5 +1,7 @@
 package com.example.orderservice.service;
 
+import static org.mockito.ArgumentMatchers.anyDouble;
+import com.example.orderservice.entity.StoreCreditTransaction;
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.CreateUpiCollectRequest;
@@ -146,6 +148,9 @@ class OrderServiceTest {
 
     @Mock
     private CodRiskService codRiskService;
+
+    @Mock
+    private StoreCreditService storeCreditService;
 
     @InjectMocks
     private OrderService service;
@@ -3041,6 +3046,229 @@ class OrderServiceTest {
         ArgumentCaptor<TrackingEvent> tracking = ArgumentCaptor.forClass(TrackingEvent.class);
         verify(trackingEventRepository).save(tracking.capture());
         assertEquals(OrderStatus.CANCELLED, tracking.getValue().getStatus());
+    }
+
+    // ---------- store credit ----------
+
+    private StoreCreditTransaction creditTx() {
+        return new StoreCreditTransaction();
+    }
+
+    @Test
+    void storeCreditComesOffAfterCouponAndPointsAndIsTakenBeforeCharging() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(storeCreditService.balance(CUSTOMER)).thenReturn(300.0);
+        StoreCreditTransaction tx = creditTx();
+        when(storeCreditService.spend(CUSTOMER, 120.0, null, "Used at checkout")).thenReturn(tx);
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setStoreCreditUsed(120.0);
+
+        Cart result = service.order(cart, AUTH, null);
+
+        assertEquals(380.0, result.getTotalPrice());
+        assertEquals(120.0, result.getStoreCreditUsed());
+        ArgumentCaptor<PaymentRequest> charged = ArgumentCaptor.forClass(PaymentRequest.class);
+        verify(phonepeClient).makePayment(eq(AUTH), charged.capture());
+        assertEquals(new BigDecimal("380.00"), charged.getValue().amount());
+        org.mockito.InOrder inOrder = org.mockito.Mockito.inOrder(storeCreditService, phonepeClient);
+        inOrder.verify(storeCreditService).spend(CUSTOMER, 120.0, null, "Used at checkout");
+        inOrder.verify(phonepeClient).makePayment(eq(AUTH), any(PaymentRequest.class));
+        verify(storeCreditService).linkOrder(tx, result.getOrderId());
+    }
+
+    @Test
+    void aFailedChargeGivesTheReservedStoreCreditStraightBack() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(storeCreditService.balance(CUSTOMER)).thenReturn(300.0);
+        when(storeCreditService.spend(CUSTOMER, 100.0, null, "Used at checkout")).thenReturn(creditTx());
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class)))
+                .thenThrow(declinedBy("makepayment", 400, "Insufficient Funds"));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setStoreCreditUsed(100.0);
+
+        assertThrows(PaymentException.class, () -> service.order(cart, AUTH, null));
+
+        verify(storeCreditService).credit(CUSTOMER, 100.0, StoreCreditTransaction.Type.REVERSED, null,
+                "Payment failed - store credit returned");
+        verify(orderRepository, never()).save(any(Cart.class));
+    }
+
+    @Test
+    void storeCreditCoveringTheWholeOrderSkipsPhonepeAndMarksItPaid() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 200.0, 10));
+        when(storeCreditService.balance(CUSTOMER)).thenReturn(500.0);
+        when(storeCreditService.spend(CUSTOMER, 200.0, null, "Used at checkout")).thenReturn(creditTx());
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setStoreCreditUsed(200.0);
+
+        Cart result = service.order(cart, null, null);
+
+        assertEquals(0.0, result.getTotalPrice());
+        assertTrue(result.isPaid());
+        assertNull(result.getPaymentTransactionId());
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void storeCreditOverTheBalanceOrTheTotalIsRejectedBeforeAnything() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 200.0, 10));
+        when(storeCreditService.balance(CUSTOMER)).thenReturn(50.0, 500.0);
+        Cart tooMuchForBalance = cart(CUSTOMER, item(1, 1));
+        tooMuchForBalance.setStoreCreditUsed(60.0);
+        Cart tooMuchForOrder = cart(CUSTOMER, item(1, 1));
+        tooMuchForOrder.setStoreCreditUsed(201.0);
+        Cart negative = cart(CUSTOMER, item(1, 1));
+        negative.setStoreCreditUsed(-5.0);
+
+        assertThrows(ProductException.class, () -> service.order(tooMuchForBalance, AUTH, null));
+        assertThrows(ProductException.class, () -> service.order(tooMuchForOrder, AUTH, null));
+        assertThrows(ProductException.class, () -> service.order(negative, AUTH, null));
+        verify(storeCreditService, never()).spend(anyLong(), anyDouble(), any(), any());
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void storeCreditCannotBeCombinedWithAUpiCollect() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 200.0, 10));
+        when(storeCreditService.balance(CUSTOMER)).thenReturn(500.0);
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setStoreCreditUsed(50.0);
+
+        assertThrows(ProductException.class, () -> service.order(cart, null, null, null, null, "9876543210@charanpe"));
+        verify(storeCreditService, never()).spend(anyLong(), anyDouble(), any(), any());
+    }
+
+    @Test
+    void cancellingToStoreCreditSkipsPhonepeAndCreditsWhatWasPaidPlusTheCreditUsed() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 500));
+        cart.setTotalPrice(380);
+        cart.setStoreCreditUsed(120.0);
+        cart.setPaid(true);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.cancel(42L, null, null, null, null, null, null, "store_credit");
+
+        verify(phonepeClient, never()).refund(any(), anyLong(), any());
+        verify(storeCreditService).credit(CUSTOMER, 380.0, StoreCreditTransaction.Type.REFUND, 42L, "Refund for order #42");
+        verify(storeCreditService).credit(CUSTOMER, 120.0, StoreCreditTransaction.Type.REFUND, 42L,
+                "Store credit used on order #42 given back");
+        assertEquals("STORE_CREDIT", result.getRefundDestination());
+        assertEquals(120.0, result.getStoreCreditRefunded());
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+    }
+
+    @Test
+    void aNormalCancelStillRefundsThroughPhonepeAndReturnsTheCreditUsed() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 500));
+        cart.setTotalPrice(380);
+        cart.setStoreCreditUsed(120.0);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.cancel(42L, AUTH, null);
+
+        verify(phonepeClient).refund(eq(AUTH), eq(100000L), any(RefundRequest.class));
+        verify(storeCreditService).credit(CUSTOMER, 120.0, StoreCreditTransaction.Type.REFUND, 42L,
+                "Store credit used on order #42 given back");
+        verify(storeCreditService, never()).credit(eq(CUSTOMER), eq(380.0), any(), any(), any());
+        assertNull(result.getRefundDestination());
+    }
+
+    @Test
+    void anOrderPaidEntirelyWithStoreCreditCanBeCancelledWithoutPhonepe() {
+        Cart cart = placedOrder(42L, 0L, pricedItem(1, 1, 200));
+        cart.setPaymentTransactionId(null);
+        cart.setTotalPrice(0);
+        cart.setPaid(true);
+        cart.setStoreCreditUsed(200.0);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        service.cancel(42L, null, null);
+
+        verifyNoInteractions(phonepeClient);
+        verify(storeCreditService).credit(CUSTOMER, 200.0, StoreCreditTransaction.Type.REFUND, 42L,
+                "Store credit used on order #42 given back");
+    }
+
+    @Test
+    void cancellingAnItemReturnsItsShareOfTheCreditUsedAndTheLastUnitsTheRest() {
+        // Gross 300 (100 + 200); 90 of it paid with store credit, 210 charged.
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 100), pricedItem(2, 1, 200));
+        cart.setTotalPrice(210);
+        cart.setStoreCreditUsed(90.0);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        service.cancelItem(42L, 1, 1, null, null, null, null, "STORE_CREDIT");
+        Cart result = service.cancelItem(42L, 2, 1, null, null, null, null, "STORE_CREDIT");
+
+        verify(storeCreditService).credit(CUSTOMER, 70.0, StoreCreditTransaction.Type.REFUND, 42L, "Refund for order #42");
+        verify(storeCreditService).credit(CUSTOMER, 30.0, StoreCreditTransaction.Type.REFUND, 42L,
+                "Store credit used on order #42 given back");
+        verify(storeCreditService).credit(CUSTOMER, 140.0, StoreCreditTransaction.Type.REFUND, 42L, "Refund for order #42");
+        verify(storeCreditService).credit(CUSTOMER, 60.0, StoreCreditTransaction.Type.REFUND, 42L,
+                "Store credit used on order #42 given back");
+        assertEquals(90.0, result.getStoreCreditRefunded());
+        verify(phonepeClient, never()).refund(any(), anyLong(), any());
+    }
+
+    @Test
+    void returningACollectedCashOrderPaysTheCashBackAsStoreCredit() {
+        ReflectionTestUtils.setField(service, "cashRefundsToStoreCredit", true);
+        Cart cart = placedOrder(42L, 0L, pricedItem(1, 1, 300));
+        cart.setPaymentTransactionId(null);
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setStatus(OrderStatus.DELIVERED);
+        cart.setTotalPrice(300);
+        cart.setPaid(true);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.returnOrder(42L, null, null, "Damaged");
+
+        verify(storeCreditService).credit(CUSTOMER, 300.0, StoreCreditTransaction.Type.REFUND, 42L,
+                "Refund for order #42 (cash collected)");
+        assertEquals("STORE_CREDIT", result.getRefundDestination());
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void uncollectedCashIsNotCreditedAndNeitherIsCollectedCashWhenTheSettingIsOff() {
+        Cart unpaid = placedOrder(42L, 0L, pricedItem(1, 1, 300));
+        unpaid.setPaymentTransactionId(null);
+        unpaid.setPaymentMethod(PaymentMethod.CASH);
+        unpaid.setTotalPrice(300);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(unpaid));
+        when(orderRepository.save(unpaid)).thenReturn(unpaid);
+        ReflectionTestUtils.setField(service, "cashRefundsToStoreCredit", true);
+
+        service.cancel(42L, null, null);
+
+        Cart paid = placedOrder(43L, 0L, pricedItem(1, 1, 300));
+        paid.setPaymentTransactionId(null);
+        paid.setPaymentMethod(PaymentMethod.CASH);
+        paid.setTotalPrice(300);
+        paid.setPaid(true);
+        when(orderRepository.findById(43L)).thenReturn(Optional.of(paid));
+        when(orderRepository.save(paid)).thenReturn(paid);
+        ReflectionTestUtils.setField(service, "cashRefundsToStoreCredit", false);
+
+        service.cancel(43L, null, null);
+
+        verify(storeCreditService, never()).credit(anyLong(), anyDouble(), any(), any(), any());
+    }
+
+    @Test
+    void anUnknownRefundDestinationIsRejectedBeforeAnything() {
+        assertThrows(ProductException.class, () -> service.cancel(42L, AUTH, null, null, null, null, null, "BANK"));
+        verify(orderRepository, never()).findById(anyLong());
+        verifyNoInteractions(phonepeClient);
     }
 
     @Test

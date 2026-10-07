@@ -423,6 +423,22 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">💳</div>
+                <div class="title-wrap">
+                    <h2>Store Credit</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>View a customer's store credit, or add / take away credit (goodwill, corrections). A note is required and is shown in the customer's history. Requires the Service Key above.</p>
+            <input type="number" id="creditPhno" placeholder="Customer phone number" />
+            <input type="number" id="creditAmount" step="0.01" placeholder="Amount, ₹ (negative to take away)" />
+            <input type="text" id="creditNote" maxlength="200" placeholder="Note, e.g. Late delivery goodwill" />
+            <button class="blue" onclick="adjustStoreCredit()">Adjust Credit</button>
+            <button onclick="viewStoreCredit()">View Balance</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">🎟️</div>
                 <div class="title-wrap">
                     <h2>Bulk Single-Use Coupons</h2>
@@ -1945,6 +1961,30 @@
 
       showStatus("Coupon saved successfully. Result opened in new tab.", "success");
       openResultTab("Add Coupon", data);
+    }
+
+    async function viewStoreCredit() {
+      const phno = document.getElementById("creditPhno").value.trim();
+      if (!phno) return showStatus("Please enter the customer's phone number.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const data = await apiCall(`http://localhost:8083/storecredit/byphno?phno=${encodeURIComponent(phno)}`, { headers: { "X-Service-Key": serviceKey } });
+      if (!data) return;
+      showStatus(`Store credit balance: ₹${Number(data.balance).toFixed(2)}. History opened in new tab.`, "success");
+      openResultTab("Store Credit", data);
+    }
+
+    async function adjustStoreCredit() {
+      const phno = document.getElementById("creditPhno").value.trim();
+      const amount = document.getElementById("creditAmount").value.trim();
+      const note = document.getElementById("creditNote").value.trim();
+      if (!phno || !amount || !note) return showStatus("Phone number, amount and a note are all required.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const data = await apiCall(`http://localhost:8083/storecredit/adjust?phno=${encodeURIComponent(phno)}&amount=${encodeURIComponent(amount)}&note=${encodeURIComponent(note)}`,
+        { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      if (!data) return;
+      showStatus(`Store credit is now ₹${Number(data.balance).toFixed(2)}.`, "success");
     }
 
     async function generateBulkCoupons() {
