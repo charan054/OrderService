@@ -612,6 +612,21 @@ class OrderControllerSecurityTest {
         mockMvc.perform(post("/loyalty/expiry-warnings/run").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
     }
 
+    // Refer-a-friend: the signed-in customer's own number (or the service key).
+    @Test
+    void referralEndpointsWithoutCredentialsAreUnauthorized() throws Exception {
+        mockMvc.perform(get("/referral/mine").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/referral/apply").param("phno", "9876543210").param("code", "ABCD2345"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void aCustomerCannotUseSomeoneElsesReferralCard() throws Exception {
+        mockMvc.perform(get("/referral/mine").param("phno", "9000000009").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(post("/referral/apply").param("phno", "9000000009").param("code", "ABCD2345").with(customer()))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());

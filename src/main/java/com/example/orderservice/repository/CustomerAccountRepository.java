@@ -6,4 +6,5 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface CustomerAccountRepository extends JpaRepository<CustomerAccount, Long> {
+    java.util.Optional<CustomerAccount> findByReferralCode(String referralCode);
 }
