@@ -1619,9 +1619,19 @@
           <div class="review-item">
             <div class="review-meta">${escapeHtml(r.reviewerName)} &middot; <span class="stars">${starsFor(r.rating)}</span>${r.verifiedPurchase ? ' <span class="verified-badge" title="This reviewer bought this product from Charan Mart">&#10003; Verified purchase</span>' : ""}</div>
             <div class="review-comment">${escapeHtml(r.comment || "")}</div>
+            <button class="details-link" style="font-size:12px;" onclick="reportReview(${r.reviewId})">Report this review</button>
           </div>
         `).join("")
         : `<p style="color:var(--muted); font-size:14px;">No reviews yet - be the first!</p>`;
+    }
+
+    // A report only queues the review for an admin to look at (the review stays visible until they hide it).
+    async function reportReview(reviewId) {
+      const reason = prompt("Why are you reporting this review? (optional)");
+      if (reason === null) return;
+      const response = await authFetch(`${BASE_URL}/cart/reviews/flag?productId=${modalProductId}&reviewId=${reviewId}`
+        + (reason.trim() ? `&reason=${encodeURIComponent(reason.trim())}` : ""), { method: "POST" });
+      alert(response.ok ? "Thanks - we'll take a look at this review." : "Couldn't send your report. Please try again.");
     }
 
     async function loadModalGallery(productId) {
