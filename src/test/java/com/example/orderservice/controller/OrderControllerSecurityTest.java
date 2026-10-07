@@ -629,6 +629,31 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void cancellingAnItemNeedsASession() throws Exception {
+        long orderId = savedOrderOf(CUSTOMER);
+        mockMvc.perform(post("/cart/" + orderId + "/items/1/cancel").param("quantity", "1"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void cancellingOrReturningAnItemOfAnotherCustomersOrderLooksLikeItDoesNotExist() throws Exception {
+        long orderId = savedOrderOf(CUSTOMER);
+        mockMvc.perform(post("/cart/" + orderId + "/items/1/cancel").param("quantity", "1").with(sessionOf(OTHER_CUSTOMER)))
+                .andExpect(status().isNotFound());
+        mockMvc.perform(post("/cart/" + orderId + "/items/1/return").param("quantity", "1").param("reason", "x")
+                        .with(sessionOf(OTHER_CUSTOMER)))
+                .andExpect(status().isNotFound());
+    }
+
+    // The fixture order has no items, so the service rejects it - what matters is the request got past security.
+    @Test
+    void cancellingAnItemOfYourOwnOrderReachesTheService() throws Exception {
+        long orderId = savedOrderOf(CUSTOMER);
+        mockMvc.perform(post("/cart/" + orderId + "/items/1/cancel").param("quantity", "1").with(customer()))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void ownOrderPaymentStatusWithOwnSessionSucceeds() throws Exception {
         long orderId = savedOrderOf(CUSTOMER);
         mockMvc.perform(get("/cart/" + orderId + "/paymentstatus").with(customer())).andExpect(status().isOk());

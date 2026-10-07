@@ -43,6 +43,9 @@ public class Cart {
     // Kept on the saved order as a record of how many points were applied, same role couponCode plays.
     private Integer pointsRedeemed;
     private double totalPrice;
+    // How much of totalPrice no longer stands: refunded to the buyer for a PhonePe order, or no longer due for a
+    // cash one. Grows with each per-item cancel/return and reaches totalPrice on a full cancel/return.
+    private double refundedAmount;
     // Set by the caller at checkout (optional); order() validates it belongs to the same customerPhno before
     // saving it as a record of which saved address the order shipped to. Purely informational once saved - like
     // couponCode, re-editing this field after the fact has no effect on anything.

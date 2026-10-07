@@ -156,6 +156,9 @@ public class OrderService {
                 throw new ProductException("Product quantity exceeded");
             }
             price=price+(orderItem.getProductQuantity()*pro.getProductPrice());
+            orderItem.setUnitPrice(pro.getProductPrice());
+            orderItem.setCancelledQuantity(0);
+            orderItem.setReturnedQuantity(0);
         }
         // Resolved (and normalized onto the cart) BEFORE charging, same reasoning as stock: an invalid/inactive
         // code must fail before anything - including a payment - has happened.
@@ -345,18 +348,20 @@ public class OrderService {
                 throw new ProductException("This order cannot be cancelled");
             }
             String token = resolveBuyerToken(authorization, payerPhno, payerPin);
-            refund(token, cart.getPaymentTransactionId(), idempotencyKey);
+            // No amount: PhonepayService refunds whatever is still unrefunded, i.e. everything minus any
+            // per-item cancellations already paid back.
+            refund(token, cart.getPaymentTransactionId(), null, idempotencyKey);
         }
 
-        for (OrderItem orderItem : cart.getOrderItems()) {
-            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
-        }
+        double refundedNow = remainingRefundable(cart);
+        closeOutstanding(cart, false);
+        cart.setRefundedAmount(cart.getTotalPrice());
         cart.setStatus(OrderStatus.CANCELLED);
         Cart result = orderRepository.save(cart);
         recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
         sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
                 + " Customer: " + mask(result.getCustomerPhno())
-                + " Refunded: " + result.getTotalPrice());
+                + " Refunded: " + refundedNow);
         return result;
     }
 
@@ -383,8 +388,32 @@ public class OrderService {
             throw new ProductException("This order cannot be returned");
         }
 
-        List<TrackingEvent> deliveredEvents = trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId);
-        Instant deliveredAt = deliveredEvents.stream()
+        requireWithinReturnWindow(orderId);
+
+        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
+            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
+            refund(token, cart.getPaymentTransactionId(), null, idempotencyKey);
+        }
+
+        double refundedNow = remainingRefundable(cart);
+        closeOutstanding(cart, true);
+        cart.setRefundedAmount(cart.getTotalPrice());
+        cart.setStatus(OrderStatus.RETURNED);
+        cart.setReturnReason(reason);
+        Cart result = orderRepository.save(cart);
+        recordTracking(result.getOrderId(), OrderStatus.RETURNED);
+        clawBackLoyaltyPoints(result, null);
+        sendNotification("Order returned successfully. OrderId: " + result.getOrderId()
+                + " Customer: " + mask(result.getCustomerPhno())
+                + " Reason: " + reason
+                + " Refunded: " + refundedNow);
+        return result;
+    }
+
+    // Measured from the order's latest DELIVERED tracking event; an order with none (delivered before tracking
+    // existed) skips the check rather than being blocked forever.
+    private void requireWithinReturnWindow(long orderId) {
+        Instant deliveredAt = trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId).stream()
                 .filter(e -> e.getStatus() == OrderStatus.DELIVERED)
                 .map(TrackingEvent::getTimestamp)
                 .reduce((first, second) -> second) // latest DELIVERED event, in case of any anomaly
@@ -392,25 +421,159 @@ public class OrderService {
         if (deliveredAt != null && deliveredAt.isBefore(Instant.now().minus(RETURN_WINDOW_DAYS, ChronoUnit.DAYS))) {
             throw new ProductException("Return window of " + RETURN_WINDOW_DAYS + " days has expired");
         }
+    }
 
-        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
-            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
-            refund(token, cart.getPaymentTransactionId(), idempotencyKey);
+    // Cancels some units of one item on a still-PLACED order: refunds that item's share of what was paid (or, for a
+    // cash order, takes it off what's due) and puts those units back in stock. Cancelling the last outstanding
+    // units makes the whole order CANCELLED, exactly as cancel() would have. Same buyer-credential rules as cancel().
+    public Cart cancelItem(long orderId, int productId, int quantity, String authorization, String idempotencyKey,
+                           Long payerPhno, String payerPin) {
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() != OrderStatus.PLACED) {
+            throw new ProductException("Only items of a placed order can be cancelled");
         }
+        OrderItem item = itemToAdjust(cart, productId, quantity);
+        double refundAmount = partialRefundAmount(cart, item, quantity);
+        refundPartOfOrder(cart, refundAmount, authorization, idempotencyKey, payerPhno, payerPin, "cancelled");
 
-        for (OrderItem orderItem : cart.getOrderItems()) {
-            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
+        item.setCancelledQuantity(item.getCancelledQuantity() + quantity);
+        productClient.updateProductStock(serviceApiKey, productId, quantity);
+        cart.setRefundedAmount(roundMoney(cart.getRefundedAmount() + refundAmount));
+        boolean nothingLeft = cart.getOrderItems().stream().allMatch(i -> i.getOutstandingQuantity() == 0);
+        if (nothingLeft) {
+            cart.setStatus(OrderStatus.CANCELLED);
         }
-        cart.setStatus(OrderStatus.RETURNED);
-        cart.setReturnReason(reason);
         Cart result = orderRepository.save(cart);
-        recordTracking(result.getOrderId(), OrderStatus.RETURNED);
-        clawBackLoyaltyPoints(result);
-        sendNotification("Order returned successfully. OrderId: " + result.getOrderId()
-                + " Customer: " + mask(result.getCustomerPhno())
-                + " Reason: " + reason
-                + " Refunded: " + result.getTotalPrice());
+        if (nothingLeft) {
+            recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
+        }
+        sendNotification("Order item cancelled. OrderId: " + result.getOrderId() + " Product: " + productId
+                + " Quantity: " + quantity + " Customer: " + mask(result.getCustomerPhno()) + " Refunded: " + refundAmount);
         return result;
+    }
+
+    // Returns some units of one item from a DELIVERED order inside the return window - the per-item counterpart of
+    // returnOrder(), with the same refund/credential rules. Also claws back that item's share of the loyalty
+    // points the order earned. Returning the last outstanding units makes the whole order RETURNED.
+    public Cart returnItem(long orderId, int productId, int quantity, String reason, String authorization,
+                           String idempotencyKey, Long payerPhno, String payerPin) {
+        if (reason == null || reason.isBlank()) {
+            throw new ProductException("A return reason is required");
+        }
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() != OrderStatus.DELIVERED) {
+            throw new ProductException("Only items of a delivered order can be returned");
+        }
+        OrderItem item = itemToAdjust(cart, productId, quantity);
+        requireWithinReturnWindow(orderId);
+        double share = itemShare(cart, item, quantity);
+        double refundAmount = partialRefundAmount(cart, item, quantity);
+        refundPartOfOrder(cart, refundAmount, authorization, idempotencyKey, payerPhno, payerPin, "returned");
+
+        item.setReturnedQuantity(item.getReturnedQuantity() + quantity);
+        item.setReturnReason(reason.trim());
+        productClient.updateProductStock(serviceApiKey, productId, quantity);
+        cart.setRefundedAmount(roundMoney(cart.getRefundedAmount() + refundAmount));
+        boolean nothingLeft = cart.getOrderItems().stream().allMatch(i -> i.getOutstandingQuantity() == 0);
+        if (nothingLeft) {
+            cart.setStatus(OrderStatus.RETURNED);
+            cart.setReturnReason(reason.trim());
+        }
+        Cart result = orderRepository.save(cart);
+        if (nothingLeft) {
+            recordTracking(result.getOrderId(), OrderStatus.RETURNED);
+        }
+        clawBackLoyaltyPoints(result, nothingLeft ? null : share);
+        sendNotification("Order item returned. OrderId: " + result.getOrderId() + " Product: " + productId
+                + " Quantity: " + quantity + " Customer: " + mask(result.getCustomerPhno())
+                + " Reason: " + reason.trim() + " Refunded: " + refundAmount);
+        return result;
+    }
+
+    private OrderItem itemToAdjust(Cart cart, int productId, int quantity) {
+        if (quantity < 1) {
+            throw new ProductException("Quantity must be at least 1");
+        }
+        OrderItem item = cart.getOrderItems().stream()
+                .filter(i -> i.getProductId() == productId)
+                .findFirst()
+                .orElseThrow(() -> new ProductException("That product is not in this order"));
+        if (quantity > item.getOutstandingQuantity()) {
+            throw new ProductException("Only " + item.getOutstandingQuantity() + " of that item can still be changed");
+        }
+        // Without what each unit cost at the time, an item's share of the (possibly discounted) total can't be
+        // worked out - older orders can still be cancelled/returned whole.
+        if (cart.getOrderItems().stream().anyMatch(i -> i.getUnitPrice() == null)) {
+            throw new ProductException("This order was placed before per-item changes were possible - cancel or return the whole order instead");
+        }
+        return item;
+    }
+
+    // This item-quantity's fraction of the order's undiscounted value.
+    private double itemShare(Cart cart, OrderItem item, int quantity) {
+        double orderGross = cart.getOrderItems().stream().mapToDouble(i -> i.getUnitPrice() * i.getProductQuantity()).sum();
+        return orderGross <= 0 ? 0 : item.getUnitPrice() * quantity / orderGross;
+    }
+
+    // The item's share of what was actually paid, so coupon and points discounts are shared out proportionally.
+    // When this takes the last outstanding units, it is exactly what's left instead - rounding can never leave a
+    // few paise stuck or refund a few too many.
+    private double partialRefundAmount(Cart cart, OrderItem item, int quantity) {
+        double remaining = remainingRefundable(cart);
+        int outstandingAfter = cart.getOrderItems().stream().mapToInt(OrderItem::getOutstandingQuantity).sum() - quantity;
+        if (outstandingAfter == 0) {
+            return remaining;
+        }
+        return Math.min(roundMoney(cart.getTotalPrice() * itemShare(cart, item, quantity)), remaining);
+    }
+
+    private double remainingRefundable(Cart cart) {
+        return Math.max(0, roundMoney(cart.getTotalPrice() - cart.getRefundedAmount()));
+    }
+
+    // Only a PhonePe order has money to send back; a cash order just owes less (recorded by the caller).
+    private void refundPartOfOrder(Cart cart, double amount, String authorization, String idempotencyKey,
+                                   Long payerPhno, String payerPin, String what) {
+        if (cart.getPaymentMethod() == PaymentMethod.CASH || amount <= 0) {
+            return;
+        }
+        if (cart.getPaymentTransactionId() == null) {
+            throw new ProductException("This item cannot be " + what);
+        }
+        String token = resolveBuyerToken(authorization, payerPhno, payerPin);
+        refund(token, cart.getPaymentTransactionId(), BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP), idempotencyKey);
+    }
+
+    // Whole-order cancel/return: puts back in stock only what earlier per-item changes haven't already, and
+    // records those units as cancelled/returned so every item ends with nothing outstanding.
+    private void closeOutstanding(Cart cart, boolean returned) {
+        for (OrderItem orderItem : cart.getOrderItems()) {
+            int outstanding = orderItem.getOutstandingQuantity();
+            if (outstanding <= 0) {
+                continue;
+            }
+            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), outstanding);
+            if (returned) {
+                orderItem.setReturnedQuantity(orderItem.getReturnedQuantity() + outstanding);
+            } else {
+                orderItem.setCancelledQuantity(orderItem.getCancelledQuantity() + outstanding);
+            }
+        }
+    }
+
+    private static double roundMoney(double amount) {
+        return BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP).doubleValue();
+    }
+
+    // What the customer is still actually paying for: nothing once cancelled/returned (older returned orders
+    // predate refundedAmount, so status decides), otherwise the total minus any per-item refunds.
+    private static double netPaid(Cart cart) {
+        if (cart.getStatus() == OrderStatus.CANCELLED || cart.getStatus() == OrderStatus.RETURNED) {
+            return 0;
+        }
+        return Math.max(0, cart.getTotalPrice() - cart.getRefundedAmount());
     }
 
     // No code, no discount - the common case. A code that doesn't match any Coupon, or matches one that's been
@@ -509,7 +672,8 @@ public class OrderService {
     // a tier threshold takes effect starting with the customer's NEXT order, not retroactively on the one that
     // crossed it.
     private void earnLoyaltyPoints(Cart cart) {
-        int baseEarned = (int) (cart.getTotalPrice() / RUPEES_PER_POINT);
+        // Net of any items cancelled before delivery - those were never bought.
+        int baseEarned = (int) (netPaid(cart) / RUPEES_PER_POINT);
         if (baseEarned <= 0) {
             return;
         }
@@ -529,7 +693,10 @@ public class OrderService {
     // have already spent those points on a different order in the meantime, and this system has no notion of a
     // customer owing points back. lifetimePointsEarned is reduced by the same clamped amount - a returned order
     // must not count toward tier progress any more than it counts toward the spendable balance.
-    private void clawBackLoyaltyPoints(Cart cart) {
+    //
+    // share is the returned item's fraction of the order (a per-item return claws back that fraction of what was
+    // earned), or null to claw back everything not already clawed back by earlier per-item returns.
+    private void clawBackLoyaltyPoints(Cart cart, Double share) {
         LoyaltyTransaction earnedTx = loyaltyTransactionRepository
                 .findByOrderIdAndType(cart.getOrderId(), LoyaltyTransactionType.EARNED)
                 .orElse(null);
@@ -537,8 +704,16 @@ public class OrderService {
             return;
         }
         int earned = earnedTx.getPoints();
+        int alreadyClawed = -loyaltyTransactionRepository
+                .findAllByOrderIdAndType(cart.getOrderId(), LoyaltyTransactionType.ADJUSTED).stream()
+                .mapToInt(LoyaltyTransaction::getPoints).filter(p -> p < 0).sum();
+        int stillEarned = Math.max(0, earned - alreadyClawed);
+        int target = share == null ? stillEarned : Math.min(stillEarned, (int) Math.floor(earned * share));
+        if (target <= 0) {
+            return;
+        }
         LoyaltyAccount account = loadLoyaltyAccount(cart.getCustomerPhno());
-        int clawedBack = Math.min(earned, account.getPointsBalance());
+        int clawedBack = Math.min(target, account.getPointsBalance());
         if (clawedBack <= 0) {
             return;
         }
@@ -547,7 +722,7 @@ public class OrderService {
         account.setLastActivityAt(Instant.now());
         loyaltyAccountRepository.save(account);
         recordLoyaltyTransaction(cart.getCustomerPhno(), cart.getOrderId(), -clawedBack, LoyaltyTransactionType.ADJUSTED,
-                "Points earned on order #" + cart.getOrderId() + " reversed after return");
+                "Points earned on order #" + cart.getOrderId() + " reversed after " + (share == null ? "return" : "item return"));
     }
 
     private LoyaltyAccount newLoyaltyAccount(long customerPhno) {
@@ -814,18 +989,20 @@ public class OrderService {
         List<Invoice.Line> lines = new ArrayList<>();
         for (OrderItem item : order.getOrderItems()) {
             String name = "Product #" + item.getProductId();
-            double unitPrice = 0;
+            double unitPrice = item.getUnitPrice() != null ? item.getUnitPrice() : 0;
             try {
                 Product p = productClient.getProductById(item.getProductId());
                 if (p != null) {
                     name = p.getProductName();
-                    unitPrice = p.getProductPrice();
+                    if (item.getUnitPrice() == null) {
+                        unitPrice = p.getProductPrice();
+                    }
                 }
             } catch (FeignException e) {
                 // removed from the catalog - keep the fallback name/price rather than failing the whole receipt
             }
             lines.add(new Invoice.Line(item.getProductId(), name, item.getProductQuantity(), unitPrice,
-                    unitPrice * item.getProductQuantity()));
+                    unitPrice * item.getProductQuantity(), item.getCancelledQuantity(), item.getReturnedQuantity()));
         }
         Instant placedAt = trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId).stream()
                 .map(TrackingEvent::getTimestamp).findFirst().orElse(null);
@@ -838,6 +1015,7 @@ public class OrderService {
         return new Invoice(orderId, placedAt, order.getCustomerName(), order.getCustomerPhno(), lines,
                 order.getCouponCode(), order.getDiscountAmount(),
                 order.getPointsRedeemed() == null ? 0 : order.getPointsRedeemed(), order.getTotalPrice(),
+                order.getRefundedAmount(),
                 String.valueOf(order.getPaymentMethod()), order.isPaid(), String.valueOf(order.getStatus()), address,
                 order.getDeliveryNote());
     }
@@ -954,10 +1132,11 @@ public class OrderService {
         return payment;
     }
 
-    private void refund(String authorization, long paymentTransactionId, String idempotencyKey) {
+    // amount null = whatever is still unrefunded on the payment (see PhonepayService's partial refunds).
+    private void refund(String authorization, long paymentTransactionId, BigDecimal amount, String idempotencyKey) {
         PaymentResponse refund;
         try {
-            refund = phonepeClient.refund(authorization, paymentTransactionId, new RefundRequest(idempotencyKey));
+            refund = phonepeClient.refund(authorization, paymentTransactionId, new RefundRequest(idempotencyKey, amount));
         } catch (FeignException e) {
             HttpStatus status = HttpStatus.resolve(e.status());
             throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
@@ -1120,20 +1299,24 @@ public class OrderService {
                 .filter(cart -> cart.getStatus() != OrderStatus.CANCELLED)
                 .toList();
 
-        double totalRevenue = countedOrders.stream().mapToDouble(Cart::getTotalPrice).sum();
+        // Net of refunds: a returned order (or returned/cancelled items) is no longer revenue.
+        double totalRevenue = countedOrders.stream().mapToDouble(OrderService::netPaid).sum();
         Map<String, Double> revenueByPaymentMethod = countedOrders.stream()
                 .collect(Collectors.groupingBy(cart -> paymentMethodNameOrUnknown(cart.getPaymentMethod()),
-                        Collectors.summingDouble(Cart::getTotalPrice)));
+                        Collectors.summingDouble(OrderService::netPaid)));
 
         Map<Integer, Integer> unitsSoldByProduct = new HashMap<>();
         Map<Integer, Double> revenueByProduct = new HashMap<>();
         for (Cart cart : countedOrders) {
             List<OrderItem> items = cart.getOrderItems();
             if (items == null) continue;
+            if (cart.getStatus() == OrderStatus.RETURNED) continue;
             for (OrderItem item : items) {
-                unitsSoldByProduct.merge(item.getProductId(), item.getProductQuantity(), Integer::sum);
+                int kept = item.getOutstandingQuantity();
+                if (kept <= 0) continue;
+                unitsSoldByProduct.merge(item.getProductId(), kept, Integer::sum);
                 revenueByProduct.merge(item.getProductId(),
-                        item.getProductQuantity() * productPriceOrZero(item.getProductId()), Double::sum);
+                        kept * productPriceOrZero(item.getProductId()), Double::sum);
             }
         }
 

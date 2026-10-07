@@ -1253,7 +1253,7 @@ class OrderServiceTest {
     void cancelRefundsRestoresStockForEveryItemAndMarksTheOrderCancelled() {
         Cart cart = placedOrder(42L, 100000L, item(1, 2), item(2, 1));
         when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
-        when(phonepeClient.refund(eq(AUTH), eq(100000L), eq(new RefundRequest("cancel-1"))))
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), eq(new RefundRequest("cancel-1", null))))
                 .thenReturn(paymentResponse(100001));
         when(orderRepository.save(cart)).thenReturn(cart);
 
@@ -1717,7 +1717,7 @@ class OrderServiceTest {
         delivered.setStatus(OrderStatus.DELIVERED);
         delivered.setTimestamp(Instant.now().minus(1, java.time.temporal.ChronoUnit.DAYS));
         when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of(delivered));
-        when(phonepeClient.refund(eq(AUTH), eq(100000L), eq(new RefundRequest("return-1"))))
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), eq(new RefundRequest("return-1", null))))
                 .thenReturn(paymentResponse(100001));
         when(orderRepository.save(cart)).thenReturn(cart);
 
@@ -2640,5 +2640,240 @@ class OrderServiceTest {
         CustomerProfile result = service.getCustomerProfile(CUSTOMER);
 
         assertEquals(0, result.reviewCount());
+    }
+
+    // ---------- per-item cancel / return ----------
+
+    private OrderItem pricedItem(int productId, int quantity, double unitPrice) {
+        OrderItem i = item(productId, quantity);
+        i.setUnitPrice(unitPrice);
+        return i;
+    }
+
+    private OrderItem itemOf(Cart cart, int productId) {
+        return cart.getOrderItems().stream().filter(i -> i.getProductId() == productId).findFirst().orElseThrow();
+    }
+
+    @Test
+    void orderRecordsWhatEachUnitCostAtCheckout() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 499.0, 10));
+        Cart cart = cart(CUSTOMER, item(1, 2));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+
+        Cart result = service.order(cart, null, null);
+
+        assertEquals(499.0, result.getOrderItems().get(0).getUnitPrice());
+    }
+
+    // Gross 250 (2 x 100 + 1 x 50), paid 225 after a coupon: one unit of the 100 item is 40% of the order, so it
+    // refunds 40% of what was actually paid - 90, not its 100 list price.
+    @Test
+    void cancelItemRefundsTheItemsShareOfWhatWasActuallyPaid() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 2, 100), pricedItem(2, 1, 50));
+        cart.setTotalPrice(225);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.cancelItem(42L, 1, 1, AUTH, "item-1", null, null);
+
+        verify(phonepeClient).refund(AUTH, 100000L, new RefundRequest("item-1", new BigDecimal("90.00")));
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 1);
+        assertEquals(1, itemOf(result, 1).getCancelledQuantity());
+        assertEquals(1, itemOf(result, 1).getOutstandingQuantity());
+        assertEquals(90.0, result.getRefundedAmount());
+        assertEquals(OrderStatus.PLACED, result.getStatus());
+        verify(trackingEventRepository, never()).save(any());
+    }
+
+    // Three equal items of a 20.00 order: 6.67 + 6.67 would leave 6.66, and the last cancel must take exactly that,
+    // so nothing is left stuck and nothing extra is refunded.
+    @Test
+    void cancellingTheLastUnitsRefundsExactlyWhatIsLeftAndCancelsTheOrder() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 10), pricedItem(2, 1, 10), pricedItem(3, 1, 10));
+        cart.setTotalPrice(20);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        service.cancelItem(42L, 1, 1, AUTH, null, null, null);
+        service.cancelItem(42L, 2, 1, AUTH, null, null, null);
+        Cart result = service.cancelItem(42L, 3, 1, AUTH, null, null, null);
+
+        ArgumentCaptor<RefundRequest> refunds = ArgumentCaptor.forClass(RefundRequest.class);
+        verify(phonepeClient, times(3)).refund(eq(AUTH), eq(100000L), refunds.capture());
+        assertEquals(List.of(new BigDecimal("6.67"), new BigDecimal("6.67"), new BigDecimal("6.66")),
+                refunds.getAllValues().stream().map(RefundRequest::amount).toList());
+        assertEquals(20.0, result.getRefundedAmount());
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        ArgumentCaptor<TrackingEvent> tracking = ArgumentCaptor.forClass(TrackingEvent.class);
+        verify(trackingEventRepository).save(tracking.capture());
+        assertEquals(OrderStatus.CANCELLED, tracking.getValue().getStatus());
+    }
+
+    @Test
+    void cancelItemOfACashOrderJustReducesWhatIsDue() {
+        Cart cart = placedOrder(42L, 0L, pricedItem(1, 2, 100));
+        cart.setPaymentTransactionId(null);
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setTotalPrice(200);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.cancelItem(42L, 1, 1, null, null, null, null);
+
+        verifyNoInteractions(phonepeClient);
+        assertEquals(100.0, result.getRefundedAmount());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 1);
+    }
+
+    @Test
+    void cancelItemRejectsMoreThanIsStillOutstanding() {
+        OrderItem item = pricedItem(1, 2, 100);
+        item.setCancelledQuantity(1);
+        Cart cart = placedOrder(42L, 100000L, item);
+        cart.setTotalPrice(200);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        ProductException ex = assertThrows(ProductException.class, () -> service.cancelItem(42L, 1, 2, AUTH, null, null, null));
+
+        assertEquals("Only 1 of that item can still be changed", ex.getMessage());
+        verifyNoInteractions(phonepeClient);
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void cancelItemRejectsAnOrderPlacedBeforeUnitPricesWereRecorded() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 2));
+        cart.setTotalPrice(200);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.cancelItem(42L, 1, 1, AUTH, null, null, null));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void cancelItemRejectsAProductThatIsNotInTheOrder() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 2, 100));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.cancelItem(42L, 9, 1, AUTH, null, null, null));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void wholeCancelAfterAPartialOneRestocksOnlyWhatIsLeftAndRefundsTheRemainder() {
+        OrderItem partlyCancelled = pricedItem(1, 3, 100);
+        partlyCancelled.setCancelledQuantity(1);
+        Cart cart = placedOrder(42L, 100000L, partlyCancelled);
+        cart.setTotalPrice(300);
+        cart.setRefundedAmount(100);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.cancel(42L, AUTH, null);
+
+        // no amount: PhonepayService refunds whatever is still unrefunded (the remaining 200)
+        verify(phonepeClient).refund(AUTH, 100000L, new RefundRequest(null, null));
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 2);
+        assertEquals(300.0, result.getRefundedAmount());
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        assertEquals(3, itemOf(result, 1).getCancelledQuantity());
+        assertEquals(0, itemOf(result, 1).getOutstandingQuantity());
+    }
+
+    @Test
+    void returnItemRefundsTheShareAndClawsBackThatShareOfTheEarnedPoints() {
+        Cart cart = deliveredOrder(42L, 100000L, pricedItem(1, 1, 100), pricedItem(2, 1, 100));
+        cart.setTotalPrice(200);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        when(loyaltyTransactionRepository.findByOrderIdAndType(42L, LoyaltyTransactionType.EARNED))
+                .thenReturn(Optional.of(earnedTransaction(42L, 20)));
+        when(loyaltyTransactionRepository.findAllByOrderIdAndType(42L, LoyaltyTransactionType.ADJUSTED)).thenReturn(List.of());
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 100);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        Cart result = service.returnItem(42L, 2, 1, "wrong size", AUTH, null, null, null);
+
+        verify(phonepeClient).refund(AUTH, 100000L, new RefundRequest(null, new BigDecimal("100.00")));
+        assertEquals(1, itemOf(result, 2).getReturnedQuantity());
+        assertEquals("wrong size", itemOf(result, 2).getReturnReason());
+        assertEquals(OrderStatus.DELIVERED, result.getStatus());
+        assertEquals(90, account.getPointsBalance());
+        ArgumentCaptor<LoyaltyTransaction> captor = ArgumentCaptor.forClass(LoyaltyTransaction.class);
+        verify(loyaltyTransactionRepository).save(captor.capture());
+        assertEquals(-10, captor.getValue().getPoints());
+    }
+
+    // The earlier per-item return already clawed back 10 of the 20 earned - the full return takes only the other 10.
+    @Test
+    void wholeReturnAfterAPartialOneClawsBackOnlyThePointsNotAlreadyTaken() {
+        OrderItem returned = pricedItem(2, 1, 100);
+        returned.setReturnedQuantity(1);
+        Cart cart = deliveredOrder(42L, 100000L, pricedItem(1, 1, 100), returned);
+        cart.setTotalPrice(200);
+        cart.setRefundedAmount(100);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        when(loyaltyTransactionRepository.findByOrderIdAndType(42L, LoyaltyTransactionType.EARNED))
+                .thenReturn(Optional.of(earnedTransaction(42L, 20)));
+        LoyaltyTransaction earlierClawback = new LoyaltyTransaction();
+        earlierClawback.setPoints(-10);
+        when(loyaltyTransactionRepository.findAllByOrderIdAndType(42L, LoyaltyTransactionType.ADJUSTED))
+                .thenReturn(List.of(earlierClawback));
+        LoyaltyAccount account = loyaltyAccount(CUSTOMER, 100);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+
+        Cart result = service.returnOrder(42L, AUTH, null, "changed my mind");
+
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 1);
+        verify(productClient, never()).updateProductStock(SERVICE_KEY, 2, 1);
+        assertEquals(90, account.getPointsBalance());
+        assertEquals(200.0, result.getRefundedAmount());
+        assertEquals(OrderStatus.RETURNED, result.getStatus());
+        assertEquals(1, itemOf(result, 1).getReturnedQuantity());
+        assertEquals(1, itemOf(result, 2).getReturnedQuantity());
+        assertEquals(0, itemOf(result, 1).getOutstandingQuantity());
+    }
+
+    @Test
+    void returnItemOfAnOrderThatIsNotDeliveredIsRejected() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 100));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.returnItem(42L, 1, 1, "damaged", AUTH, null, null, null));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void returnItemNeedsAReason() {
+        assertThrows(ProductException.class, () -> service.returnItem(42L, 1, 1, " ", AUTH, null, null, null));
+        verifyNoInteractions(orderRepository, phonepeClient);
+    }
+
+    @Test
+    void getSalesAnalyticsCountsRevenueNetOfRefunds() {
+        Cart partlyRefunded = cart(CUSTOMER, pricedItem(1, 2, 50));
+        partlyRefunded.setTotalPrice(100.0);
+        partlyRefunded.setRefundedAmount(50.0);
+        partlyRefunded.getOrderItems().get(0).setCancelledQuantity(1);
+        partlyRefunded.setStatus(OrderStatus.PLACED);
+        Cart returned = cart(CUSTOMER, pricedItem(1, 1, 50));
+        returned.setTotalPrice(50.0);
+        returned.setStatus(OrderStatus.RETURNED);
+        when(orderRepository.findAll()).thenReturn(List.of(partlyRefunded, returned));
+        when(productClient.getProductById(1)).thenReturn(product(1, 50.0, 5));
+
+        SalesAnalytics result = service.getSalesAnalytics();
+
+        assertEquals(50.0, result.totalRevenue());
+        assertEquals(1, result.topProducts().get(0).unitsSold());
     }
 }
