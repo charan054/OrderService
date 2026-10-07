@@ -21,6 +21,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -42,11 +43,14 @@ class LoyaltyExpiryWarningServiceTest {
     @Mock
     private MailService mailService;
 
+    private final EmailPreferenceService preferences =
+            new EmailPreferenceService(org.mockito.Mockito.mock(CustomerAccountRepository.class), "k", "http://shop.example");
+
     private LoyaltyExpiryWarningService service;
 
     @BeforeEach
     void setUp() {
-        service = new LoyaltyExpiryWarningService(accounts, customers, mailService, Clock.fixed(NOW, ZoneOffset.UTC), 14, "UTC");
+        service = new LoyaltyExpiryWarningService(accounts, customers, mailService, preferences, Clock.fixed(NOW, ZoneOffset.UTC), 14, "UTC");
     }
 
     // Expires in 10 days: last activity was 355 days ago.
@@ -113,6 +117,38 @@ class LoyaltyExpiryWarningServiceTest {
         when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
 
         assertEquals(1, service.run().emailsSent());
+    }
+
+    @Test
+    void aCustomerWhoUnsubscribedIsNotWarnedAndNothingIsRecorded() {
+        LoyaltyAccount account = expiringIn10Days(480);
+        when(accounts.findByPointsBalanceGreaterThanAndLastActivityAtBetween(eq(0), any(), any())).thenReturn(List.of(account));
+        CustomerAccount customer = new CustomerAccount();
+        customer.setPhno(PHNO);
+        customer.setEmail("asha@example.com");
+        customer.setMarketingOptOut(true);
+        when(customers.findById(PHNO)).thenReturn(Optional.of(customer));
+
+        LoyaltyExpiryWarningResult result = service.run();
+
+        assertEquals(1, result.optedOut());
+        assertEquals(0, result.emailsSent());
+        assertNull(account.getExpiryWarnedAt());
+        verifyNoInteractions(mailService);
+    }
+
+    @Test
+    void theWarningEndsWithAnUnsubscribeLink() {
+        LoyaltyAccount account = expiringIn10Days(480);
+        when(accounts.findByPointsBalanceGreaterThanAndLastActivityAtBetween(eq(0), any(), any())).thenReturn(List.of(account));
+        verifiedEmail();
+        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+
+        service.run();
+
+        ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
+        verify(mailService).send(anyString(), anyString(), body.capture());
+        assertTrue(body.getValue().contains("http://shop.example/prefs/unsubscribe?phno=" + PHNO + "&token="));
     }
 
     @Test

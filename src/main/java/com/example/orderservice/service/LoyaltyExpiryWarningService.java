@@ -35,17 +35,19 @@ public class LoyaltyExpiryWarningService {
     private final LoyaltyAccountRepository accounts;
     private final CustomerAccountRepository customers;
     private final MailService mailService;
+    private final EmailPreferenceService preferences;
     private final Clock clock;
     private final int warningDays;
     private final ZoneId zone;
 
     public LoyaltyExpiryWarningService(LoyaltyAccountRepository accounts, CustomerAccountRepository customers,
-                                       MailService mailService, Clock clock,
+                                       MailService mailService, EmailPreferenceService preferences, Clock clock,
                                        @Value("${loyalty.warning.days:14}") int warningDays,
                                        @Value("${loyalty.warning.zone:Asia/Kolkata}") String zone) {
         this.accounts = accounts;
         this.customers = customers;
         this.mailService = mailService;
+        this.preferences = preferences;
         this.clock = clock;
         this.warningDays = warningDays;
         this.zone = ZoneId.of(zone == null || zone.isBlank() ? "Asia/Kolkata" : zone.trim());
@@ -60,14 +62,20 @@ public class LoyaltyExpiryWarningService {
 
         int sent = 0;
         int noEmail = 0;
+        int optedOut = 0;
         int failed = 0;
         for (LoyaltyAccount account : expiring) {
             if (account.getExpiryWarnedAt() != null && account.getExpiryWarnedAt().isAfter(account.getLastActivityAt())) {
                 continue; // already warned for this expiry
             }
-            String email = customers.findById(account.getCustomerPhno()).map(CustomerAccount::getEmail).orElse(null);
+            CustomerAccount customer = customers.findById(account.getCustomerPhno()).orElse(null);
+            String email = customer == null ? null : customer.getEmail();
             if (email == null || email.isBlank()) {
                 noEmail++;
+                continue;
+            }
+            if (customer.isMarketingOptOut()) {
+                optedOut++;
                 continue;
             }
             Instant expiresAt = account.getPointsExpireAt();
@@ -75,7 +83,8 @@ public class LoyaltyExpiryWarningService {
             String body = "Hi,\n\nYou have " + account.getPointsBalance() + " loyalty points at Charan Mart (1 point = Rs. 1), and "
                     + "they expire on " + DATE.format(expiresAt.atZone(zone)) + " because there has been no activity on your account "
                     + "for a year.\n\nUse them at checkout before then to keep their value - you can redeem up to the order total "
-                    + "after any coupon.\n";
+                    + "after any coupon.\n"
+                    + preferences.footer(account.getCustomerPhno());
             if (mailService.send(email, subject, body)) {
                 account.setExpiryWarnedAt(now);
                 accounts.save(account);
@@ -84,7 +93,7 @@ public class LoyaltyExpiryWarningService {
                 failed++;
             }
         }
-        log.info("Loyalty expiry warnings: {} email(s) sent, {} customer(s) without an email, {} send failure(s)", sent, noEmail, failed);
-        return new LoyaltyExpiryWarningResult(sent, noEmail, failed);
+        log.info("Loyalty expiry warnings: {} email(s) sent, {} customer(s) without an email, {} unsubscribed, {} send failure(s)", sent, noEmail, optedOut, failed);
+        return new LoyaltyExpiryWarningResult(sent, noEmail, optedOut, failed);
     }
 }

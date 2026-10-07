@@ -25,4 +25,7 @@ public class CustomerAccount {
     // ReferralService). Unique; null until then.
     @Column(unique = true, length = 16)
     private String referralCode;
+    // True once the customer has unsubscribed from promotional emails (abandoned-cart reminders, restock / price-drop
+    // alerts, loyalty-expiry warnings). Emails about their own orders and sign-in codes are never affected.
+    private boolean marketingOptOut;
 }
