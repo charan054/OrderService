@@ -1439,6 +1439,8 @@
 
       view.innerHTML = `
         ${profileHtml}
+        <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="downloadMyData()">Download my data</button>
+          <span class="meta">Everything we store about you, as a JSON file.</span></p>
         ${referralHtml(referral)}
         <h3 style="margin:16px 0 10px;">Order history</h3>
         ${orderFilterBarHtml(historyPage)}
@@ -1520,6 +1522,21 @@
         return;
       }
       loadAccountView();
+    }
+
+    // Downloads everything we hold about this customer as a JSON file. fetch + blob (not a plain link) because the
+    // request needs the X-Customer-Token header.
+    async function downloadMyData() {
+      const response = await authFetch(`${BASE_URL}/customer/export?phno=${encodeURIComponent(customerPhno)}`);
+      if (!response.ok) { alert("Couldn't prepare your data right now. Please try again."); return; }
+      const blob = await response.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `my-data-${customerPhno}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
     }
 
     // Orders the customer has already rated (loaded with the account view) - each order can be rated once.
