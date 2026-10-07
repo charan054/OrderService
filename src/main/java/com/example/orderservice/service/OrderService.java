@@ -43,6 +43,7 @@ import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.PaymentMethod;
+import com.example.orderservice.dto.BulkTransitionResult;
 import com.example.orderservice.dto.OrderHistoryPage;
 import com.example.orderservice.entity.ServiceablePincode;
 import com.example.orderservice.entity.ShippingAddress;
@@ -1114,6 +1115,47 @@ public class OrderService {
         }
         sendNotification("Order delivered. OrderId: " + result.getOrderId());
         return result;
+    }
+
+    static final int MAX_BULK_ORDERS = 100;
+
+    // Ships (action "ship") or delivers (action "deliver") many orders in one go - the warehouse clearing a day's
+    // batch. Each order goes through the normal ship()/deliver(), so every rule, tracking event, email and loyalty
+    // credit is identical to doing them one by one; an order that can't move (unknown, wrong status) is reported
+    // in the result and the rest carry on.
+    public BulkTransitionResult bulkTransition(String action, List<Long> orderIds) {
+        if (!"ship".equals(action) && !"deliver".equals(action)) {
+            throw new ProductException("Unknown bulk action: " + action);
+        }
+        if (orderIds == null || orderIds.isEmpty()) {
+            throw new ProductException("Provide at least one order id");
+        }
+        List<Long> distinct = orderIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (distinct.isEmpty()) {
+            throw new ProductException("Provide at least one order id");
+        }
+        if (distinct.size() > MAX_BULK_ORDERS) {
+            throw new ProductException("At most " + MAX_BULK_ORDERS + " orders per bulk action");
+        }
+        List<BulkTransitionResult.Item> results = new ArrayList<>();
+        int succeeded = 0;
+        for (Long id : distinct) {
+            try {
+                if ("ship".equals(action)) {
+                    ship(id);
+                } else {
+                    deliver(id);
+                }
+                results.add(new BulkTransitionResult.Item(id, true, "OK"));
+                succeeded++;
+            } catch (OrderNotFoundException | ProductException e) {
+                results.add(new BulkTransitionResult.Item(id, false, e.getMessage()));
+            } catch (RuntimeException e) {
+                log.error("Bulk {} of order {} failed: {}", action, id, e.getMessage());
+                results.add(new BulkTransitionResult.Item(id, false, "Unexpected error - check the order and retry"));
+            }
+        }
+        return new BulkTransitionResult(action, succeeded, results.size() - succeeded, results);
     }
 
     // Records that a CASH order's money has actually been collected (e.g. the courier handed it to the customer

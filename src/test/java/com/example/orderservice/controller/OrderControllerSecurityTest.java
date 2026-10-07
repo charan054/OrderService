@@ -683,6 +683,17 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void bulkShipAndDeliverNeedTheServiceKey() throws Exception {
+        mockMvc.perform(post("/cart/bulk/ship").contentType("application/json").content("[1]")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/cart/bulk/deliver").contentType("application/json").content("[1]").with(customer()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/cart/bulk/ship").contentType("application/json").content("[]").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(post("/cart/bulk/ship").contentType("application/json").content("[999999]").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     void invoiceOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
     }
