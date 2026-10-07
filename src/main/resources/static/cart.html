@@ -429,7 +429,7 @@
                     <span class="method">GET</span>
                 </div>
             </div>
-            <p>List a customer's saved addresses. Public - no Service Key required.</p>
+            <p>List a customer's saved addresses. Requires the Service Key.</p>
             <input type="number" id="viewAddrPhno" placeholder="Customer phone number" />
             <button onclick="viewAddresses()">View Addresses</button>
         </div>
@@ -651,7 +651,7 @@
                     <span class="method">GET</span>
                 </div>
             </div>
-            <p>A one-lookup rollup: total orders, wishlist size, review count, loyalty tier/points. Public - no Service Key required.</p>
+            <p>A one-lookup rollup: total orders, wishlist size, review count, loyalty tier/points. Requires the Service Key.</p>
             <input type="number" id="profilePhno" placeholder="Customer phone number" />
             <button onclick="viewCustomerProfile()">View Profile</button>
         </div>
@@ -678,7 +678,7 @@
                     <span class="method">GET</span>
                 </div>
             </div>
-            <p>See which wishlisted products have gotten cheaper since they were added. Public - no Service Key required. Computed live, not a push notification.</p>
+            <p>See which wishlisted products have gotten cheaper since they were added. Requires the Service Key. Computed live, not a push notification.</p>
             <input type="number" id="priceDropsPhno" placeholder="Customer phone number" />
             <button onclick="viewPriceDrops()">Check Price Drops</button>
         </div>
@@ -691,7 +691,7 @@
                     <span class="method">GET</span>
                 </div>
             </div>
-            <p>View a customer's points balance and earn/redeem history. Public - no Service Key required.</p>
+            <p>View a customer's points balance and earn/redeem history. Requires the Service Key.</p>
             <input type="number" id="loyaltyViewPhno" placeholder="Customer phone number" />
             <button onclick="viewLoyalty()">View Loyalty Points</button>
         </div>
@@ -709,6 +709,20 @@
             <input type="number" id="loyaltyAdjustPoints" placeholder="Points (negative to debit)" />
             <input type="text" id="loyaltyAdjustReason" placeholder="Reason" />
             <button class="blue" onclick="adjustLoyalty()">Adjust Points</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <div class="icon">✉️</div>
+                <div class="title-wrap">
+                    <h2>Rebind Sign-in Email</h2>
+                    <span class="method">PUT</span>
+                </div>
+            </div>
+            <p>Storefront sign-in codes go to the first email verified for a phone number. If someone else claimed a customer's number, verify the customer's identity first, then rebind it here - this also signs out every existing session for that number. Requires the Service Key above.</p>
+            <input type="number" id="rebindEmailPhno" placeholder="Customer phone number" />
+            <input type="email" id="rebindEmailAddress" placeholder="Customer's real email" />
+            <button class="blue" onclick="rebindSignInEmail()">Rebind Email</button>
         </div>
     </section>
 
@@ -784,7 +798,11 @@
     async function apiCall(url, options = {}) {
       try {
         showStatus("Processing request...", "");
-        const response = await fetch(url, options);
+        // Customer lookups (orders/wishlist/addresses/loyalty/profile by phone) are no longer public now that the
+        // storefront has verified sign-in - this dashboard reads them with the service key, sent on every call.
+        const headers = new Headers(options.headers || {});
+        if (serviceKeyInput.value && !headers.has("X-Service-Key")) headers.set("X-Service-Key", serviceKeyInput.value);
+        const response = await fetch(url, { ...options, headers });
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -1161,6 +1179,18 @@
 
       showStatus("Loyalty points loaded. Result opened in new tab.", "success");
       openResultTab("Loyalty Points", [balance, ...history]);
+    }
+
+    async function rebindSignInEmail() {
+      const phno = document.getElementById("rebindEmailPhno").value;
+      const email = document.getElementById("rebindEmailAddress").value.trim();
+      if (!phno || !email) return showStatus("Please enter the phone number and the new email.", "error");
+      if (!requireServiceKey()) return;
+
+      await apiCall(`http://localhost:8083/customer/admin/email?phno=${encodeURIComponent(phno)}&email=${encodeURIComponent(email)}`, {
+        method: "PUT"
+      });
+      showStatus("Sign-in email rebound. Existing sessions for that number were signed out.", "success");
     }
 
     async function adjustLoyalty() {

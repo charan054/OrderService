@@ -17,6 +17,11 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(e.getStatus()).body(e.getMessage());
     }
 
+    @ExceptionHandler(CustomerAuthException.class)
+    public ResponseEntity<String> handleCustomerAuthException(CustomerAuthException e) {
+        return ResponseEntity.status(e.getStatus()).body(e.getMessage());
+    }
+
     @ExceptionHandler(OrderNotFoundException.class)
     public ResponseEntity<String> handleOrderNotFound(OrderNotFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());

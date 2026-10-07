@@ -621,16 +621,25 @@
 <main>
     <section id="loginSection" class="center-card">
         <h2>Welcome</h2>
-        <p>Enter your phone number to continue.</p>
-        <input type="tel" id="loginPhno" placeholder="10-digit phone number" />
+        <div id="loginStepRequest">
+            <p>Enter your phone number and email. We'll email you a 6-digit sign-in code.</p>
+            <input type="tel" id="loginPhno" placeholder="10-digit phone number" />
+            <input type="email" id="loginEmail" placeholder="Email address" autocomplete="email" />
+            <button onclick="requestLoginCode()">Email me a code</button>
+        </div>
+        <div id="loginStepVerify" class="hidden">
+            <p id="loginCodeSentNote"></p>
+            <input type="text" id="loginCode" inputmode="numeric" maxlength="6" placeholder="6-digit code" autocomplete="one-time-code" />
+            <button onclick="verifyLoginCode()">Sign in</button>
+            <button class="secondary" style="margin-top:10px;" onclick="showLoginStep('request')">Use a different number</button>
+        </div>
         <div id="loginError" class="error-text hidden"></div>
-        <button onclick="login()">Continue</button>
         <button class="secondary" style="margin-top:10px;" onclick="toggleTrackOrder()">Track an order instead</button>
     </section>
 
     <section id="trackOrderSection" class="center-card hidden">
         <h2>Track an order</h2>
-        <p>No login needed - enter the phone number the order was placed with and its order ID.</p>
+        <p>No sign-in needed - enter the phone number the order was placed with and its order ID.</p>
         <input type="tel" id="trackPhno" placeholder="10-digit phone number" />
         <input type="number" id="trackOrderId" placeholder="Order ID" />
         <div id="trackOrderError" class="error-text hidden"></div>
@@ -747,7 +756,6 @@
             <h3>Write a review</h3>
             <div class="review-form">
                 <input type="text" id="reviewerName" placeholder="Your name" />
-                <input type="tel" id="reviewerPhno" placeholder="Your phone number" />
                 <select id="reviewRating">
                     <option value="5">&#9733;&#9733;&#9733;&#9733;&#9733; - Excellent</option>
                     <option value="4">&#9733;&#9733;&#9733;&#9733;&#9734; - Good</option>
@@ -776,6 +784,21 @@
     let searchDebounceTimer = null;
     let modalProductId = null;
     let ratingsByProductId = new Map();
+
+    // Verified storefront session (see CustomerAuthService): sent as X-Customer-Token on every call. Every
+    // endpoint holding one customer's own data requires it, so a 401 back means the session expired or was
+    // revoked - drop it and ask the customer to sign in again.
+    let customerToken = null;
+
+    async function authFetch(url, options = {}) {
+      const headers = new Headers(options.headers || {});
+      if (customerToken) headers.set("X-Customer-Token", customerToken);
+      const response = await fetch(url, { ...options, headers });
+      if (response.status === 401 && customerToken) {
+        endSession("Your session has expired. Please sign in again.");
+      }
+      return response;
+    }
 
     function showAccountInfo() {
       document.getElementById("accountInfo").innerHTML = customerPhno
@@ -809,7 +832,7 @@
       if (!Array.isArray(saved) || !saved.length) { cartPersistReady = true; return; }
       const notes = [];
       try {
-        const response = await fetch(`${BASE_URL}/cart/search`);
+        const response = await authFetch(`${BASE_URL}/cart/search`);
         if (!response.ok) throw new Error("catalog unavailable");
         const catalog = await response.json();
         const restored = [];
@@ -836,6 +859,18 @@
     }
 
     function logout() {
+      if (customerToken) {
+        fetch(`${BASE_URL}/customer/logout`, { method: "POST", headers: { "X-Customer-Token": customerToken } })
+          .catch(() => {});
+      }
+      endSession();
+    }
+
+    // Clears the session locally (and shows why, if given) without calling the server - used both by logout()
+    // and when the server has already rejected the token.
+    function endSession(message) {
+      customerToken = null;
+      try { localStorage.removeItem("shopCustomerToken"); } catch (e) {}
       localStorage.removeItem("shopCustomerPhno");
       // The saved cart stays in localStorage under this phone number so it is still there at the next login;
       // only the in-memory copy is dropped (and saving is paused until the next restore).
@@ -844,20 +879,57 @@
       cart = [];
       document.getElementById("loginSection").classList.remove("hidden");
       document.getElementById("shopSection").classList.add("hidden");
+      showLoginStep("request");
+      showLoginError(message || "");
       showAccountInfo();
     }
 
-    function login() {
-      const value = document.getElementById("loginPhno").value.trim();
+    function showLoginError(message) {
       const errorBox = document.getElementById("loginError");
-      if (!/^[6-9][0-9]{9}$/.test(value)) {
-        errorBox.textContent = "Enter a valid 10-digit phone number.";
-        errorBox.classList.remove("hidden");
-        return;
-      }
-      errorBox.classList.add("hidden");
-      customerPhno = value;
-      localStorage.setItem("shopCustomerPhno", value);
+      errorBox.textContent = message;
+      errorBox.classList.toggle("hidden", !message);
+    }
+
+    function showLoginStep(step) {
+      document.getElementById("loginStepRequest").classList.toggle("hidden", step !== "request");
+      document.getElementById("loginStepVerify").classList.toggle("hidden", step !== "verify");
+      showLoginError("");
+      if (step === "verify") document.getElementById("loginCode").focus();
+    }
+
+    async function requestLoginCode() {
+      const phno = document.getElementById("loginPhno").value.trim();
+      const email = document.getElementById("loginEmail").value.trim();
+      if (!/^[6-9][0-9]{9}$/.test(phno)) return showLoginError("Enter a valid 10-digit phone number.");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showLoginError("Enter a valid email address.");
+      const response = await fetch(`${BASE_URL}/customer/login/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: Number(phno), email })
+      });
+      if (!response.ok) return showLoginError((await response.text()) || "Couldn't send a code. Try again.");
+      // Deliberately vague: a number that's already linked to an email gets its code there, not to what was typed.
+      document.getElementById("loginCodeSentNote").textContent =
+        "We've emailed a 6-digit code. If this number is already linked to an email, the code went to that address instead. It expires in 10 minutes.";
+      document.getElementById("loginCode").value = "";
+      showLoginStep("verify");
+    }
+
+    async function verifyLoginCode() {
+      const phno = document.getElementById("loginPhno").value.trim();
+      const code = document.getElementById("loginCode").value.trim();
+      if (!/^[0-9]{6}$/.test(code)) return showLoginError("Enter the 6-digit code from the email.");
+      const response = await fetch(`${BASE_URL}/customer/login/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: Number(phno), code })
+      });
+      if (!response.ok) return showLoginError((await response.text()) || "That code didn't work.");
+      const session = await response.json();
+      customerToken = session.token;
+      customerPhno = String(session.phno);
+      try { localStorage.setItem("shopCustomerToken", customerToken); } catch (e) {}
+      localStorage.setItem("shopCustomerPhno", customerPhno);
       enterShop();
     }
 
@@ -882,9 +954,8 @@
       }
       errorBox.classList.add("hidden");
 
-      const ordersResponse = await fetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(phno)}`);
-      const orders = ordersResponse.ok ? await ordersResponse.json() : [];
-      const order = orders.find(o => String(o.orderId) === String(orderId));
+      const summaryResponse = await fetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/summary?phno=${encodeURIComponent(phno)}`);
+      const order = summaryResponse.ok ? await summaryResponse.json() : null;
 
       if (!order) {
         errorBox.textContent = "No order with that ID was found for this phone number.";
@@ -934,7 +1005,7 @@
     }
 
     async function loadWaitlist() {
-      const response = await fetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const response = await authFetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`);
       const waitlist = response.ok ? await response.json() : [];
       waitlistProductIds = new Set(waitlist.map(item => item.productId));
       renderProducts();
@@ -944,15 +1015,15 @@
       const isWaitlisted = waitlistProductIds.has(productId);
       const query = `phno=${encodeURIComponent(customerPhno)}&productId=${encodeURIComponent(productId)}`;
       if (isWaitlisted) {
-        await fetch(`${BASE_URL}/waitlist/self/remove?${query}`, { method: "DELETE" });
+        await authFetch(`${BASE_URL}/waitlist/self/remove?${query}`, { method: "DELETE" });
       } else {
-        await fetch(`${BASE_URL}/waitlist/self/add?${query}`, { method: "POST" });
+        await authFetch(`${BASE_URL}/waitlist/self/add?${query}`, { method: "POST" });
       }
       await loadWaitlist();
     }
 
     async function loadAddressOptions() {
-      const response = await fetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const response = await authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`);
       const addresses = response.ok ? await response.json() : [];
       const select = document.getElementById("shippingAddressId");
       select.innerHTML = `<option value="">No saved address selected</option>` +
@@ -987,7 +1058,7 @@
     // tap-to-apply chips under the coupon field, each with the estimated saving on the current cart.
     async function loadCouponSuggestions() {
       try {
-        const response = await fetch(`${BASE_URL}/coupons/available?phno=${encodeURIComponent(customerPhno)}`);
+        const response = await authFetch(`${BASE_URL}/coupons/available?phno=${encodeURIComponent(customerPhno)}`);
         couponSuggestions = response.ok ? await response.json() : [];
       } catch (e) {
         couponSuggestions = [];
@@ -1016,7 +1087,7 @@
     updateThemeIcon();
 
     async function loadLoyaltyBalance() {
-      const response = await fetch(`${BASE_URL}/loyalty/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const response = await authFetch(`${BASE_URL}/loyalty/byphno?phno=${encodeURIComponent(customerPhno)}`);
       const hint = document.getElementById("loyaltyHint");
       if (!response.ok) {
         hint.textContent = "";
@@ -1033,7 +1104,7 @@
       if (name) query.set("name", name);
       if (category) query.set("category", category);
 
-      const response = await fetch(`${BASE_URL}/cart/search?${query.toString()}`);
+      const response = await authFetch(`${BASE_URL}/cart/search?${query.toString()}`);
       products = response.ok ? await response.json() : [];
       renderProducts();
 
@@ -1046,7 +1117,7 @@
     async function loadRatings() {
       if (!products.length) return;
       const idsQuery = products.map(p => `productIds=${p.productId}`).join("&");
-      const response = await fetch(`${BASE_URL}/cart/ratings?${idsQuery}`);
+      const response = await authFetch(`${BASE_URL}/cart/ratings?${idsQuery}`);
       const ratings = response.ok ? await response.json() : [];
       ratingsByProductId = new Map(ratings.map(r => [r.productId, r]));
       renderProducts();
@@ -1074,8 +1145,8 @@
 
     async function loadWishlist() {
       const [wishlistResponse, priceDropsResponse] = await Promise.all([
-        fetch(`${BASE_URL}/wishlist/byphno?phno=${encodeURIComponent(customerPhno)}`),
-        fetch(`${BASE_URL}/wishlist/pricedrops?phno=${encodeURIComponent(customerPhno)}`)
+        authFetch(`${BASE_URL}/wishlist/byphno?phno=${encodeURIComponent(customerPhno)}`),
+        authFetch(`${BASE_URL}/wishlist/pricedrops?phno=${encodeURIComponent(customerPhno)}`)
       ]);
       const wishlist = wishlistResponse.ok ? await wishlistResponse.json() : [];
       const priceDrops = priceDropsResponse.ok ? await priceDropsResponse.json() : [];
@@ -1111,7 +1182,7 @@
       const view = document.getElementById("notificationsView");
       view.innerHTML = `<p style="color:var(--muted);">Loading your notifications...</p>`;
 
-      const response = await fetch(`${BASE_URL}/cart/notifications?phno=${encodeURIComponent(customerPhno)}`);
+      const response = await authFetch(`${BASE_URL}/cart/notifications?phno=${encodeURIComponent(customerPhno)}`);
       const notifications = response.ok ? await response.json() : [];
 
       view.innerHTML = notifications.length ? notifications.map(n => `
@@ -1130,10 +1201,10 @@
       view.innerHTML = `<p style="color:var(--muted);">Loading your account...</p>`;
 
       const [profileResponse, ordersResponse, addressesResponse, waitlistResponse] = await Promise.all([
-        fetch(`${BASE_URL}/customer/profile?phno=${encodeURIComponent(customerPhno)}`),
-        fetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(customerPhno)}`),
-        fetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`),
-        fetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`)
+        authFetch(`${BASE_URL}/customer/profile?phno=${encodeURIComponent(customerPhno)}`),
+        authFetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(customerPhno)}`),
+        authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`),
+        authFetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`)
       ]);
       const profile = profileResponse.ok ? await profileResponse.json() : null;
       const orders = ordersResponse.ok ? await ordersResponse.json() : [];
@@ -1219,7 +1290,7 @@
         query = `?payerPhno=${encodeURIComponent(customerPhno)}&payerPin=${encodeURIComponent(pin)}`;
       }
 
-      const response = await fetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/cancel${query}`, { method: "POST" });
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/cancel${query}`, { method: "POST" });
       if (!response.ok) {
         const body = await response.text();
         alert(body || "Could not cancel this order.");
@@ -1239,7 +1310,7 @@
         query += `&payerPhno=${encodeURIComponent(customerPhno)}&payerPin=${encodeURIComponent(pin)}`;
       }
 
-      const response = await fetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/return${query}`, { method: "POST" });
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/return${query}`, { method: "POST" });
       if (!response.ok) {
         const body = await response.text();
         alert(body || "Could not return this order.");
@@ -1266,7 +1337,7 @@
         return;
       }
 
-      const response = await fetch(`${BASE_URL}/addresses/self/add`, {
+      const response = await authFetch(`${BASE_URL}/addresses/self/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1288,7 +1359,7 @@
     }
 
     async function removeAddress(addressId) {
-      await fetch(`${BASE_URL}/addresses/self/remove?phno=${encodeURIComponent(customerPhno)}&addressId=${encodeURIComponent(addressId)}`, {
+      await authFetch(`${BASE_URL}/addresses/self/remove?phno=${encodeURIComponent(customerPhno)}&addressId=${encodeURIComponent(addressId)}`, {
         method: "DELETE"
       });
       loadAccountView();
@@ -1299,9 +1370,9 @@
       const isWishlisted = wishlistProductIds.has(productId);
       const query = `phno=${encodeURIComponent(customerPhno)}&productId=${encodeURIComponent(productId)}`;
       if (isWishlisted) {
-        await fetch(`${BASE_URL}/wishlist/self/remove?${query}`, { method: "DELETE" });
+        await authFetch(`${BASE_URL}/wishlist/self/remove?${query}`, { method: "DELETE" });
       } else {
-        await fetch(`${BASE_URL}/wishlist/self/add?${query}`, { method: "POST" });
+        await authFetch(`${BASE_URL}/wishlist/self/add?${query}`, { method: "POST" });
       }
       await loadWishlist();
     }
@@ -1426,7 +1497,7 @@
 
     async function loadModalReviews(productId) {
       const box = document.getElementById("modalReviews");
-      const response = await fetch(`${BASE_URL}/cart/reviews?productId=${productId}`);
+      const response = await authFetch(`${BASE_URL}/cart/reviews?productId=${productId}`);
       const reviews = response.ok ? await response.json() : [];
       box.innerHTML = reviews.length
         ? reviews.map(r => `
@@ -1440,7 +1511,7 @@
 
     async function loadModalGallery(productId) {
       const box = document.getElementById("modalGallery");
-      const response = await fetch(`${BASE_URL}/cart/gallery?productId=${productId}`);
+      const response = await authFetch(`${BASE_URL}/cart/gallery?productId=${productId}`);
       const images = response.ok ? await response.json() : [];
       box.classList.toggle("hidden", images.length === 0);
       box.innerHTML = images.map(img => `
@@ -1450,7 +1521,7 @@
 
     async function loadModalFrequentlyBoughtTogether(productId) {
       const box = document.getElementById("modalFbt");
-      const response = await fetch(`${BASE_URL}/cart/frequentlyboughttogether?productId=${productId}`);
+      const response = await authFetch(`${BASE_URL}/cart/frequentlyboughttogether?productId=${productId}`);
       const items = response.ok ? await response.json() : [];
       box.innerHTML = items.length
         ? items.map(item => `
@@ -1467,17 +1538,18 @@
       errorBox.classList.add("hidden");
 
       const reviewerName = document.getElementById("reviewerName").value.trim();
-      const reviewerPhno = document.getElementById("reviewerPhno").value.trim();
+      // Reviews are posted under the signed-in phone number - the server rejects any other.
+      const reviewerPhno = customerPhno;
       const rating = Number(document.getElementById("reviewRating").value);
       const comment = document.getElementById("reviewComment").value.trim();
 
       if (!reviewerName || !reviewerPhno) {
-        errorBox.textContent = "Please enter your name and phone number.";
+        errorBox.textContent = "Please enter your name.";
         errorBox.classList.remove("hidden");
         return;
       }
 
-      const response = await fetch(`${BASE_URL}/cart/reviews?productId=${modalProductId}`, {
+      const response = await authFetch(`${BASE_URL}/cart/reviews?productId=${modalProductId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reviewerName, reviewerPhno: Number(reviewerPhno), rating, comment })
@@ -1490,7 +1562,6 @@
       }
 
       document.getElementById("reviewerName").value = "";
-      document.getElementById("reviewerPhno").value = "";
       document.getElementById("reviewComment").value = "";
       await loadModalReviews(modalProductId);
       await loadRatings();
@@ -1518,7 +1589,7 @@
     // Opens a print-friendly receipt for one of the logged-in customer's own orders in a new window (Print / Save
     // as PDF via the browser). Data comes from GET /cart/{id}/invoice, which checks the phone number matches.
     async function showInvoice(orderId) {
-      const response = await fetch(`${BASE_URL}/cart/${orderId}/invoice?phno=${encodeURIComponent(customerPhno)}`);
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/invoice?phno=${encodeURIComponent(customerPhno)}`);
       if (!response.ok) { alert("Couldn't load the invoice for order #" + orderId + "."); return; }
       const inv = await response.json();
       const money = n => "₹" + Number(n).toFixed(2);
@@ -1555,7 +1626,7 @@
       const order = accountOrders.find(o => o.orderId === orderId);
       if (!order || !order.orderItems || !order.orderItems.length) return;
       // The grid's `products` may be narrowed by a search/category filter, so look prices/stock up in the full catalog.
-      const catalogResponse = await fetch(`${BASE_URL}/cart/search`);
+      const catalogResponse = await authFetch(`${BASE_URL}/cart/search`);
       if (!catalogResponse.ok) { alert("Couldn't load the catalog - please try again."); return; }
       const catalog = await catalogResponse.json();
       const notes = [];
@@ -1677,7 +1748,7 @@
         return;
       }
 
-      const response = await fetch(`${BASE_URL}/cart/forgotpin/request`, {
+      const response = await authFetch(`${BASE_URL}/cart/forgotpin/request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phno: Number(phno) })
@@ -1704,7 +1775,7 @@
         return;
       }
 
-      const response = await fetch(`${BASE_URL}/cart/forgotpin/reset`, {
+      const response = await authFetch(`${BASE_URL}/cart/forgotpin/reset`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ phno: Number(phno), otp, newPin })
@@ -1780,7 +1851,7 @@
 
       setCheckoutStatus("Placing your order...", "info");
       try {
-        const response = await fetch(`${BASE_URL}/cart/checkout${query}`, {
+        const response = await authFetch(`${BASE_URL}/cart/checkout${query}`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -1840,7 +1911,7 @@
           return;
         }
         try {
-          const response = await fetch(`${BASE_URL}/cart/${orderId}/paymentstatus`);
+          const response = await authFetch(`${BASE_URL}/cart/${orderId}/paymentstatus`);
           if (!response.ok) {
             setTimeout(poll, UPI_POLL_INTERVAL_MS);
             return;
@@ -1867,11 +1938,24 @@
       setTimeout(poll, UPI_POLL_INTERVAL_MS);
     }
 
-    const savedPhno = localStorage.getItem("shopCustomerPhno");
-    if (savedPhno) {
-      customerPhno = savedPhno;
-      enterShop();
-    }
+    (async () => {
+      let savedToken = null;
+      try { savedToken = localStorage.getItem("shopCustomerToken"); } catch (e) {}
+      if (!savedToken) {
+        localStorage.removeItem("shopCustomerPhno"); // an old phone-only "login" from before verified sign-in
+        return;
+      }
+      customerToken = savedToken;
+      try {
+        const response = await authFetch(`${BASE_URL}/customer/session`);
+        if (!response.ok) return; // authFetch already ended the session on a 401
+        const session = await response.json();
+        customerPhno = String(session.phno);
+        enterShop();
+      } catch (e) {
+        endSession("Couldn't reach the shop. Please sign in again.");
+      }
+    })();
 </script>
 </body>
 </html>

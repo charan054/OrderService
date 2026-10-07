@@ -1,5 +1,6 @@
 package com.example.orderservice.security;
 
+import com.example.orderservice.service.CustomerAuthService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,18 +14,27 @@ import org.springframework.security.web.authentication.HttpStatusEntryPoint;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
- * Browsing the catalog through /cart/display and looking up one customer's own orders by phone stay public;
- * placing an order, removing an item, and listing EVERY customer's orders (/cart/all, which otherwise hands
- * anyone the full order history of every customer) require a valid X-Service-Key - the same trust boundary
- * Bankapplication and PhonepayService already enforce for their own service-to-service calls.
+ * Three trust levels:
+ * <ul>
+ *   <li>Public - catalog browsing, sign-in, and order-id-scoped status lookups that expose no customer details.</li>
+ *   <li>Customer-or-service - anything that reads or changes ONE customer's own data (orders, wishlist, addresses,
+ *   loyalty, ...). A storefront customer needs a verified session (X-Customer-Token, see CustomerAuthService) and
+ *   may only touch their own phone number (enforced per endpoint by CustomerAccess); the admin dashboard's
+ *   X-Service-Key may touch any. Before verified login these were public to anyone who typed a phone number.</li>
+ *   <li>Everything else - service only (X-Service-Key): placing orders for others, listing every customer's orders,
+ *   ship/deliver, analytics, coupons admin, ... A customer token never satisfies these.</li>
+ * </ul>
  */
 @Configuration
 public class SecurityConfig {
 
     private final String serviceApiKey;
+    private final CustomerAuthService customerAuthService;
 
-    public SecurityConfig(@Value("${internal.service.api-key}") String serviceApiKey) {
+    public SecurityConfig(@Value("${internal.service.api-key}") String serviceApiKey,
+                          CustomerAuthService customerAuthService) {
         this.serviceApiKey = serviceApiKey;
+        this.customerAuthService = customerAuthService;
     }
 
     @Bean
@@ -33,82 +43,46 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/byphno", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery").permitAll()
-                        // Posting a review is a customer action, same self-service trust level as the storefront's
-                        // own checkout/wishlist/address writes above - proxies straight to ProductService's own
-                        // public review-posting endpoint.
-                        .requestMatchers(HttpMethod.POST, "/cart/reviews").permitAll()
-                        // The customer-facing storefront's own checkout - see OrderController.checkout for why
-                        // this can't require the same X-Service-Key /cart/add does.
-                        .requestMatchers(HttpMethod.POST, "/cart/checkout").permitAll()
-                        // Pure proxy to PhonepayService's forgot-PIN flow - see OrderController.forgotPinRequest/
-                        // forgotPinReset. No X-Service-Key, same reasoning as checkout above: a real customer
-                        // has no way to know that internal secret.
+                        // ---- Public ----
+                        // Catalog browsing and the storefront's product-detail extras (ratings, reviews, gallery,
+                        // frequently-bought-together) - no customer's data.
+                        .requestMatchers(HttpMethod.GET, "/cart/display", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery").permitAll()
+                        // Signing in, and the forgot-PIN proxy to PhonepayService - by definition used before the
+                        // customer has a session.
+                        .requestMatchers(HttpMethod.POST, "/customer/login/request", "/customer/login/verify", "/customer/logout").permitAll()
                         .requestMatchers(HttpMethod.POST, "/cart/forgotpin/request", "/cart/forgotpin/reset").permitAll()
-                        // A customer cancelling their own order - same reasoning as checkout above. The only gate
-                        // is that a PHONEPE refund requires the real buyer token (see OrderController.cancelOrder);
-                        // a CASH order has no gate at all, same trust level the storefront's other self-service
-                        // writes already have.
-                        .requestMatchers(HttpMethod.POST, "/cart/*/cancel").permitAll()
-                        // Same reasoning as cancel above - a customer requesting a return on their own delivered
-                        // order. The only gate is the same PHONEPE-refund buyer-token requirement.
-                        .requestMatchers(HttpMethod.POST, "/cart/*/return").permitAll()
-                        // Same self-service trust level as /cart/byphno above - looking up your own wishlist (and
-                        // its price-drop alerts) by your own phone number.
-                        .requestMatchers(HttpMethod.GET, "/wishlist/byphno", "/wishlist/pricedrops").permitAll()
-                        // Coupon suggestions at checkout - self-service, same trust level as /cart/byphno.
-                        .requestMatchers(HttpMethod.GET, "/coupons/available").permitAll()
-                        // The storefront's own add/remove of a customer's own wishlist entries - see
-                        // WishlistController.addToOwnWishlist/removeFromOwnWishlist for why these don't need the
-                        // same X-Service-Key /wishlist/add and /remove do.
-                        .requestMatchers(HttpMethod.POST, "/wishlist/self/add").permitAll()
-                        .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove").permitAll()
-                        // The back-in-stock waitlist is a purely self-service feature - no admin/dashboard use
-                        // case exists, so unlike Wishlist there's no separate X-Service-Key-gated pair.
-                        .requestMatchers(HttpMethod.GET, "/waitlist/byphno").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/waitlist/self/add").permitAll()
-                        .requestMatchers(HttpMethod.DELETE, "/waitlist/self/remove").permitAll()
-                        // Polled by the storefront while a UPI-collect order sits PENDING_PAYMENT - same public,
-                        // self-service trust level as tracking below (just the status of your own order).
-                        .requestMatchers(HttpMethod.GET, "/cart/*/paymentstatus").permitAll()
-                        // The tracking timeline is just a per-transition history of the same status field
-                        // /cart/byphno already returns for every order - no additional exposure.
-                        .requestMatchers(HttpMethod.GET, "/cart/*/tracking").permitAll()
-                        // Receipt: public but ownership-checked by phone number in the service (mismatch -> 404).
-                        .requestMatchers(HttpMethod.GET, "/cart/*/invoice").permitAll()
-                        // The notification audit trail is derived from the same status field as tracking above -
-                        // same public trust level. /cart/notifications (no order id) backs the storefront's "My
-                        // notifications" panel - same self-service trust level as /cart/byphno.
-                        .requestMatchers(HttpMethod.GET, "/cart/*/notifications", "/cart/notifications").permitAll()
-                        // Same self-service trust level as /cart/byphno above - looking up your own saved
-                        // addresses by your own phone number.
-                        .requestMatchers(HttpMethod.GET, "/addresses/byphno").permitAll()
-                        // The storefront's own add/remove of a customer's own saved addresses - see
-                        // ShippingAddressController.addOwnAddress/removeOwnAddress.
-                        .requestMatchers(HttpMethod.POST, "/addresses/self/add").permitAll()
-                        .requestMatchers(HttpMethod.DELETE, "/addresses/self/remove").permitAll()
-                        // Same self-service trust level as /cart/byphno above - looking up your own loyalty
-                        // points balance/history by your own phone number.
-                        .requestMatchers(HttpMethod.GET, "/loyalty/byphno", "/loyalty/history").permitAll()
-                        // Same self-service trust level as /cart/byphno above - a rollup of your own
-                        // orders/wishlist/loyalty/review data by your own phone number.
-                        .requestMatchers(HttpMethod.GET, "/customer/profile").permitAll()
-                        // Note: /cart/analytics is deliberately NOT in this permitAll list - it's an admin-only
-                        // sales rollup (see OrderController.getSalesAnalytics), so it falls through to
-                        // anyRequest().authenticated() below like /cart/all does.
+                        // Order-id-scoped status only: the tracking timeline and the notification audit trail are
+                        // status + timestamps, and /summary (the logged-out "Track an order" box) additionally
+                        // requires the matching phone number and returns no address or items.
+                        .requestMatchers(HttpMethod.GET, "/cart/*/tracking", "/cart/*/notifications", "/cart/*/summary").permitAll()
                         .requestMatchers("/actuator/health", "/actuator/info").permitAll()
-                        // The static dashboard itself - not an order action, just the HTML/JS shell. The
-                        // mutating buttons on it still hit the X-Service-Key-guarded endpoints above like any
-                        // other caller, so this only unblocks loading the page, not bypassing anything.
+                        // The static dashboards themselves - just the HTML/JS shell; every call they make is
+                        // authorized on its own.
                         .requestMatchers(HttpMethod.GET, "/cart.html", "/shop.html").permitAll()
                         // A controller-level failure (e.g. a missing required header) triggers an internal
-                        // dispatch to /error; ServiceKeyAuthenticationFilter doesn't re-run on that dispatch
-                        // (OncePerRequestFilter skips ERROR dispatches by default), so without this the real
-                        // error status gets clobbered by a spurious 401 from the unauthenticated /error request.
+                        // dispatch to /error; the auth filters don't re-run on that dispatch (OncePerRequestFilter
+                        // skips ERROR dispatches by default), so without this the real error status gets clobbered
+                        // by a spurious 401 from the unauthenticated /error request.
                         .requestMatchers("/error").permitAll()
-                        .anyRequest().authenticated())
+
+                        // ---- Customer (own data only, see CustomerAccess) or service ----
+                        .requestMatchers(HttpMethod.GET, "/customer/session").hasRole("CUSTOMER")
+                        .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/notifications", "/cart/*/invoice", "/cart/*/paymentstatus",
+                                "/wishlist/byphno", "/wishlist/pricedrops", "/waitlist/byphno", "/addresses/byphno",
+                                "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/coupons/available").hasAnyRole("CUSTOMER", "SERVICE")
+                        // checkout/cancel/return still also need the buyer's own PhonePe credentials for anything
+                        // that moves money (see OrderController) - the session only proves who the customer is.
+                        .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/reviews", "/cart/*/cancel", "/cart/*/return",
+                                "/wishlist/self/add", "/waitlist/self/add", "/addresses/self/add").hasAnyRole("CUSTOMER", "SERVICE")
+                        .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove", "/waitlist/self/remove", "/addresses/self/remove").hasAnyRole("CUSTOMER", "SERVICE")
+
+                        // ---- Service only ----
+                        .anyRequest().hasRole("SERVICE"))
+                // 401 for no/invalid credentials; a signed-in customer hitting a service-only endpoint gets the
+                // default 403 from the access-denied handler.
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .addFilterBefore(new ServiceKeyAuthenticationFilter(serviceApiKey), UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(new CustomerTokenAuthenticationFilter(customerAuthService), ServiceKeyAuthenticationFilter.class)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable);
         return http.build();

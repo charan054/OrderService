@@ -14,6 +14,7 @@ import com.example.orderservice.dto.PhonepeForgotPinRequest;
 import com.example.orderservice.dto.PhonepeLoginRequest;
 import com.example.orderservice.dto.PhonepeLoginResponse;
 import com.example.orderservice.dto.PhonepeResetPinRequest;
+import com.example.orderservice.dto.GuestOrderSummary;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.Product;
@@ -788,6 +789,20 @@ public class OrderService {
     // Receipt for one order. The caller must supply the phone number the order was placed under - a mismatch is
     // reported as "not found" (same as an unknown id) so an order id alone can't be used to read someone else's
     // receipt. A product whose catalog lookup fails (removed since) is shown as "Product #id" at price 0.
+    public long ownerPhnoOf(long orderId) {
+        return orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"))
+                .getCustomerPhno();
+    }
+
+    public GuestOrderSummary getGuestSummary(long orderId, long phno) {
+        Cart order = orderRepository.findById(orderId)
+                .filter(o -> o.getCustomerPhno() == phno)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        return new GuestOrderSummary(order.getOrderId(), String.valueOf(order.getStatus()), order.getTotalPrice(),
+                String.valueOf(order.getPaymentMethod()), order.isPaid());
+    }
+
     public Invoice getInvoice(long orderId, long phno) {
         Cart order = orderRepository.findById(orderId)
                 .filter(o -> o.getCustomerPhno() == phno)
