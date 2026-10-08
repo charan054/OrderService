@@ -129,6 +129,8 @@ public class OrderService {
     private StoreCreditService storeCreditService;
     @Autowired
     private InvoiceNumberService invoiceNumberService;
+    @Autowired
+    private CreditNoteService creditNoteService;
     // GST (see GstCalculator): the rate for products with none of their own, and the seller details printed on invoices.
     @Value("${gst.default-rate:18}")
     private double defaultGstRate;
@@ -532,12 +534,13 @@ public class OrderService {
         // minus any per-item cancellations already paid back.
         String destination = payBack(cart, refundedNow, null, toStoreCredit, authorization, idempotencyKey, payerPhno, payerPin);
         restoreStoreCreditUsed(cart, null);
-        closeOutstanding(cart, false);
+        List<CreditNoteService.Change> taxChanges = closeOutstanding(cart, false);
         cart.setRefundedAmount(cart.getTotalPrice());
         cart.setStatus(OrderStatus.CANCELLED);
         cart.setCancelReason(reasonCode);
         cart.setCancelNote(cancelNote);
         Cart result = orderRepository.save(cart);
+        issueCreditNote(result, taxChanges, "CANCELLED");
         result.setRefundDestination(destination);
         recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
         sendNotification("Order cancelled successfully. OrderId: " + result.getOrderId()
@@ -627,11 +630,12 @@ public class OrderService {
         double refundedNow = remainingRefundable(cart);
         String destination = payBack(cart, refundedNow, null, toStoreCredit, authorization, idempotencyKey, payerPhno, payerPin);
         restoreStoreCreditUsed(cart, null);
-        closeOutstanding(cart, true);
+        List<CreditNoteService.Change> taxChanges = closeOutstanding(cart, true);
         cart.setRefundedAmount(cart.getTotalPrice());
         cart.setStatus(OrderStatus.RETURNED);
         cart.setReturnReason(reason);
         Cart result = orderRepository.save(cart);
+        issueCreditNote(result, taxChanges, "RETURNED");
         result.setRefundDestination(destination);
         recordTracking(result.getOrderId(), OrderStatus.RETURNED);
         clawBackLoyaltyPoints(result, null);
@@ -679,6 +683,7 @@ public class OrderService {
                 "cancelled", toStoreCredit);
         restoreStoreCreditUsed(cart, creditShare);
 
+        int keptBefore = item.getOutstandingQuantity();
         item.setCancelledQuantity(item.getCancelledQuantity() + quantity);
         productClient.updateProductStock(serviceApiKey, productId, quantity);
         cart.setRefundedAmount(roundMoney(cart.getRefundedAmount() + refundAmount));
@@ -687,6 +692,7 @@ public class OrderService {
             cart.setStatus(OrderStatus.CANCELLED);
         }
         Cart result = orderRepository.save(cart);
+        issueCreditNote(result, List.of(new CreditNoteService.Change(item, keptBefore, keptBefore - quantity)), "CANCELLED");
         result.setRefundDestination(destination);
         if (nothingLeft) {
             recordTracking(result.getOrderId(), OrderStatus.CANCELLED);
@@ -729,6 +735,7 @@ public class OrderService {
                 "returned", toStoreCredit);
         restoreStoreCreditUsed(cart, lastUnits ? null : share);
 
+        int keptBefore = item.getOutstandingQuantity();
         item.setReturnedQuantity(item.getReturnedQuantity() + quantity);
         item.setReturnReason(reason.trim());
         productClient.updateProductStock(serviceApiKey, productId, quantity);
@@ -739,6 +746,7 @@ public class OrderService {
             cart.setReturnReason(reason.trim());
         }
         Cart result = orderRepository.save(cart);
+        issueCreditNote(result, List.of(new CreditNoteService.Change(item, keptBefore, keptBefore - quantity)), "RETURNED");
         result.setRefundDestination(destination);
         if (nothingLeft) {
             recordTracking(result.getOrderId(), OrderStatus.RETURNED);
@@ -888,7 +896,8 @@ public class OrderService {
 
     // Whole-order cancel/return: puts back in stock only what earlier per-item changes haven't already, and
     // records those units as cancelled/returned so every item ends with nothing outstanding.
-    private void closeOutstanding(Cart cart, boolean returned) {
+    private List<CreditNoteService.Change> closeOutstanding(Cart cart, boolean returned) {
+        List<CreditNoteService.Change> changes = new ArrayList<>();
         for (OrderItem orderItem : cart.getOrderItems()) {
             int outstanding = orderItem.getOutstandingQuantity();
             if (outstanding <= 0) {
@@ -900,6 +909,18 @@ public class OrderService {
             } else {
                 orderItem.setCancelledQuantity(orderItem.getCancelledQuantity() + outstanding);
             }
+            changes.add(new CreditNoteService.Change(orderItem, outstanding, 0));
+        }
+        return changes;
+    }
+
+    // GST credit note for units just cancelled/returned on an invoiced order. By now the money has moved and the order
+    // is saved, so a failure here is logged for follow-up rather than turned into an error for the customer.
+    private void issueCreditNote(Cart order, List<CreditNoteService.Change> changes, String reason) {
+        try {
+            creditNoteService.issue(order, changes, reason);
+        } catch (RuntimeException e) {
+            log.error("Could not issue a GST credit note for order {} ({}): {}", order.getOrderId(), reason, e.getMessage());
         }
     }
 
@@ -1566,7 +1587,8 @@ public class OrderService {
                 order.getStoreCreditUsed() == null ? 0 : order.getStoreCreditUsed(), order.getTotalPrice(),
                 order.getRefundedAmount(),
                 String.valueOf(order.getPaymentMethod()), order.isPaid(), String.valueOf(order.getStatus()), address,
-                order.getDeliveryNote(), order.getDeliverySlot(), order.getInvoiceNumber(), order.getInvoiceDate(), tax);
+                order.getDeliveryNote(), order.getDeliverySlot(), order.getInvoiceNumber(), order.getInvoiceDate(), tax,
+                creditNoteService.forOrder(orderId));
     }
 
     public List<TrackingEvent> getTracking(long orderId) {

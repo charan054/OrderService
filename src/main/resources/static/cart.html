@@ -876,6 +876,24 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#129534;</div>
+                <div class="title-wrap">
+                    <h2>GST Report</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Tax invoices and the credit notes that reverse some of them, by month, state (place of supply) and GST rate, with the net - what the month's GST filing needs. Invoices count at the quantities they were issued for; later cancellations and returns show as credit notes. Needs a manager or owner (or the Service Key above).</p>
+            <div class="rev-controls">
+                <label class="orders-date">From <input type="date" id="gstFrom" /></label>
+                <label class="orders-date">To <input type="date" id="gstTo" /></label>
+                <button onclick="loadGstReport()">Load Report</button>
+                <button class="blue" onclick="downloadGstCsv()">Download CSV</button>
+            </div>
+            <div id="gstSummary" class="rev-summary"></div>
+            <div id="gstTable" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">&#128100;</div>
                 <div class="title-wrap">
                     <h2>Customer Lookup</h2>
@@ -2047,6 +2065,51 @@
       await loadOrdersTable();
       showStatus(`${result.succeeded} order(s) updated, ${result.failed} skipped.`, result.failed ? "error" : "success");
       if (result.failed) openResultTab("Bulk " + action, result);
+    }
+
+    // ---------- GST report ----------
+    function gstQuery() {
+      const from = document.getElementById("gstFrom").value;
+      const to = document.getElementById("gstTo").value;
+      return new URLSearchParams({ ...(from ? { from } : {}), ...(to ? { to } : {}) }).toString();
+    }
+
+    async function loadGstReport() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const r = await apiCall(`http://localhost:8083/gst/report?${gstQuery()}`, { headers: { "X-Service-Key": serviceKey } });
+      const money = n => "₹" + Number(n).toFixed(2);
+      document.getElementById("gstSummary").innerHTML =
+        `<div><b>${r.invoices}</b><span>invoices</span></div><div><b>${r.creditNotes}</b><span>credit notes</span></div>`
+        + `<div><b>${money(r.invoiceTotals.totalTax)}</b><span>GST on invoices</span></div>`
+        + `<div><b>${money(r.creditNoteTotals.totalTax)}</b><span>reversed by credit notes</span></div>`
+        + `<div><b>${money(r.net.totalTax)}</b><span>net GST</span></div>`;
+      document.getElementById("gstTable").innerHTML = r.rows.length
+        ? `<table class="orders-table"><thead><tr><th>Month</th><th>Type</th><th>State</th><th>GST %</th><th>Docs</th><th class="num">Taxable</th><th class="num">CGST</th><th class="num">SGST</th><th class="num">IGST</th><th class="num">Value</th></tr></thead><tbody>${r.rows.map(x => `
+            <tr><td>${escapeHtml(x.month)}</td><td>${x.type === "CREDIT_NOTE" ? "Credit note" : "Invoice"}</td><td>${escapeHtml(x.placeOfSupply || "-")}</td><td>${x.gstRate}</td><td>${x.documents}</td>
+            <td class="num">${money(x.taxableValue)}</td><td class="num">${money(x.cgst)}</td><td class="num">${money(x.sgst)}</td><td class="num">${money(x.igst)}</td><td class="num">${money(x.value)}</td></tr>`).join("")}</tbody></table>`
+        : "<p>No invoices or credit notes in this range.</p>";
+      showStatus(`GST report for ${r.from} to ${r.to}.`, "success");
+    }
+
+    async function downloadGstCsv() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      try {
+        const response = await fetch(`http://localhost:8083/gst/report/export?${gstQuery()}`, { headers: { "X-Service-Key": serviceKey } });
+        if (!response.ok) throw new Error((await response.text()) || `HTTP Error: ${response.status}`);
+        const blob = await response.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "gst-report.csv";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+        showStatus("gst-report.csv downloaded.", "success");
+      } catch (error) {
+        showStatus("CSV download failed: " + error.message, "error");
+      }
     }
 
     async function downloadOrdersCsv() {

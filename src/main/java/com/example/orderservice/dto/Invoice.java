@@ -6,12 +6,24 @@ import java.util.List;
 // Printable receipt for one order - GET /cart/{orderId}/invoice?phno=X. Line unit prices are what was paid per unit
 // for orders placed since OrderItem.unitPrice existed, and the CURRENT catalog price for older ones - so for older
 // orders only the saved order's own figures (discountAmount, pointsRedeemed, totalPrice) are authoritative.
-// refundedAmount and the per-line cancelled/returned quantities show any per-item changes since.
+// refundedAmount and the per-line cancelled/returned quantities show any per-item changes since; creditNotes are
+// the GST credit notes issued for those changes (the tax figures above already reflect them).
 public record Invoice(long orderId, Instant placedAt, String customerName, long customerPhno,
                       List<Line> lines, String couponCode, double discountAmount, int pointsRedeemed,
                       double storeCreditUsed, double totalPrice, double refundedAmount, String paymentMethod, boolean paid, String status,
                       String shippingAddress, String deliveryNote, String deliverySlot,
-                      String invoiceNumber, Instant invoiceDate, Tax tax) {
+                      String invoiceNumber, Instant invoiceDate, Tax tax, List<CreditNoteView> creditNotes) {
+    // Without credit notes (none issued, or not looked up).
+    public Invoice(long orderId, Instant placedAt, String customerName, long customerPhno,
+                   List<Line> lines, String couponCode, double discountAmount, int pointsRedeemed,
+                   double storeCreditUsed, double totalPrice, double refundedAmount, String paymentMethod, boolean paid, String status,
+                   String shippingAddress, String deliveryNote, String deliverySlot,
+                   String invoiceNumber, Instant invoiceDate, Tax tax) {
+        this(orderId, placedAt, customerName, customerPhno, lines, couponCode, discountAmount, pointsRedeemed,
+                storeCreditUsed, totalPrice, refundedAmount, paymentMethod, paid, status, shippingAddress,
+                deliveryNote, deliverySlot, invoiceNumber, invoiceDate, tax, List.of());
+    }
+
     // GST breakdown of what was actually supplied (see GstCalculator). Prices include GST, so this splits the tax out of
     // them rather than adding anything. Seller GSTIN/state come from gst.store-gstin / gst.store-state.
     public record Tax(String sellerName, String sellerGstin, String sellerState, String placeOfSupply, boolean interState,

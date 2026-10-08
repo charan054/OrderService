@@ -1,7 +1,9 @@
 package com.example.orderservice.service;
 
 import com.example.orderservice.entity.Cart;
+import com.example.orderservice.entity.CreditNoteSequence;
 import com.example.orderservice.entity.InvoiceSequence;
+import com.example.orderservice.repository.CreditNoteSequenceRepository;
 import com.example.orderservice.repository.InvoiceSequenceRepository;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -22,14 +24,16 @@ import java.time.ZoneId;
 @Service
 public class InvoiceNumberService {
     private final InvoiceSequenceRepository sequences;
+    private final CreditNoteSequenceRepository creditNoteSequences;
     private final Clock clock;
     private final String prefix;
     private final ZoneId zone;
 
-    public InvoiceNumberService(InvoiceSequenceRepository sequences, Clock clock,
+    public InvoiceNumberService(InvoiceSequenceRepository sequences, CreditNoteSequenceRepository creditNoteSequences, Clock clock,
                                 @Value("${gst.invoice-prefix:CM}") String prefix,
                                 @Value("${digest.zone:Asia/Kolkata}") String zone) {
         this.sequences = sequences;
+        this.creditNoteSequences = creditNoteSequences;
         this.clock = clock;
         this.prefix = prefix == null || prefix.isBlank() ? "CM" : prefix.trim();
         this.zone = ZoneId.of(zone == null || zone.isBlank() ? "Asia/Kolkata" : zone.trim());
@@ -53,6 +57,21 @@ public class InvoiceNumberService {
         sequences.save(sequence);
         order.setInvoiceNumber(String.format("%s/%s/%06d", prefix, fiscalYear, sequence.getLastNumber()));
         order.setInvoiceDate(now);
+    }
+
+    /** The next credit note number, PREFIX/CN/2026-27/000001, in its own series per financial year. */
+    @Transactional
+    public synchronized String nextCreditNoteNumber() {
+        String fiscalYear = fiscalYear(LocalDate.ofInstant(clock.instant(), zone));
+        CreditNoteSequence sequence = creditNoteSequences.lockByFiscalYear(fiscalYear).orElseGet(() -> {
+            CreditNoteSequence fresh = new CreditNoteSequence();
+            fresh.setFiscalYear(fiscalYear);
+            fresh.setLastNumber(0);
+            return fresh;
+        });
+        sequence.setLastNumber(sequence.getLastNumber() + 1);
+        creditNoteSequences.save(sequence);
+        return String.format("%s/CN/%s/%06d", prefix, fiscalYear, sequence.getLastNumber());
     }
 
     // 1 Apr 2026 - 31 Mar 2027 -> "2026-27".

@@ -1,7 +1,9 @@
 package com.example.orderservice.service;
 
 import com.example.orderservice.entity.Cart;
+import com.example.orderservice.entity.CreditNoteSequence;
 import com.example.orderservice.entity.InvoiceSequence;
+import com.example.orderservice.repository.CreditNoteSequenceRepository;
 import com.example.orderservice.repository.InvoiceSequenceRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,9 +27,11 @@ import static org.mockito.Mockito.when;
 class InvoiceNumberServiceTest {
     @Mock
     private InvoiceSequenceRepository sequences;
+    @Mock
+    private CreditNoteSequenceRepository creditNoteSequences;
 
     private InvoiceNumberService at(String instant) {
-        return new InvoiceNumberService(sequences, Clock.fixed(Instant.parse(instant), ZoneOffset.UTC), "CM", "Asia/Kolkata");
+        return new InvoiceNumberService(sequences, creditNoteSequences, Clock.fixed(Instant.parse(instant), ZoneOffset.UTC), "CM", "Asia/Kolkata");
     }
 
     @Test
@@ -66,6 +70,27 @@ class InvoiceNumberServiceTest {
         ArgumentCaptor<InvoiceSequence> saved = ArgumentCaptor.forClass(InvoiceSequence.class);
         verify(sequences).save(saved.capture());
         assertEquals("2027-28", saved.getValue().getFiscalYear());
+    }
+
+    @Test
+    void creditNotesAreANumberedSeriesOfTheirOwn() {
+        CreditNoteSequence seq = new CreditNoteSequence();
+        seq.setFiscalYear("2026-27");
+        seq.setLastNumber(6);
+        when(creditNoteSequences.lockByFiscalYear("2026-27")).thenReturn(Optional.of(seq));
+
+        assertEquals("CM/CN/2026-27/000007", at("2026-10-08T10:00:00Z").nextCreditNoteNumber());
+
+        assertEquals(7, seq.getLastNumber());
+        verify(creditNoteSequences).save(seq);
+        verify(sequences, never()).save(any());
+    }
+
+    @Test
+    void creditNotesRestartEachFinancialYearUsingIndianTime() {
+        when(creditNoteSequences.lockByFiscalYear("2027-28")).thenReturn(Optional.empty());
+
+        assertEquals("CM/CN/2027-28/000001", at("2027-03-31T20:00:00Z").nextCreditNoteNumber());
     }
 
     @Test
