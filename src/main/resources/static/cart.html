@@ -339,13 +339,29 @@
     <section class="grid">
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128100;</div>
+                <div class="title-wrap">
+                    <h2>Admin Sign-in</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p id="adminIdentity">Not signed in. Sign in with your own admin account (what you can do depends on your role), or use the shared Service Key below.</p>
+            <input type="text" id="adminUsername" placeholder="Username" autocomplete="username" />
+            <input type="password" id="adminPassword" placeholder="Password" autocomplete="current-password" />
+            <div class="orders-actions">
+                <button onclick="adminSignIn()">Sign In</button>
+                <button onclick="adminSignOut()">Sign Out</button>
+            </div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">🔑</div>
                 <div class="title-wrap">
                     <h2>Service Credentials</h2>
                     <span class="method">REQUIRED</span>
                 </div>
             </div>
-            <p>Place Order, All Orders, Ship Order, Deliver Order, Add Coupon, Add To Wishlist, Remove From Wishlist and Delete Product require the same <code>X-Service-Key</code> value as this service's <code>.env</code>. Place Order also requires the buyer's own PhonepayService session token, sent exactly as PhonepayService expects it (e.g. <code>Bearer &lt;token&gt;</code>) - that is who gets charged. Both are remembered in this browser only.</p>
+            <p>Place Order, All Orders, Ship Order, Deliver Order, Add Coupon, Add To Wishlist, Remove From Wishlist and Delete Product require the same <code>X-Service-Key</code> value as this service's <code>.env</code>. Place Order also requires the buyer's own PhonepayService session token, sent exactly as PhonepayService expects it (e.g. <code>Bearer &lt;token&gt;</code>) - that is who gets charged. Both are remembered in this browser only. When you are signed in above as a named admin, that sign-in is used instead of the Service Key.</p>
             <input type="text" id="serviceKey" placeholder="X-Service-Key value" />
             <input type="text" id="buyerAuthorization" placeholder="Authorization header value, e.g. Bearer &lt;token&gt;" />
         </div>
@@ -876,14 +892,39 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128101;</div>
+                <div class="title-wrap">
+                    <h2>Admin Accounts</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>The people who can sign in above. SUPPORT looks customers and orders up and answers questions and support requests. MANAGER also ships, delivers, cancels, refunds and runs coupons, pincodes and analytics. OWNER also manages these accounts, reads the audit log and adjusts store credit and loyalty points. Needs an owner account (or the Service Key above).</p>
+            <div class="orders-filters">
+                <input type="text" id="newAdminUsername" placeholder="New username (letters, digits, . _ -)" autocomplete="off" />
+                <input type="password" id="newAdminPassword" placeholder="Password (at least 10 characters)" autocomplete="new-password" />
+                <select id="newAdminRole">
+                    <option value="SUPPORT">SUPPORT</option>
+                    <option value="MANAGER">MANAGER</option>
+                    <option value="OWNER">OWNER</option>
+                </select>
+            </div>
+            <div class="orders-actions">
+                <button onclick="createAdminAccount()">Create Account</button>
+                <button onclick="loadAdminAccounts()">Load Accounts</button>
+            </div>
+            <div id="adminAccountsWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">&#128221;</div>
                 <div class="title-wrap">
                     <h2>Admin Audit Log</h2>
                     <span class="method">GET</span>
                 </div>
             </div>
-            <p>Every change made with the Service Key (shipping, coupons, pincodes, answers, ...): when, what, and whether it succeeded. Only the endpoint is recorded, never the data. Requires the Service Key above.</p>
+            <p>Every change made with the Service Key or an admin account (shipping, coupons, pincodes, answers, ...): who, when, what, and whether it succeeded - including attempts a role was not allowed to make (403). Only the endpoint is recorded, never the data. Owners only (or the Service Key above).</p>
             <input type="text" id="auditFilter" placeholder="Filter by path, e.g. /cart/bulk (optional)" />
+            <input type="text" id="auditActor" placeholder="Filter by who: an admin username or service-key (optional)" />
             <div class="orders-actions">
                 <button onclick="loadAuditLog()">Load Recent Actions</button>
             </div>
@@ -1042,7 +1083,89 @@
       localStorage.setItem("cartBuyerAuthorization", buyerAuthorizationInput.value);
     });
 
+    // ---------- admin sign-in (named accounts) ----------
+    const ADMIN_ORIGIN = "http://localhost:8083";
+    const adminUsernameInput = document.getElementById("adminUsername");
+    const adminPasswordInput = document.getElementById("adminPassword");
+    let adminToken = null;
+    try { adminToken = sessionStorage.getItem("cartAdminToken"); } catch (e) { /* storage blocked: sign in each visit */ }
+
+    // While signed in as a named admin, every request to this service carries that session instead of the shared
+    // Service Key, so the audit log can name the person. Done once here so no call site needs to know.
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = (input, init = {}) => {
+      const url = typeof input === "string" ? input : input.url;
+      if (!adminToken || !url.startsWith(ADMIN_ORIGIN)) return nativeFetch(input, init);
+      const headers = new Headers(init.headers || {});
+      headers.delete("X-Service-Key");
+      headers.set("X-Admin-Token", adminToken);
+      return nativeFetch(input, { ...init, headers });
+    };
+
+    function renderAdminIdentity(identity) {
+      document.getElementById("adminIdentity").textContent = identity
+        ? `Signed in as ${identity.username} (${identity.role}).`
+        : "Not signed in. Sign in with your own admin account (what you can do depends on your role), or use the shared Service Key below.";
+    }
+
+    function forgetAdminSession() {
+      adminToken = null;
+      try { sessionStorage.removeItem("cartAdminToken"); } catch (e) { /* nothing stored */ }
+      renderAdminIdentity(null);
+    }
+
+    async function adminSignIn() {
+      const username = adminUsernameInput.value.trim();
+      const password = adminPasswordInput.value;
+      if (!username || !password) {
+        showStatus("Enter your admin username and password.", "error");
+        return;
+      }
+      try {
+        const response = await nativeFetch(`${ADMIN_ORIGIN}/admin/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username, password })
+        });
+        if (!response.ok) {
+          showStatus((await response.text()) || "Sign-in failed.", "error");
+          return;
+        }
+        const login = await response.json();
+        adminToken = login.token;
+        try { sessionStorage.setItem("cartAdminToken", adminToken); } catch (e) { /* works for this page view only */ }
+        adminPasswordInput.value = "";
+        renderAdminIdentity(login);
+        showStatus(`Signed in as ${login.username} (${login.role}).`, "success");
+      } catch (error) {
+        showStatus("Sign-in failed: " + error.message, "error");
+      }
+    }
+
+    async function adminSignOut() {
+      if (adminToken) {
+        try { await nativeFetch(`${ADMIN_ORIGIN}/admin/logout`, { method: "POST", headers: { "X-Admin-Token": adminToken } }); } catch (e) { /* the token expires on its own */ }
+      }
+      forgetAdminSession();
+      showStatus("Signed out.", "success");
+    }
+
+    // A saved session may have expired (or the account been disabled) since last visit.
+    async function restoreAdminSession() {
+      if (!adminToken) return;
+      try {
+        const response = await window.fetch(`${ADMIN_ORIGIN}/admin/me`);
+        if (response.ok) renderAdminIdentity(await response.json());
+        else forgetAdminSession();
+      } catch (e) {
+        renderAdminIdentity(null);
+      }
+    }
+    restoreAdminSession();
+
     function requireServiceKey() {
+      // Signed in as a named admin: the fetch wrapper above swaps this placeholder for the X-Admin-Token session.
+      if (adminToken) return "admin-session";
       const key = serviceKeyInput.value;
       if (!key) {
         showStatus("Please enter the Service Key above first.", "error");
@@ -1580,17 +1703,98 @@
       await loadCodPanel(phno);
     }
 
+    // ---------- admin accounts ----------
+    const ADMIN_ACCOUNTS_URL = `${ADMIN_ORIGIN}/admin/accounts`;
+
+    async function loadAdminAccounts() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const rows = await apiCall(ADMIN_ACCOUNTS_URL, { headers: { "X-Service-Key": serviceKey } });
+      const wrap = document.getElementById("adminAccountsWrap");
+      const roleOptions = current => ["SUPPORT", "MANAGER", "OWNER"].map(r => `<option value="${r}"${r === current ? " selected" : ""}>${r}</option>`).join("");
+      wrap.innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Created by</th><th>Last sign-in</th><th>New password</th></tr></thead><tbody>${rows.map(a => `
+            <tr><td>${escapeHtml(a.username)}</td>
+            <td><select id="role-${escapeHtml(a.username)}">${roleOptions(a.role)}</select>
+                <button class="small-btn" onclick="setAdminRole('${escapeHtml(a.username)}')">Save role</button></td>
+            <td>${a.active ? "Active" : "Disabled"}
+                <button class="small-btn" onclick="setAdminActive('${escapeHtml(a.username)}', ${!a.active})">${a.active ? "Disable" : "Enable"}</button></td>
+            <td>${escapeHtml(a.createdBy || "")}</td>
+            <td>${a.lastLoginAt ? new Date(a.lastLoginAt).toLocaleString() : "never"}</td>
+            <td><input type="password" id="pw-${escapeHtml(a.username)}" placeholder="10+ characters" autocomplete="new-password" style="width:150px;margin:0 6px 0 0;padding:6px 8px;" />
+                <button class="small-btn" onclick="resetAdminPassword('${escapeHtml(a.username)}')">Set</button></td></tr>`).join("")}</tbody></table>`
+        : "<p>No admin accounts yet. Create the first owner above (with the Service Key), then sign in as them.</p>";
+      showStatus(`${rows.length} admin account(s).`, "success");
+    }
+
+    async function createAdminAccount() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const username = document.getElementById("newAdminUsername").value.trim();
+      const password = document.getElementById("newAdminPassword").value;
+      if (!username || !password) {
+        showStatus("Enter a username and password for the new account.", "error");
+        return;
+      }
+      const created = await apiCall(ADMIN_ACCOUNTS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
+        body: JSON.stringify({ username, password, role: document.getElementById("newAdminRole").value })
+      });
+      document.getElementById("newAdminUsername").value = "";
+      document.getElementById("newAdminPassword").value = "";
+      showStatus(`Created ${created.username} (${created.role}).`, "success");
+      await loadAdminAccounts();
+    }
+
+    async function setAdminRole(username) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const role = document.getElementById("role-" + username).value;
+      await apiCall(`${ADMIN_ACCOUNTS_URL}/${encodeURIComponent(username)}/role?role=${encodeURIComponent(role)}`,
+        { method: "PUT", headers: { "X-Service-Key": serviceKey } });
+      await loadAdminAccounts();
+      showStatus(`${username} is now ${role}.`, "success");
+    }
+
+    async function setAdminActive(username, active) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      await apiCall(`${ADMIN_ACCOUNTS_URL}/${encodeURIComponent(username)}/active?active=${active}`,
+        { method: "PUT", headers: { "X-Service-Key": serviceKey } });
+      await loadAdminAccounts();
+      showStatus(`${username} ${active ? "enabled" : "disabled and signed out"}.`, "success");
+    }
+
+    async function resetAdminPassword(username) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const input = document.getElementById("pw-" + username);
+      if (!input.value) {
+        showStatus("Type the new password first.", "error");
+        return;
+      }
+      await apiCall(`${ADMIN_ACCOUNTS_URL}/${encodeURIComponent(username)}/password`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
+        body: JSON.stringify({ newPassword: input.value })
+      });
+      input.value = "";
+      showStatus(`Password changed for ${username}; they have been signed out.`, "success");
+    }
+
     // ---------- audit log ----------
     async function loadAuditLog() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
       const filter = document.getElementById("auditFilter").value.trim();
-      const rows = await apiCall(`http://localhost:8083/audit/recent?limit=200${filter ? "&pathContains=" + encodeURIComponent(filter) : ""}`,
+      const actor = document.getElementById("auditActor").value.trim();
+      const rows = await apiCall(`http://localhost:8083/audit/recent?limit=200${filter ? "&pathContains=" + encodeURIComponent(filter) : ""}${actor ? "&actor=" + encodeURIComponent(actor) : ""}`,
         { headers: { "X-Service-Key": serviceKey } });
       const wrap = document.getElementById("auditTableWrap");
       wrap.innerHTML = rows.length
-        ? `<table class="orders-table"><thead><tr><th>When</th><th>Action</th><th>Result</th><th>From</th></tr></thead><tbody>${rows.map(r => `
-            <tr><td>${new Date(r.timestamp).toLocaleString()}</td><td>${escapeHtml(r.method)} ${escapeHtml(r.path)}</td>
+        ? `<table class="orders-table"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>Result</th><th>From</th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>${new Date(r.timestamp).toLocaleString()}</td><td>${escapeHtml(r.actor || "(before named accounts)")}</td><td>${escapeHtml(r.method)} ${escapeHtml(r.path)}</td>
             <td>${r.status}</td><td>${escapeHtml(r.remoteAddr || "")}</td></tr>`).join("")}</tbody></table>`
         : "<p>No recorded actions yet.</p>";
       showStatus(`${rows.length} recorded action(s).`, "success");

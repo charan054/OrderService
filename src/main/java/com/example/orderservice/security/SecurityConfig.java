@@ -1,6 +1,7 @@
 package com.example.orderservice.security;
 
 import com.example.orderservice.repository.AuditLogRepository;
+import com.example.orderservice.service.AdminAuthService;
 import com.example.orderservice.service.CustomerAuthService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -24,8 +25,10 @@ import java.time.Clock;
  *   loyalty, ...). A storefront customer needs a verified session (X-Customer-Token, see CustomerAuthService) and
  *   may only touch their own phone number (enforced per endpoint by CustomerAccess); the admin dashboard's
  *   X-Service-Key may touch any. Before verified login these were public to anyone who typed a phone number.</li>
- *   <li>Everything else - service only (X-Service-Key): placing orders for others, listing every customer's orders,
- *   ship/deliver, analytics, coupons admin, ... A customer token never satisfies these.</li>
+ *   <li>Everything else - service only: placing orders for others, listing every customer's orders, ship/deliver,
+ *   analytics, coupons admin, ... A customer token never satisfies these. "Service" here means the shared
+ *   X-Service-Key OR a named admin's X-Admin-Token (AdminAuthService); the latter is then held to its role by
+ *   AdminPolicy, which the service key is not.</li>
  * </ul>
  */
 @Configuration
@@ -33,14 +36,16 @@ public class SecurityConfig {
 
     private final String serviceApiKey;
     private final CustomerAuthService customerAuthService;
+    private final AdminAuthService adminAuthService;
     private final AuditLogRepository auditLogRepository;
     private final Clock clock;
 
     public SecurityConfig(@Value("${internal.service.api-key}") String serviceApiKey,
-                          CustomerAuthService customerAuthService,
+                          CustomerAuthService customerAuthService, AdminAuthService adminAuthService,
                           AuditLogRepository auditLogRepository, Clock clock) {
         this.serviceApiKey = serviceApiKey;
         this.customerAuthService = customerAuthService;
+        this.adminAuthService = adminAuthService;
         this.auditLogRepository = auditLogRepository;
         this.clock = clock;
     }
@@ -59,6 +64,8 @@ public class SecurityConfig {
                         // customer has a session.
                         .requestMatchers(HttpMethod.POST, "/customer/login/request", "/customer/login/verify", "/customer/logout").permitAll()
                         .requestMatchers(HttpMethod.POST, "/cart/forgotpin/request", "/cart/forgotpin/reset").permitAll()
+                        // An admin signing in (no session yet) or out (only ever ends the caller's own token).
+                        .requestMatchers(HttpMethod.POST, "/admin/login", "/admin/logout").permitAll()
                         // Order-id-scoped status only: the tracking timeline and the notification audit trail are
                         // status + timestamps, and /summary (the logged-out "Track an order" box) additionally
                         // requires the matching phone number and returns no address or items.
@@ -92,8 +99,11 @@ public class SecurityConfig {
                 // default 403 from the access-denied handler.
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
                 .addFilterBefore(new ServiceKeyAuthenticationFilter(serviceApiKey), UsernamePasswordAuthenticationFilter.class)
-                .addFilterAfter(new CustomerTokenAuthenticationFilter(customerAuthService), ServiceKeyAuthenticationFilter.class)
+                .addFilterAfter(new AdminTokenAuthenticationFilter(adminAuthService), ServiceKeyAuthenticationFilter.class)
+                .addFilterAfter(new CustomerTokenAuthenticationFilter(customerAuthService), AdminTokenAuthenticationFilter.class)
                 .addFilterAfter(new AuditLogFilter(auditLogRepository, clock), CustomerTokenAuthenticationFilter.class)
+                // After the audit filter so a refused attempt is still recorded.
+                .addFilterAfter(new AdminPolicyFilter(), AuditLogFilter.class)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable);
         return http.build();

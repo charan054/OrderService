@@ -18,7 +18,8 @@ import java.time.Instant;
 import java.util.Set;
 
 /**
- * Records every write (POST/PUT/PATCH/DELETE) made with the service key into the audit log, after the request has
+ * Records every write (POST/PUT/PATCH/DELETE) made with the service key or a named admin account into the audit
+ * log (naming the admin, or "service-key"), after the request has
  * run so the response status is known. Sits after the authentication filters in SecurityConfig. Reads are not
  * logged, and neither are customer-session requests - this is the trail of admin/trusted-caller changes.
  * A failure to write the log entry is swallowed (logged): auditing must never turn a good request into an error.
@@ -61,10 +62,16 @@ public class AuditLogFilter extends OncePerRequestFilter {
             entry.setPath(path.length() > 300 ? path.substring(0, 300) : path);
             entry.setStatus(status);
             entry.setRemoteAddr(request.getRemoteAddr());
+            entry.setActor(actor());
             repository.save(entry);
         } catch (RuntimeException e) {
             log.error("Could not write audit log entry: {}", e.getMessage());
         }
+    }
+
+    private static String actor() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        return auth != null && auth.getPrincipal() instanceof AdminPrincipal admin ? admin.username() : "service-key";
     }
 
     private static boolean isService() {

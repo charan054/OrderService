@@ -1,5 +1,6 @@
 package com.example.orderservice.security;
 
+import com.example.orderservice.entity.AdminRole;
 import com.example.orderservice.entity.AuditLogEntry;
 import com.example.orderservice.repository.AuditLogRepository;
 import jakarta.servlet.ServletException;
@@ -75,6 +76,21 @@ class AuditLogFilterTest {
         assertEquals("/cart/42/ship", captor.getValue().getPath());
         assertEquals(200, captor.getValue().getStatus());
         assertEquals(NOW, captor.getValue().getTimestamp());
+    }
+
+    @Test
+    void aNamedAdminWriteIsRecordedUnderTheirUsernameAndTheServiceKeyUnderItsOwnName() throws Exception {
+        SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
+                new AdminPrincipal("asha", AdminRole.MANAGER), null,
+                List.of(new SimpleGrantedAuthority("ROLE_SERVICE"), new SimpleGrantedAuthority("ROLE_ADMIN"))));
+        run("POST", "/cart/42/ship");
+        signInAs("ROLE_SERVICE");
+        run("POST", "/cart/43/ship");
+
+        ArgumentCaptor<AuditLogEntry> captor = ArgumentCaptor.forClass(AuditLogEntry.class);
+        verify(repository, org.mockito.Mockito.times(2)).save(captor.capture());
+        assertEquals("asha", captor.getAllValues().get(0).getActor());
+        assertEquals("service-key", captor.getAllValues().get(1).getActor());
     }
 
     @Test
