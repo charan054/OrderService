@@ -152,6 +152,9 @@ class OrderServiceTest {
     @Mock
     private StoreCreditService storeCreditService;
 
+    @Mock
+    private InvoiceNumberService invoiceNumberService;
+
     @InjectMocks
     private OrderService service;
 
@@ -1753,6 +1756,84 @@ class OrderServiceTest {
         assertEquals("CASH", invoice.paymentMethod());
         assertEquals(java.time.Instant.parse("2026-10-01T10:00:00Z"), invoice.placedAt());
         assertEquals("1 Main St, Pune, MH, 411001", invoice.shippingAddress());
+    }
+
+    // ---------- GST ----------
+
+    @Test
+    void checkoutRecordsEachItemsGstRateAndGivesTheOrderAnInvoiceNumber() {
+        ReflectionTestUtils.setField(service, "defaultGstRate", 18.0);
+        stubCartSaveAssignsAnId();
+        Product soap = product(1, 100.0, 10);
+        soap.setGstRate(5.0);
+        when(productClient.getProductById(1)).thenReturn(soap);
+        when(productClient.getProductById(2)).thenReturn(product(2, 50.0, 10));   // no rate in the catalog
+        Cart cart = cart(CUSTOMER, item(1, 1), item(2, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setInvoiceNumber("CM/2026-27/999999");   // a client can't pick its own number
+
+        Cart result = service.order(cart, null, null);
+
+        assertEquals(5.0, itemOf(result, 1).getGstRate());
+        assertEquals(18.0, itemOf(result, 2).getGstRate());
+        ArgumentCaptor<Cart> numbered = ArgumentCaptor.forClass(Cart.class);
+        verify(invoiceNumberService).assign(numbered.capture());
+        assertNull(numbered.getValue().getInvoiceNumber());   // cleared before numbering
+    }
+
+    @Test
+    void theInvoiceSplitsGstOutAndUsesIgstForAnotherState() {
+        ReflectionTestUtils.setField(service, "storeState", "Karnataka");
+        ReflectionTestUtils.setField(service, "storeName", "Charan Mart");
+        ReflectionTestUtils.setField(service, "storeGstin", "29ABCDE1234F1Z5");
+        Cart order = cart(CUSTOMER, pricedItem(1, 1, 118));
+        order.getOrderItems().get(0).setGstRate(18.0);
+        order.setTotalPrice(118);
+        order.setShippingAddressId(7L);
+        order.setStatus(OrderStatus.DELIVERED);
+        order.setInvoiceNumber("CM/2026-27/000005");
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(order));
+        Product p = product(1, 999.0, 5);   // today's catalog price/rate must not change the sold item's tax
+        p.setGstRate(28.0);
+        p.setHsnCode("3401");
+        when(productClient.getProductById(1)).thenReturn(p);
+        ShippingAddress address = new ShippingAddress();
+        address.setLine1("1 Main St");
+        address.setCity("Pune");
+        address.setState("Maharashtra");
+        address.setPincode("411001");
+        when(shippingAddressRepository.findById(7L)).thenReturn(Optional.of(address));
+
+        Invoice invoice = service.getInvoice(42L, CUSTOMER);
+
+        assertEquals("CM/2026-27/000005", invoice.invoiceNumber());
+        Invoice.Tax tax = invoice.tax();
+        assertTrue(tax.interState());
+        assertEquals("Maharashtra", tax.placeOfSupply());
+        assertEquals("29ABCDE1234F1Z5", tax.sellerGstin());
+        assertEquals(100.0, tax.taxableValue());
+        assertEquals(18.0, tax.igst());
+        assertEquals("3401", tax.lines().get(0).hsnCode());
+        verify(invoiceNumberService, never()).assign(any());
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void anOlderOrderGetsItsInvoiceNumberTheFirstTimeTheInvoiceIsOpened() {
+        Cart order = cart(CUSTOMER, pricedItem(1, 1, 100));
+        order.setStatus(OrderStatus.DELIVERED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(order));
+        when(productClient.getProductById(1)).thenReturn(product(1, 100.0, 5));
+        org.mockito.Mockito.doAnswer(inv -> {
+            ((Cart) inv.getArgument(0)).setInvoiceNumber("CM/2026-27/000006");
+            return null;
+        }).when(invoiceNumberService).assign(order);
+        when(orderRepository.save(order)).thenReturn(order);
+
+        Invoice invoice = service.getInvoice(42L, CUSTOMER);
+
+        assertEquals("CM/2026-27/000006", invoice.invoiceNumber());
+        verify(orderRepository).save(order);
     }
 
     @Test

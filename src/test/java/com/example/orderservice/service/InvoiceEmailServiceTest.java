@@ -71,7 +71,8 @@ class InvoiceEmailServiceTest {
     private Invoice invoice() {
         return new Invoice(7, NOW, "Asha", PHNO,
                 List.of(new Invoice.Line(1, "Soap", 2, 30.0, 60.0, 1, 0)),
-                "WELCOME10", 6.0, 10, 0.0, 44.0, 20.0, "CASH", false, "PLACED", "1 Main St, Pune, MH, 411001", null, null);
+                "WELCOME10", 6.0, 10, 0.0, 44.0, 20.0, "CASH", false, "PLACED", "1 Main St, Pune, MH, 411001", null, null,
+                null, null, null);
     }
 
     private void verifiedEmail() {
@@ -100,6 +101,25 @@ class InvoiceEmailServiceTest {
         assertTrue(text.contains("Total charged: Rs. 44.00"));
         assertTrue(text.contains("Refunded or taken off since: Rs. 20.00"));
         assertTrue(text.contains("Ship to: 1 Main St, Pune, MH, 411001"));
+    }
+
+    @Test
+    void theEmailCarriesTheInvoiceNumberAndTheGstSummary() {
+        Invoice base = invoice();
+        Invoice.Tax tax = new Invoice.Tax("Charan Mart", "29ABCDE1234F1Z5", "Karnataka", "Karnataka", false,
+                List.of(new Invoice.TaxLine(1, "Soap", "3401", 18, 1, 25.42, 2.29, 2.29, 0, 30)),
+                25.42, 2.29, 2.29, 0, 4.58);
+        Invoice withTax = new Invoice(base.orderId(), base.placedAt(), base.customerName(), base.customerPhno(), base.lines(),
+                base.couponCode(), base.discountAmount(), base.pointsRedeemed(), base.storeCreditUsed(), base.totalPrice(),
+                base.refundedAmount(), base.paymentMethod(), base.paid(), base.status(), base.shippingAddress(),
+                base.deliveryNote(), base.deliverySlot(), "CM/2026-27/000042", NOW, tax);
+
+        String text = service.body(withTax);
+
+        assertTrue(text.contains("Tax invoice CM/2026-27/000042, 7 Oct 2026, 10:00"));
+        assertTrue(text.contains("seller GSTIN 29ABCDE1234F1Z5"));
+        assertTrue(text.contains("Taxable value: Rs. 25.42"));
+        assertTrue(text.contains("CGST: Rs. 2.29 | SGST: Rs. 2.29"));
     }
 
     @Test

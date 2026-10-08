@@ -127,6 +127,17 @@ public class OrderService {
     private CodRiskService codRiskService;
     @Autowired
     private StoreCreditService storeCreditService;
+    @Autowired
+    private InvoiceNumberService invoiceNumberService;
+    // GST (see GstCalculator): the rate for products with none of their own, and the seller details printed on invoices.
+    @Value("${gst.default-rate:18}")
+    private double defaultGstRate;
+    @Value("${gst.store-name:Charan Mart}")
+    private String storeName;
+    @Value("${gst.store-gstin:}")
+    private String storeGstin;
+    @Value("${gst.store-state:}")
+    private String storeState;
     // Cash already collected on a cancelled/returned order is paid back as store credit (there is no other way to
     // send it back from here). Off = it is only recorded as no longer due, as before.
     @Value("${store-credit.cash-refunds:true}")
@@ -185,6 +196,7 @@ public class OrderService {
             }
             price=price+(orderItem.getProductQuantity()*pro.getProductPrice());
             orderItem.setUnitPrice(pro.getProductPrice());
+            orderItem.setGstRate(pro.getGstRate() != null ? pro.getGstRate() : defaultGstRate);
             orderItem.setCancelledQuantity(0);
             orderItem.setReturnedQuantity(0);
         }
@@ -251,6 +263,7 @@ public class OrderService {
             orderItem.setOrderId(saved.getOrderId());
             productClient.updateProductStock(serviceApiKey, orderItem.getProductId(),-orderItem.getProductQuantity());
         }
+        invoiceNumberService.assign(saved);
         Cart result = orderRepository.save(saved);
         storeCreditService.linkOrder(creditTx, result.getOrderId());
         recordTracking(result.getOrderId(), OrderStatus.PLACED);
@@ -291,6 +304,8 @@ public class OrderService {
         cart.setOrderId(null);
         cart.setRefundedAmount(0);
         cart.setStoreCreditRefunded(0);
+        cart.setInvoiceNumber(null);
+        cart.setInvoiceDate(null);
         cart.setReturnReason(null);
         cart.setPaymentTransactionId(null);
         cart.setUpiId(null);
@@ -428,6 +443,7 @@ public class OrderService {
         cart.setPaid(true);
         cart.setPaymentTransactionId(paymentTransactionId);
         cart.setPaymentDeadline(null);
+        invoiceNumberService.assign(cart);
         Cart result = orderRepository.save(cart);
         recordTracking(result.getOrderId(), OrderStatus.PLACED);
         redeemLoyaltyPoints(result.getCustomerPhno(), result.getPointsRedeemed(), result.getOrderId());
@@ -1500,14 +1516,26 @@ public class OrderService {
         Cart order = orderRepository.findById(orderId)
                 .filter(o -> o.getCustomerPhno() == phno)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        // Orders from before invoice numbers existed get one the first time their invoice is opened.
+        if (order.getInvoiceNumber() == null && order.getStatus() != OrderStatus.PENDING_PAYMENT) {
+            invoiceNumberService.assign(order);
+            if (order.getInvoiceNumber() != null) {
+                order = orderRepository.save(order);
+            }
+        }
         List<Invoice.Line> lines = new ArrayList<>();
+        List<GstCalculator.Item> taxItems = new ArrayList<>();
         for (OrderItem item : order.getOrderItems()) {
             String name = "Product #" + item.getProductId();
             double unitPrice = item.getUnitPrice() != null ? item.getUnitPrice() : 0;
+            String hsnCode = null;
+            Double catalogRate = null;
             try {
                 Product p = productClient.getProductById(item.getProductId());
                 if (p != null) {
                     name = p.getProductName();
+                    hsnCode = p.getHsnCode();
+                    catalogRate = p.getGstRate();
                     if (item.getUnitPrice() == null) {
                         unitPrice = p.getProductPrice();
                     }
@@ -1517,22 +1545,28 @@ public class OrderService {
             }
             lines.add(new Invoice.Line(item.getProductId(), name, item.getProductQuantity(), unitPrice,
                     unitPrice * item.getProductQuantity(), item.getCancelledQuantity(), item.getReturnedQuantity()));
+            double rate = item.getGstRate() != null ? item.getGstRate() : catalogRate != null ? catalogRate : defaultGstRate;
+            taxItems.add(new GstCalculator.Item(item.getProductId(), name, hsnCode, rate, unitPrice,
+                    item.getProductQuantity(), item.getOutstandingQuantity()));
         }
         Instant placedAt = trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId).stream()
                 .map(TrackingEvent::getTimestamp).findFirst().orElse(null);
-        String address = null;
-        if (order.getShippingAddressId() != null) {
-            address = shippingAddressRepository.findById(order.getShippingAddressId())
-                    .map(a -> String.join(", ", a.getLine1(), a.getCity(), a.getState(), a.getPincode()))
-                    .orElse(null);
-        }
+        com.example.orderservice.entity.ShippingAddress shipTo = order.getShippingAddressId() == null ? null
+                : shippingAddressRepository.findById(order.getShippingAddressId()).orElse(null);
+        String address = shipTo == null ? null
+                : String.join(", ", shipTo.getLine1(), shipTo.getCity(), shipTo.getState(), shipTo.getPincode());
+        // Place of supply is where the goods go; without a saved address it is taken to be the store's own state.
+        String placeOfSupply = shipTo != null && shipTo.getState() != null && !shipTo.getState().isBlank()
+                ? shipTo.getState().trim() : storeState;
+        Invoice.Tax tax = GstCalculator.compute(taxItems, order.getDiscountAmount(),
+                GstCalculator.isInterState(storeState, placeOfSupply), storeName, storeGstin, storeState, placeOfSupply);
         return new Invoice(orderId, placedAt, order.getCustomerName(), order.getCustomerPhno(), lines,
                 order.getCouponCode(), order.getDiscountAmount(),
                 order.getPointsRedeemed() == null ? 0 : order.getPointsRedeemed(),
                 order.getStoreCreditUsed() == null ? 0 : order.getStoreCreditUsed(), order.getTotalPrice(),
                 order.getRefundedAmount(),
                 String.valueOf(order.getPaymentMethod()), order.isPaid(), String.valueOf(order.getStatus()), address,
-                order.getDeliveryNote(), order.getDeliverySlot());
+                order.getDeliveryNote(), order.getDeliverySlot(), order.getInvoiceNumber(), order.getInvoiceDate(), tax);
     }
 
     public List<TrackingEvent> getTracking(long orderId) {
