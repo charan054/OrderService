@@ -12,5 +12,6 @@ public interface AuditLogRepository extends JpaRepository<AuditLogEntry, Long> {
     List<AuditLogEntry> findAllByOrderByIdDesc(Pageable pageable);
     List<AuditLogEntry> findByPathContainingIgnoreCaseOrderByIdDesc(String path, Pageable pageable);
     List<AuditLogEntry> findByActorIgnoreCaseOrderByIdDesc(String actor, Pageable pageable);
+    boolean existsByActorIgnoreCase(String actor);
     List<AuditLogEntry> findByActorIgnoreCaseAndPathContainingIgnoreCaseOrderByIdDesc(String actor, String path, Pageable pageable);
 }

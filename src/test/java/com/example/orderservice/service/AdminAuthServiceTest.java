@@ -6,10 +6,14 @@ import com.example.orderservice.dto.AdminAccountView;
 import com.example.orderservice.dto.AdminLoginResponse;
 import com.example.orderservice.dto.NewAdminAccount;
 import com.example.orderservice.entity.AdminAccount;
+import com.example.orderservice.entity.AdminLoginEvent;
+import com.example.orderservice.entity.AuditLogEntry;
 import com.example.orderservice.entity.AdminRole;
 import com.example.orderservice.exception.AdminAuthException;
 import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.AdminAccountRepository;
+import com.example.orderservice.repository.AdminLoginEventRepository;
+import com.example.orderservice.repository.AuditLogRepository;
 import com.example.orderservice.repository.AdminSessionRepository;
 import com.example.orderservice.security.AdminPrincipal;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +44,10 @@ class AdminAuthServiceTest {
     private AdminAccountRepository accounts;
     @Autowired
     private AdminSessionRepository sessions;
+    @Autowired
+    private AdminLoginEventRepository loginEvents;
+    @Autowired
+    private AuditLogRepository auditLog;
 
     @MockitoBean
     private Clock clock;
@@ -56,6 +64,8 @@ class AdminAuthServiceTest {
     void reset() {
         sessions.deleteAll();
         accounts.deleteAll();
+        loginEvents.deleteAll();
+        auditLog.deleteAll();
         now = Instant.parse("2026-10-08T10:00:00Z");
         when(clock.instant()).thenAnswer(invocation -> now);
     }
@@ -238,6 +248,117 @@ class AdminAuthServiceTest {
         assertThat(service.list()).extracting(AdminAccountView::username).containsExactly("asha", "zoe");
         assertThat(service.list().toString()).doesNotContain("$2");
         assertThat(service.list().get(0).createdBy()).isEqualTo("service-key");
+    }
+
+    @Test
+    void everySignInAttemptIsRecordedWithItsResultAndAddressButNeverThePassword() {
+        create("asha", AdminRole.SUPPORT);
+        create("gone", AdminRole.SUPPORT);
+        service.setActive("gone", false);
+
+        service.login("asha", PASSWORD, "10.0.0.7");
+        for (String[] attempt : new String[][]{{"asha", "wrong password!"}, {"nobody", PASSWORD}, {"gone", PASSWORD}}) {
+            assertRejected(() -> service.login(attempt[0], attempt[1], "10.0.0.8"), HttpStatus.UNAUTHORIZED);
+        }
+
+        assertThat(service.recentLogins(null, 10)).extracting(AdminLoginEvent::getUsername, AdminLoginEvent::getResult,
+                AdminLoginEvent::isSuccess, AdminLoginEvent::getRemoteAddr).containsExactly(
+                org.assertj.core.groups.Tuple.tuple("gone", "DISABLED", false, "10.0.0.8"),
+                org.assertj.core.groups.Tuple.tuple("nobody", "UNKNOWN_USER", false, "10.0.0.8"),
+                org.assertj.core.groups.Tuple.tuple("asha", "WRONG_PASSWORD", false, "10.0.0.8"),
+                org.assertj.core.groups.Tuple.tuple("asha", "OK", true, "10.0.0.7"));
+        assertThat(loginEvents.findAll().toString()).doesNotContain(PASSWORD).doesNotContain("wrong password");
+        assertThat(service.recentLogins("ASHA", 10)).hasSize(2);
+    }
+
+    @Test
+    void failedAttemptsAreCountedPerAccountAndClearedBySigningIn() {
+        create("asha", AdminRole.SUPPORT);
+        for (int i = 0; i < 3; i++) {
+            assertRejected(() -> service.login("asha", "wrong password!"), HttpStatus.UNAUTHORIZED);
+        }
+        AdminAccountView view = service.list().get(0);
+        assertThat(view.failedLogins()).isEqualTo(3);
+        assertThat(view.lastFailedLoginAt()).isEqualTo(now);
+
+        service.login("asha", PASSWORD);
+
+        assertThat(service.list().get(0).failedLogins()).isZero();
+    }
+
+    @Test
+    void theTypedUsernameIsMadeSafeBeforeItIsStored() {
+        assertRejected(() -> service.login("evil\nname\u0007" + "x".repeat(60), "whatever password"), HttpStatus.UNAUTHORIZED);
+
+        String stored = loginEvents.findAll().get(0).getUsername();
+        assertThat(stored).hasSize(32).doesNotContain("\n").doesNotContain("\u0007").startsWith("evilname");
+    }
+
+    @Test
+    void signInHistoryOlderThanNinetyDaysIsDropped() {
+        create("asha", AdminRole.SUPPORT);
+        service.login("asha", PASSWORD);
+        now = now.plus(Duration.ofDays(91));
+
+        service.login("asha", PASSWORD);
+
+        assertThat(loginEvents.findAll()).hasSize(1);
+    }
+
+    @Test
+    void theHistoryLimitIsChecked() {
+        assertRejected(() -> service.recentLogins(null, 0), HttpStatus.BAD_REQUEST);
+        assertRejected(() -> service.recentLogins(null, 501), HttpStatus.BAD_REQUEST);
+    }
+
+    @Test
+    void anAccountCanBeDeletedButNotYourselfOrTheLastOwner() {
+        create("boss", AdminRole.OWNER);
+        create("mistake", AdminRole.MANAGER);
+        AdminLoginResponse login = service.login("mistake", PASSWORD);
+
+        assertRejected(() -> service.delete("boss", "boss"), HttpStatus.CONFLICT);
+        assertRejected(() -> service.delete("boss", "someone-else"), HttpStatus.CONFLICT);
+        service.delete("mistake", "boss");
+
+        assertThat(accounts.findByUsername("mistake")).isEmpty();
+        assertThat(service.resolveToken(login.token())).isEmpty();
+        assertRejected(() -> service.delete("mistake", "boss"), HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void anOwnerCanBeDeletedOnceAnotherOwnerStands() {
+        create("boss", AdminRole.OWNER);
+        create("boss2", AdminRole.OWNER);
+
+        service.delete("boss", "boss2");
+
+        assertThat(accounts.findAll()).extracting(AdminAccount::getUsername).containsExactly("boss2");
+    }
+
+    @Test
+    void aDisabledOwnerCanBeDeletedEvenWhenItIsTheOnlyOneListed() {
+        create("boss", AdminRole.OWNER);
+        create("boss2", AdminRole.OWNER);
+        service.setActive("boss", false);
+
+        service.delete("boss", "boss2");
+
+        assertThat(accounts.count()).isEqualTo(1);
+    }
+
+    @Test
+    void aNameWithAuditHistoryOrTheServiceKeysNameCannotBeTaken() {
+        AuditLogEntry old = new AuditLogEntry();
+        old.setMethod("POST");
+        old.setPath("/cart/1/ship");
+        old.setActor("former.agent");
+        auditLog.save(old);
+
+        assertRejected(() -> create("former.agent", AdminRole.SUPPORT), HttpStatus.CONFLICT);
+        assertRejected(() -> create("FORMER.Agent", AdminRole.SUPPORT), HttpStatus.CONFLICT);
+        assertRejected(() -> create("service-key", AdminRole.OWNER), HttpStatus.CONFLICT);
+        assertThat(accounts.count()).isZero();
     }
 
     @Test

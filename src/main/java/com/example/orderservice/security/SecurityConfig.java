@@ -37,15 +37,17 @@ public class SecurityConfig {
     private final String serviceApiKey;
     private final CustomerAuthService customerAuthService;
     private final AdminAuthService adminAuthService;
+    private final NamedLoginPolicy namedLoginPolicy;
     private final AuditLogRepository auditLogRepository;
     private final Clock clock;
 
     public SecurityConfig(@Value("${internal.service.api-key}") String serviceApiKey,
                           CustomerAuthService customerAuthService, AdminAuthService adminAuthService,
-                          AuditLogRepository auditLogRepository, Clock clock) {
+                          NamedLoginPolicy namedLoginPolicy, AuditLogRepository auditLogRepository, Clock clock) {
         this.serviceApiKey = serviceApiKey;
         this.customerAuthService = customerAuthService;
         this.adminAuthService = adminAuthService;
+        this.namedLoginPolicy = namedLoginPolicy;
         this.auditLogRepository = auditLogRepository;
         this.clock = clock;
     }
@@ -66,6 +68,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/cart/forgotpin/request", "/cart/forgotpin/reset").permitAll()
                         // An admin signing in (no session yet) or out (only ever ends the caller's own token).
                         .requestMatchers(HttpMethod.POST, "/admin/login", "/admin/logout").permitAll()
+                        // Whether the dashboard must sign in by name - asked before anyone has.
+                        .requestMatchers(HttpMethod.GET, "/admin/config").permitAll()
                         // Order-id-scoped status only: the tracking timeline and the notification audit trail are
                         // status + timestamps, and /summary (the logged-out "Track an order" box) additionally
                         // requires the matching phone number and returns no address or items.
@@ -98,7 +102,7 @@ public class SecurityConfig {
                 // 401 for no/invalid credentials; a signed-in customer hitting a service-only endpoint gets the
                 // default 403 from the access-denied handler.
                 .exceptionHandling(e -> e.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))
-                .addFilterBefore(new ServiceKeyAuthenticationFilter(serviceApiKey), UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(new ServiceKeyAuthenticationFilter(serviceApiKey, namedLoginPolicy::refusesServiceKey), UsernamePasswordAuthenticationFilter.class)
                 .addFilterAfter(new AdminTokenAuthenticationFilter(adminAuthService), ServiceKeyAuthenticationFilter.class)
                 .addFilterAfter(new CustomerTokenAuthenticationFilter(customerAuthService), AdminTokenAuthenticationFilter.class)
                 .addFilterAfter(new AuditLogFilter(auditLogRepository, clock), CustomerTokenAuthenticationFilter.class)

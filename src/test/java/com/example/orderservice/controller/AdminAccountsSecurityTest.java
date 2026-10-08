@@ -7,6 +7,7 @@ import com.example.orderservice.entity.AdminRole;
 import com.example.orderservice.entity.AuditLogEntry;
 import com.example.orderservice.kafka.OrderKafkaProducer;
 import com.example.orderservice.repository.AdminAccountRepository;
+import com.example.orderservice.repository.AdminLoginEventRepository;
 import com.example.orderservice.repository.AdminSessionRepository;
 import com.example.orderservice.repository.AuditLogRepository;
 import com.example.orderservice.service.AdminAuthService;
@@ -28,6 +29,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.not;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -59,6 +61,8 @@ class AdminAccountsSecurityTest {
     private AdminSessionRepository sessions;
     @Autowired
     private AuditLogRepository auditLog;
+    @Autowired
+    private AdminLoginEventRepository loginEvents;
 
     @MockitoBean
     private ProductClient productClient;
@@ -71,6 +75,9 @@ class AdminAccountsSecurityTest {
     void reset() {
         sessions.deleteAll();
         accounts.deleteAll();
+        loginEvents.deleteAll();
+        // Names with audit history can't be reused for new accounts, and every test reuses the same few names.
+        auditLog.deleteAll();
     }
 
     private String tokenFor(String username, AdminRole role) {
@@ -317,6 +324,46 @@ class AdminAccountsSecurityTest {
         assertThat(auditedFor("service-key")).anySatisfy(e -> assertThat(e.getPath()).isEqualTo("/admin/accounts"));
         // Passwords travel in the body, so they can never end up in a recorded path.
         assertThat(auditLog.findAll()).noneSatisfy(e -> assertThat(e.getPath()).contains(PASSWORD));
+    }
+
+    @Test
+    void theConfigIsPublicAndStaysOffByDefault() throws Exception {
+        mockMvc.perform(get("/admin/config")).andExpect(status().isOk()).andExpect(jsonPath("$.namedLoginRequired").value(false));
+        String support = tokenFor("support1", AdminRole.SUPPORT);
+        mockMvc.perform(get("/admin/config").header("X-Admin-Token", support)).andExpect(status().isOk());
+    }
+
+    @Test
+    void signInHistoryAndDeletionAreOwnerOnly() throws Exception {
+        String owner = tokenFor("owner1", AdminRole.OWNER);
+        String manager = tokenFor("manager1", AdminRole.MANAGER);
+        adminAuthService.create(new NewAdminAccount("mistake", PASSWORD, AdminRole.SUPPORT), "owner1");
+
+        mockMvc.perform(get("/admin/logins").header("X-Admin-Token", manager)).andExpect(status().isForbidden());
+        mockMvc.perform(delete("/admin/accounts/mistake").header("X-Admin-Token", manager)).andExpect(status().isForbidden());
+        mockMvc.perform(get("/admin/logins").param("username", "owner1").header("X-Admin-Token", owner))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].username").value("owner1"))
+                .andExpect(jsonPath("$[0].result").value("OK"))
+                .andExpect(content().string(not(containsString(PASSWORD))));
+        mockMvc.perform(get("/admin/logins").param("limit", "0").header("X-Admin-Token", owner)).andExpect(status().isBadRequest());
+        mockMvc.perform(delete("/admin/accounts/owner1").header("X-Admin-Token", owner)).andExpect(status().isConflict());
+        mockMvc.perform(delete("/admin/accounts/mistake").header("X-Admin-Token", owner)).andExpect(status().isNoContent());
+        assertThat(accounts.findByUsername("mistake")).isEmpty();
+        mockMvc.perform(get("/admin/accounts").header("X-Admin-Token", owner)).andExpect(jsonPath("$.length()").value(2));
+    }
+
+    @Test
+    void theLoginEndpointRecordsTheCallersAddress() throws Exception {
+        adminAuthService.create(new NewAdminAccount("recorded", PASSWORD, AdminRole.SUPPORT), "service-key");
+
+        mockMvc.perform(post("/admin/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"recorded\",\"password\":\"wrong password!\"}")).andExpect(status().isUnauthorized());
+
+        assertThat(loginEvents.findAll()).singleElement().satisfies(e -> {
+            assertThat(e.getResult()).isEqualTo("WRONG_PASSWORD");
+            assertThat(e.getRemoteAddr()).isNotBlank();
+        });
     }
 
     @Test

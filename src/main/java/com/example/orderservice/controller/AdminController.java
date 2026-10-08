@@ -1,20 +1,24 @@
 package com.example.orderservice.controller;
 
 import com.example.orderservice.dto.AdminAccountView;
+import com.example.orderservice.dto.AdminConfig;
 import com.example.orderservice.dto.AdminIdentity;
 import com.example.orderservice.dto.AdminLoginRequest;
 import com.example.orderservice.dto.AdminLoginResponse;
 import com.example.orderservice.dto.NewAdminAccount;
 import com.example.orderservice.dto.PasswordChange;
+import com.example.orderservice.entity.AdminLoginEvent;
 import com.example.orderservice.entity.AdminRole;
 import com.example.orderservice.exception.AdminAuthException;
 import com.example.orderservice.security.AdminPrincipal;
 import com.example.orderservice.security.AdminTokenAuthenticationFilter;
 import com.example.orderservice.security.LoginRateLimiter;
+import com.example.orderservice.security.NamedLoginPolicy;
 import com.example.orderservice.service.AdminAuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -40,16 +44,32 @@ public class AdminController {
 
     private final AdminAuthService adminAuthService;
     private final LoginRateLimiter loginRateLimiter;
+    private final NamedLoginPolicy namedLoginPolicy;
 
-    public AdminController(AdminAuthService adminAuthService, LoginRateLimiter loginRateLimiter) {
+    public AdminController(AdminAuthService adminAuthService, LoginRateLimiter loginRateLimiter,
+                           NamedLoginPolicy namedLoginPolicy) {
         this.adminAuthService = adminAuthService;
         this.loginRateLimiter = loginRateLimiter;
+        this.namedLoginPolicy = namedLoginPolicy;
     }
 
     @PostMapping("/login")
     public AdminLoginResponse login(@RequestBody AdminLoginRequest request, HttpServletRequest http) {
         loginRateLimiter.checkAdminLogin(http.getRemoteAddr(), request.username());
-        return adminAuthService.login(request.username(), request.password());
+        return adminAuthService.login(request.username(), request.password(), http.getRemoteAddr());
+    }
+
+    // Public: the dashboard asks before sign-in whether the shared service key is still accepted from a browser.
+    @GetMapping("/config")
+    public AdminConfig config() {
+        return new AdminConfig(namedLoginPolicy.required());
+    }
+
+    // Owners: who signed in (or tried to) and from where, newest first; the last 90 days.
+    @GetMapping("/logins")
+    public List<AdminLoginEvent> logins(@RequestParam(defaultValue = "100") int limit,
+                                        @RequestParam(required = false) String username) {
+        return adminAuthService.recentLogins(username, limit);
     }
 
     // Public like the customer logout: it only ever ends the caller's own token, and an expired one can still log out.
@@ -85,6 +105,12 @@ public class AdminController {
     @PostMapping("/accounts")
     public AdminAccountView createAccount(@RequestBody NewAdminAccount request, Authentication authentication) {
         return adminAuthService.create(request, actor(authentication));
+    }
+
+    @DeleteMapping("/accounts/{username}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteAccount(@PathVariable String username, Authentication authentication) {
+        adminAuthService.delete(username, actor(authentication));
     }
 
     @PutMapping("/accounts/{username}/role")
