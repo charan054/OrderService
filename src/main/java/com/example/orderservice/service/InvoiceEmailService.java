@@ -131,6 +131,14 @@ public class InvoiceEmailService {
                 b.append("  CGST: Rs. ").append(money(tax.cgst())).append(" | SGST: Rs. ").append(money(tax.sgst())).append('\n');
             }
         }
+        if (inv.creditNotes() != null && !inv.creditNotes().isEmpty()) {
+            b.append("\nGST credit notes (tax reversed for cancelled or returned items):\n");
+            for (var note : inv.creditNotes()) {
+                b.append("  ").append(note.number()).append(" - ").append("RETURNED".equals(note.reason()) ? "returned" : "cancelled")
+                        .append(", Rs. ").append(money(note.total())).append(" of which GST Rs. ")
+                        .append(money(note.cgst() + note.sgst() + note.igst())).append('\n');
+            }
+        }
         b.append("\nItem prices on older orders show today's catalog price; the total is what this order was actually charged.\n");
         return b.toString();
     }

@@ -2157,6 +2157,7 @@
         <table><tr><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr>${rows}${adj.join("")}
         <tr class="total"><td colspan="3" class="r">Total charged</td><td class="r">${money(inv.totalPrice)}</td></tr>${refundRows}</table>
         ${gstTableHtml(inv.tax, money)}
+        ${creditNotesHtml(inv.creditNotes, money)}
         <p class="meta">Item prices show today's catalog price; the total is what this order was actually charged.</p>
         <button onclick="window.print()">Print / Save as PDF</button></body></html>`;
       const w = window.open("", "_blank");
@@ -2193,6 +2194,18 @@
         <div class="meta">${tax.placeOfSupply ? "Place of supply: " + escapeHtml(tax.placeOfSupply) + " &middot; " : ""}${tax.interState ? "Inter-state (IGST)" : "Within state (CGST + SGST)"}</div>
         <table><tr>${head}</tr>${tax.lines.map(row).join("")}${totals}</table>
         <p class="meta">Tax is worked out on what was supplied (cancelled or returned units are left out), after any coupon discount. Loyalty points and store credit are a way of paying, so they don't change it.</p>`;
+    }
+
+    // GST credit notes for units cancelled or returned after the invoice was issued (the tax table above already
+    // excludes those units; these are the documents that reverse the tax on the books).
+    function creditNotesHtml(notes, money) {
+      if (!notes || !notes.length) return "";
+      const gst = l => Number(l.cgst) + Number(l.sgst) + Number(l.igst);
+      return `<h3 style="margin-top:24px;">Credit notes</h3>` + notes.map(n => `
+        <div class="meta"><strong>${escapeHtml(n.number)}</strong> &middot; ${new Date(n.issuedAt).toLocaleDateString()} &middot; ${n.reason === "RETURNED" ? "Returned" : "Cancelled"} &middot; against ${escapeHtml(n.invoiceNumber || "")}</div>
+        <table><tr><th>Item</th><th>HSN</th><th class="r">GST %</th><th class="r">Taxable</th><th class="r">GST</th><th class="r">Value</th></tr>
+        ${n.lines.map(l => `<tr><td>${escapeHtml(l.productName)} &times; ${l.quantity}</td><td>${escapeHtml(l.hsnCode || "-")}</td><td class="r">${l.gstRate}</td><td class="r">${money(l.taxableValue)}</td><td class="r">${money(gst(l))}</td><td class="r">${money(l.total)}</td></tr>`).join("")}
+        <tr class="total"><td colspan="3" class="r">Total</td><td class="r">${money(n.taxableValue)}</td><td class="r">${money(gst(n))}</td><td class="r">${money(n.total)}</td></tr></table>`).join("");
     }
 
     // "Buy again": copies a past order's lines back into the cart using the CURRENT catalog price/stock (not what
