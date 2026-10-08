@@ -2136,11 +2136,18 @@
       if (inv.discountAmount > 0) adj.push(`<tr><td colspan="3" class="r">Coupon${inv.couponCode ? " (" + escapeHtml(inv.couponCode) + ")" : ""}</td><td class="r">-${money(inv.discountAmount)}</td></tr>`);
       if (inv.pointsRedeemed > 0) adj.push(`<tr><td colspan="3" class="r">Loyalty points redeemed</td><td class="r">-${money(inv.pointsRedeemed)}</td></tr>`);
       if (inv.storeCreditUsed > 0) adj.push(`<tr><td colspan="3" class="r">Store credit used</td><td class="r">-${money(inv.storeCreditUsed)}</td></tr>`);
-      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Invoice #${inv.orderId}</title>
+      // Cancelled/returned units since checkout - same wording as the order list ("taken off" for cash).
+      const refundRows = inv.refundedAmount > 0
+        ? `<tr><td colspan="3" class="r">${inv.paymentMethod === "CASH" ? "Taken off" : "Refunded"} for cancelled or returned items</td><td class="r">-${money(inv.refundedAmount)}</td></tr>`
+          + `<tr class="total"><td colspan="3" class="r">Net</td><td class="r">${money(inv.totalPrice - inv.refundedAmount)}</td></tr>`
+        : "";
+      const html =`<!doctype html><html><head><meta charset="utf-8"><title>Invoice #${inv.orderId}</title>
         <style>body{font-family:Arial,sans-serif;max-width:640px;margin:30px auto;color:#222}h1{margin:0}table{width:100%;border-collapse:collapse;margin-top:16px}
         th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left}.r{text-align:right}.total td{font-weight:bold;border-top:2px solid #222}
         .meta{color:#555;font-size:14px;line-height:1.6}button{margin-top:20px;padding:8px 16px}@media print{button{display:none}}</style></head><body>
-        <h1>Charan Mart</h1><div class="meta">Invoice for order #${inv.orderId}<br>
+        <h1>${escapeHtml(inv.tax && inv.tax.sellerName || "Charan Mart")}</h1><div class="meta">${inv.tax && inv.tax.sellerGstin ? "GSTIN: " + escapeHtml(inv.tax.sellerGstin) + "<br>" : ""}
+        <strong>Tax invoice${inv.invoiceNumber ? " " + escapeHtml(inv.invoiceNumber) : ""}</strong>${inv.invoiceDate ? " &middot; " + new Date(inv.invoiceDate).toLocaleDateString() : ""}<br>
+        Order #${inv.orderId}<br>
         ${inv.placedAt ? "Date: " + new Date(inv.placedAt).toLocaleString() + "<br>" : ""}
         Customer: ${escapeHtml(inv.customerName || "")} (${inv.customerPhno})<br>
         ${inv.shippingAddress ? "Ship to: " + escapeHtml(inv.shippingAddress) + "<br>" : ""}
@@ -2148,7 +2155,8 @@
         ${inv.deliverySlot ? "Preferred delivery window: " + escapeHtml(inv.deliverySlot.charAt(0) + inv.deliverySlot.slice(1).toLowerCase()) + "<br>" : ""}
         Payment: ${escapeHtml(inv.paymentMethod)} &middot; ${inv.paid ? "Paid" : "Unpaid"} &middot; Status: ${escapeHtml(inv.status)}</div>
         <table><tr><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr>${rows}${adj.join("")}
-        <tr class="total"><td colspan="3" class="r">Total charged</td><td class="r">${money(inv.totalPrice)}</td></tr></table>
+        <tr class="total"><td colspan="3" class="r">Total charged</td><td class="r">${money(inv.totalPrice)}</td></tr>${refundRows}</table>
+        ${gstTableHtml(inv.tax, money)}
         <p class="meta">Item prices show today's catalog price; the total is what this order was actually charged.</p>
         <button onclick="window.print()">Print / Save as PDF</button></body></html>`;
       const w = window.open("", "_blank");
@@ -2167,6 +2175,24 @@
       let message = "Couldn't email the invoice right now. Please try again.";
       message = (await response.text()) || message;
       alert(message);
+    }
+
+    // GST breakdown for the printable invoice (prices include GST; this splits it out). Empty when nothing is left.
+    function gstTableHtml(tax, money) {
+      if (!tax || !tax.lines || !tax.lines.length) return "";
+      const head = tax.interState
+        ? "<th>Item</th><th>HSN</th><th class=\"r\">GST %</th><th class=\"r\">Taxable</th><th class=\"r\">IGST</th><th class=\"r\">Total</th>"
+        : "<th>Item</th><th>HSN</th><th class=\"r\">GST %</th><th class=\"r\">Taxable</th><th class=\"r\">CGST</th><th class=\"r\">SGST</th><th class=\"r\">Total</th>";
+      const row = l => `<tr><td>${escapeHtml(l.productName)} &times; ${l.quantity}</td><td>${escapeHtml(l.hsnCode || "-")}</td><td class="r">${l.gstRate}</td><td class="r">${money(l.taxableValue)}</td>`
+        + (tax.interState ? `<td class="r">${money(l.igst)}</td>` : `<td class="r">${money(l.cgst)}</td><td class="r">${money(l.sgst)}</td>`)
+        + `<td class="r">${money(l.total)}</td></tr>`;
+      const totals = `<tr class="total"><td colspan="3" class="r">Total</td><td class="r">${money(tax.taxableValue)}</td>`
+        + (tax.interState ? `<td class="r">${money(tax.igst)}</td>` : `<td class="r">${money(tax.cgst)}</td><td class="r">${money(tax.sgst)}</td>`)
+        + `<td class="r">${money(tax.taxableValue + tax.totalTax)}</td></tr>`;
+      return `<h3 style="margin-top:24px;">GST included in the prices</h3>
+        <div class="meta">${tax.placeOfSupply ? "Place of supply: " + escapeHtml(tax.placeOfSupply) + " &middot; " : ""}${tax.interState ? "Inter-state (IGST)" : "Within state (CGST + SGST)"}</div>
+        <table><tr>${head}</tr>${tax.lines.map(row).join("")}${totals}</table>
+        <p class="meta">Tax is worked out on what was supplied (cancelled or returned units are left out), after any coupon discount. Loyalty points and store credit are a way of paying, so they don't change it.</p>`;
     }
 
     // "Buy again": copies a past order's lines back into the cart using the CURRENT catalog price/stock (not what

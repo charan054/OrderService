@@ -22,4 +22,7 @@ public class Product {
     private String productImageUrl;
     // Mirrors ProductService's per-product threshold (default 5 there too); used by OrderService.getLowStockReport().
     private int lowStockThreshold = 5;
+    // GST rate in percent (prices include it) and HSN code, both optional - see ProductService's Product.
+    private Double gstRate;
+    private String hsnCode;
 }

@@ -75,6 +75,13 @@ public class InvoiceEmailService {
     String body(Invoice inv) {
         StringBuilder b = new StringBuilder("Hi").append(inv.customerName() == null || inv.customerName().isBlank()
                 ? "" : " " + inv.customerName()).append(",\n\nHere is your invoice from Charan Mart.\n\n");
+        if (inv.invoiceNumber() != null) {
+            b.append("Tax invoice ").append(inv.invoiceNumber());
+            if (inv.invoiceDate() != null) {
+                b.append(", ").append(DATE.format(inv.invoiceDate().atZone(zone)));
+            }
+            b.append('\n');
+        }
         b.append("Order #").append(inv.orderId()).append('\n');
         if (inv.placedAt() != null) {
             b.append("Date: ").append(DATE.format(inv.placedAt().atZone(zone))).append('\n');
@@ -109,6 +116,20 @@ public class InvoiceEmailService {
         b.append("Total charged: Rs. ").append(money(inv.totalPrice())).append('\n');
         if (inv.refundedAmount() > 0) {
             b.append("Refunded or taken off since: Rs. ").append(money(inv.refundedAmount())).append('\n');
+        }
+        Invoice.Tax tax = inv.tax();
+        if (tax != null && !tax.lines().isEmpty()) {
+            b.append("\nGST (included in the prices above)");
+            if (tax.sellerGstin() != null) {
+                b.append(" - seller GSTIN ").append(tax.sellerGstin());
+            }
+            b.append('\n');
+            b.append("  Taxable value: Rs. ").append(money(tax.taxableValue())).append('\n');
+            if (tax.interState()) {
+                b.append("  IGST: Rs. ").append(money(tax.igst())).append('\n');
+            } else {
+                b.append("  CGST: Rs. ").append(money(tax.cgst())).append(" | SGST: Rs. ").append(money(tax.sgst())).append('\n');
+            }
         }
         b.append("\nItem prices on older orders show today's catalog price; the total is what this order was actually charged.\n");
         return b.toString();
