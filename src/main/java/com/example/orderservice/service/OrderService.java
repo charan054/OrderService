@@ -1857,10 +1857,15 @@ public class OrderService {
     public List<StorefrontReview> getProductReviews(long productId, Integer page, Integer size) {
         int effectivePage = (page == null || page < 0) ? 0 : page;
         int effectiveSize = (size == null || size <= 0) ? DEFAULT_REVIEWS_PAGE_SIZE : size;
-        Map<Long, Boolean> verifiedByPhno = new HashMap<>();
+        // A review may belong to another option of the same variant group (ProductService rolls the group up), so the
+        // Verified-purchase check is against the option that review is actually for.
+        Map<String, Boolean> verified = new HashMap<>();
         return productClient.getReviews(serviceApiKey, productId, effectivePage, effectiveSize).content().stream()
-                .map(r -> toStorefrontReview(r, productId,
-                        verifiedByPhno.computeIfAbsent(r.reviewerPhno(), phno -> hasKeptPurchase(phno, productId))))
+                .map(r -> {
+                    long reviewedProduct = r.productId() != null ? r.productId() : productId;
+                    return toStorefrontReview(r, productId,
+                            verified.computeIfAbsent(r.reviewerPhno() + ":" + reviewedProduct, k -> hasKeptPurchase(r.reviewerPhno(), reviewedProduct)));
+                })
                 .toList();
     }
 
@@ -1870,7 +1875,8 @@ public class OrderService {
     }
 
     private static StorefrontReview toStorefrontReview(ProductReview r, long productId, boolean verified) {
-        return new StorefrontReview(r.reviewId(), r.reviewerName(), r.rating(), r.comment(), r.createdAt(), verified);
+        return new StorefrontReview(r.reviewId(), r.reviewerName(), r.rating(), r.comment(), r.createdAt(), verified,
+                r.productId() != null ? r.productId() : productId);
     }
 
     // "Kept" = an order that was actually placed and not later cancelled; a returned order still counts (they did

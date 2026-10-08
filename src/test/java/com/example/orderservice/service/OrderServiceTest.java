@@ -2332,6 +2332,22 @@ class OrderServiceTest {
     }
 
     @Test
+    void aReviewOfASiblingOptionIsVerifiedAgainstThatOptionAndNamesIt() {
+        long buyer = 9876543210L;
+        // Looking at option 1; ProductService also returns a review written for sibling option 2, which this buyer bought.
+        when(productClient.getReviews(any(), eq(1L), eq(0), eq(20))).thenReturn(new ProductReviewsResult(List.of(
+                new ProductReview(1, "Buyer", buyer, 5, "a", LocalDateTime.now(), 2L))));
+        Cart delivered = cart(buyer, item(2, 1));
+        delivered.setStatus(OrderStatus.DELIVERED);
+        when(orderRepository.findBycustomerPhno(buyer)).thenReturn(List.of(delivered));
+
+        List<StorefrontReview> result = service.getProductReviews(1, null, null);
+
+        assertTrue(result.get(0).verifiedPurchase());
+        assertEquals(2L, result.get(0).productId());
+    }
+
+    @Test
     void getProductReviewsMarksOnlyRealKeptBuyersAsVerified() {
         long buyer = 9876543210L, cancelledBuyer = 9876543211L, pendingBuyer = 9876543212L,
                 otherProductBuyer = 9876543213L, stranger = 9876543214L;
