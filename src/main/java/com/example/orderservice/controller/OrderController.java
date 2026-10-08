@@ -17,6 +17,7 @@ import com.example.orderservice.dto.GuestOrderSummary;
 import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.InvoiceEmailResult;
 import com.example.orderservice.service.InvoiceEmailService;
+import com.example.orderservice.service.InvoicePdfService;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.ModerationReview;
 import com.example.orderservice.dto.SalesAnalytics;
@@ -34,7 +35,11 @@ import com.example.orderservice.service.StockAlertService;
 import jakarta.transaction.Transactional;
 import jakarta.websocket.server.ServerEndpoint;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -48,6 +53,8 @@ public class OrderController {
     private StockAlertService stockAlertService;
     @Autowired
     private InvoiceEmailService invoiceEmailService;
+    @Autowired
+    private InvoicePdfService invoicePdfService;
     @Autowired
     private DigestService digestService;
     // Authorization is the buyer's OWN PhonepayService session token ("Bearer <token>") - that is who gets
@@ -218,6 +225,16 @@ public class OrderController {
     public Invoice getInvoice(@PathVariable long orderId, @RequestParam long phno){
         CustomerAccess.requireSelfOrService(phno);
         return orderService.getInvoice(orderId, phno);
+    }
+    // The same invoice as a downloadable PDF (GST breakdown and credit notes included); same access rules as above.
+    @GetMapping("/{orderId}/invoice.pdf")
+    public ResponseEntity<byte[]> getInvoicePdf(@PathVariable long orderId, @RequestParam long phno){
+        CustomerAccess.requireSelfOrService(phno);
+        Invoice invoice = orderService.getInvoice(orderId, phno);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_PDF)
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(invoicePdfService.fileName(invoice)).build().toString())
+                .body(invoicePdfService.render(invoice));
     }
     // Emails the invoice to the customer's VERIFIED address (the caller can't choose one); rate-limited per order.
     @PostMapping("/{orderId}/invoice/email")

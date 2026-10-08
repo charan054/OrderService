@@ -4,9 +4,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeMessage;
+import org.springframework.core.io.ByteArrayResource;
 import org.springframework.mail.MailException;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 
 /**
@@ -42,6 +46,31 @@ public class MailService {
             sender.send(message);
             return true;
         } catch (MailException e) {
+            log.error("Failed to send email to {}: {}", to, e.getMessage());
+            return false;
+        }
+    }
+
+    /** Same as {@link #send(String, String, String)} with one file attached (e.g. an invoice PDF). */
+    public boolean send(String to, String subject, String body, String attachmentName, byte[] attachment, String contentType) {
+        JavaMailSender sender = mailSender.getIfAvailable();
+        if (sender == null) {
+            log.error("Failed to send email to {}: no mail server configured", to);
+            return false;
+        }
+        try {
+            MimeMessage message = sender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            if (!fromAddress.isBlank()) {
+                helper.setFrom(fromAddress);
+            }
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(body);
+            helper.addAttachment(attachmentName, new ByteArrayResource(attachment), contentType);
+            sender.send(message);
+            return true;
+        } catch (MailException | MessagingException e) {
             log.error("Failed to send email to {}: {}", to, e.getMessage());
             return false;
         }
