@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-// Service-key only (SecurityConfig default rule). Newest first.
+// Service key or an OWNER admin (see AdminPolicy). Newest first; optionally only one actor (an admin's username or "service-key").
 @RestController
 @RequestMapping("/audit")
 public class AuditLogController {
@@ -23,14 +23,23 @@ public class AuditLogController {
 
     @GetMapping("/recent")
     public List<AuditLogEntry> recent(@RequestParam(defaultValue = "100") int limit,
-                                      @RequestParam(required = false) String pathContains) {
+                                      @RequestParam(required = false) String pathContains,
+                                      @RequestParam(required = false) String actor) {
         if (limit < 1 || limit > MAX_LIMIT) {
             throw new ProductException("Limit must be between 1 and " + MAX_LIMIT);
         }
         PageRequest page = PageRequest.of(0, limit);
-        if (pathContains == null || pathContains.isBlank()) {
-            return repository.findAllByOrderByIdDesc(page);
+        boolean byPath = pathContains != null && !pathContains.isBlank();
+        boolean byActor = actor != null && !actor.isBlank();
+        if (byActor && byPath) {
+            return repository.findByActorIgnoreCaseAndPathContainingIgnoreCaseOrderByIdDesc(actor.trim(), pathContains.trim(), page);
         }
-        return repository.findByPathContainingIgnoreCaseOrderByIdDesc(pathContains.trim(), page);
+        if (byActor) {
+            return repository.findByActorIgnoreCaseOrderByIdDesc(actor.trim(), page);
+        }
+        if (byPath) {
+            return repository.findByPathContainingIgnoreCaseOrderByIdDesc(pathContains.trim(), page);
+        }
+        return repository.findAllByOrderByIdDesc(page);
     }
 }

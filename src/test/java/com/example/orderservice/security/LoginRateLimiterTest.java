@@ -42,7 +42,7 @@ class LoginRateLimiterTest {
 
     // ip 3/h, phone 2/h, email 2/h; verify ip 4 and phone 3 per 15 min
     private LoginRateLimiter limiter(MutableClock clock) {
-        return new LoginRateLimiter(clock, true, 3, 2, 2, 60, 4, 3, 15);
+        return new LoginRateLimiter(clock, true, 3, 2, 2, 60, 4, 3, 15, 3, 2, 15);
     }
 
     @Test
@@ -74,6 +74,43 @@ class LoginRateLimiterTest {
 
         assertThrows(CustomerAuthException.class, () -> l.checkCodeRequest("9.9.9.9", 9000000004L, "d@example.com"));
         assertDoesNotThrow(() -> l.checkCodeRequest("8.8.8.8", 9000000004L, "d@example.com"));
+    }
+
+    // admin: ip 3, username 2 per 15 min
+    @Test
+    void anAdminUsernameCannotBeGuessedAtBeyondItsLimitWhateverTheAddress() {
+        LoginRateLimiter l = limiter(new MutableClock());
+        l.checkAdminLogin("1.1.1.1", "Asha");
+        l.checkAdminLogin("1.1.1.2", " asha ");
+
+        CustomerAuthException e = assertThrows(CustomerAuthException.class, () -> l.checkAdminLogin("1.1.1.3", "ASHA"));
+        assertEquals(HttpStatus.TOO_MANY_REQUESTS, e.getStatus());
+        assertDoesNotThrow(() -> l.checkAdminLogin("1.1.1.3", "someone-else"));
+    }
+
+    @Test
+    void oneAddressCannotTryManyAdminUsernames() {
+        LoginRateLimiter l = limiter(new MutableClock());
+        l.checkAdminLogin("9.9.9.9", "a-one");
+        l.checkAdminLogin("9.9.9.9", "b-two");
+        l.checkAdminLogin("9.9.9.9", "c-three");
+
+        assertThrows(CustomerAuthException.class, () -> l.checkAdminLogin("9.9.9.9", "d-four"));
+        assertDoesNotThrow(() -> l.checkAdminLogin("8.8.8.8", "d-four"));
+    }
+
+    @Test
+    void adminLoginLimitsLiftAfterTheirWindowAndAreSeparateFromCustomerLimits() {
+        MutableClock clock = new MutableClock();
+        LoginRateLimiter l = limiter(clock);
+        l.checkAdminLogin("1.1.1.1", "asha");
+        l.checkAdminLogin("1.1.1.1", "asha");
+        assertThrows(CustomerAuthException.class, () -> l.checkAdminLogin("1.1.1.1", "asha"));
+        assertDoesNotThrow(() -> l.checkVerify("1.1.1.1", 9876543210L));
+
+        clock.advance(Duration.ofMinutes(16));
+
+        assertDoesNotThrow(() -> l.checkAdminLogin("1.1.1.1", "asha"));
     }
 
     @Test
@@ -126,10 +163,11 @@ class LoginRateLimiterTest {
 
     @Test
     void disabledLimiterNeverBlocks() {
-        LoginRateLimiter l = new LoginRateLimiter(new MutableClock(), false, 1, 1, 1, 60, 1, 1, 15);
+        LoginRateLimiter l = new LoginRateLimiter(new MutableClock(), false, 1, 1, 1, 60, 1, 1, 15, 1, 1, 15);
         for (int i = 0; i < 10; i++) {
             l.checkCodeRequest("1.1.1.1", 9876543210L, "a@example.com");
             l.checkVerify("1.1.1.1", 9876543210L);
+            l.checkAdminLogin("1.1.1.1", "asha");
         }
     }
 }

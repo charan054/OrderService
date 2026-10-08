@@ -22,7 +22,10 @@ import java.util.Map;
  *   a victim's inbox by cycling phone numbers, since for a not-yet-bound phone the code goes to whatever email was
  *   typed);</li>
  *   <li>verify attempts - per client address and per phone, counted whether right or wrong, so guessing a 6-digit
- *   code can't be spread across fresh codes.</li>
+ *   code can't be spread across fresh codes;</li>
+ *   <li>admin password logins - per client address and per username, counted whether right or wrong. A determined
+ *   attacker can therefore lock a named admin out for a while by hammering their username; the service key and the
+ *   other owners are the way around that, which beats letting passwords be guessed freely.</li>
  * </ul>
  * In memory and per instance: counters reset on restart and are not shared between instances - fine for this
  * single-instance service, and noted here so nobody scales it out assuming otherwise. Behind a reverse proxy the
@@ -42,6 +45,9 @@ public class LoginRateLimiter {
     private final int verifiesPerIp;
     private final int verifiesPerPhone;
     private final Duration verifyWindow;
+    private final int adminLoginsPerIp;
+    private final int adminLoginsPerUsername;
+    private final Duration adminLoginWindow;
 
     private final Map<String, Deque<Long>> hits = new HashMap<>();
     private int callsSincePurge;
@@ -54,7 +60,10 @@ public class LoginRateLimiter {
                             @Value("${customer.login.rate-limit.request-window-minutes:60}") long requestWindowMinutes,
                             @Value("${customer.login.rate-limit.verifies-per-ip:40}") int verifiesPerIp,
                             @Value("${customer.login.rate-limit.verifies-per-phone:15}") int verifiesPerPhone,
-                            @Value("${customer.login.rate-limit.verify-window-minutes:15}") long verifyWindowMinutes) {
+                            @Value("${customer.login.rate-limit.verify-window-minutes:15}") long verifyWindowMinutes,
+                            @Value("${admin.login.rate-limit.per-ip:30}") int adminLoginsPerIp,
+                            @Value("${admin.login.rate-limit.per-username:10}") int adminLoginsPerUsername,
+                            @Value("${admin.login.rate-limit.window-minutes:15}") long adminLoginWindowMinutes) {
         this.clock = clock;
         this.enabled = enabled;
         this.requestsPerIp = requestsPerIp;
@@ -64,6 +73,9 @@ public class LoginRateLimiter {
         this.verifiesPerIp = verifiesPerIp;
         this.verifiesPerPhone = verifiesPerPhone;
         this.verifyWindow = Duration.ofMinutes(verifyWindowMinutes);
+        this.adminLoginsPerIp = adminLoginsPerIp;
+        this.adminLoginsPerUsername = adminLoginsPerUsername;
+        this.adminLoginWindow = Duration.ofMinutes(adminLoginWindowMinutes);
     }
 
     // Counts this attempt against every limit and throws 429 if any is already used up. Nothing is counted for an
@@ -86,6 +98,16 @@ public class LoginRateLimiter {
         consume(verifyWindow,
                 new Limit("ver:ip:" + ip, verifiesPerIp),
                 new Limit("ver:phone:" + phno, verifiesPerPhone));
+    }
+
+    public void checkAdminLogin(String ip, String username) {
+        if (!enabled) {
+            return;
+        }
+        String normalized = username == null ? "" : username.trim().toLowerCase(Locale.ROOT);
+        consume(adminLoginWindow,
+                new Limit("adm:ip:" + ip, adminLoginsPerIp),
+                new Limit("adm:user:" + normalized, adminLoginsPerUsername));
     }
 
     private record Limit(String key, int max) {
