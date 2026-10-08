@@ -236,6 +236,8 @@
         .qty-row input { margin-bottom: 0; text-align: center; }
 
         .product-card { position: relative; }
+        /* Colours come from the global select style (so dark mode works); only the size is tightened for a card. */
+        .variant-picker { margin: 6px 0 8px; padding: 8px 10px; font-size: 14px; }
 
         .wishlist-btn {
           position: absolute;
@@ -1896,6 +1898,55 @@
       pager.classList.remove("hidden");
     }
 
+    // Which option of each group the shopper has chosen: variantGroup -> productId. Kept for the page's lifetime, so
+    // searching or paging doesn't reset the choice.
+    const selectedVariantByGroup = new Map();
+
+    // Turns the product list into cards. Products with no group, and groups of which only one option is on show (a
+    // search matched just that one), stay ordinary single-product cards under their own name.
+    function collapseVariants(list) {
+      const items = [];
+      const byGroup = new Map();
+      for (const p of list) {
+        if (!p.variantGroup) { items.push({ product: p, variants: [p] }); continue; }
+        let item = byGroup.get(p.variantGroup);
+        if (!item) { item = { variants: [], group: p.variantGroup }; byGroup.set(p.variantGroup, item); items.push(item); }
+        item.variants.push(p);
+      }
+      for (const item of items) {
+        if (!item.group) continue;
+        item.variants.sort((a, b) => a.productPrice - b.productPrice || a.productId - b.productId);
+        const chosen = item.variants.find(v => v.productId === selectedVariantByGroup.get(item.group));
+        // Default: the cheapest option that can be bought, else the cheapest.
+        item.product = chosen || item.variants.find(v => v.productStock > 0) || item.variants[0];
+      }
+      return items;
+    }
+
+    // A group's card is named after the product, not the option: "Dove Shampoo - 340 ml" -> "Dove Shampoo".
+    function cardTitle(item) {
+      const p = item.product;
+      if (item.variants.length < 2 || !p.variantLabel) return p.productName;
+      const name = p.productName, label = p.variantLabel;
+      if (name.toLowerCase().endsWith(label.toLowerCase())) {
+        const stripped = name.slice(0, name.length - label.length).replace(/[\s\-\u2013\u2014,:(]+$/, "");
+        if (stripped) return stripped;
+      }
+      return name;
+    }
+
+    function variantPickerHtml(item) {
+      if (item.variants.length < 2) return "";
+      const options = item.variants.map(v => `<option value="${v.productId}"${v.productId === item.product.productId ? " selected" : ""}>${escapeHtml(v.variantLabel || v.productName)} &mdash; ₹${v.productPrice}${v.productStock <= 0 ? " (out of stock)" : ""}</option>`).join("");
+      return `<select class="variant-picker" data-group="${escapeHtml(item.group)}" aria-label="Choose an option"
+                onchange="selectVariant(this.dataset.group, Number(this.value))">${options}</select>`;
+    }
+
+    function selectVariant(group, productId) {
+      selectedVariantByGroup.set(group, productId);
+      renderProducts();
+    }
+
     function renderProducts() {
       const grid = document.getElementById("productGrid");
       const visibleProducts = activeTab === "wishlist"
@@ -1908,12 +1959,16 @@
       // showTab() hides this row there too, since it only applies to the product grid).
       const sortBy = document.getElementById("sortBy").value;
       const inStockOnly = document.getElementById("inStockOnly").checked;
-      let shownProducts = inStockOnly ? visibleProducts.filter(p => p.productStock > 0) : visibleProducts.slice();
+      // Options of one product (sizes, packs...) collapse into a single card with a picker; each entry is
+      // {product: the option currently selected, variants: all the options being shown}. A group counts as in stock
+      // if any of its options is, and sorts by the option on show.
+      let shownProducts = collapseVariants(visibleProducts);
+      if (inStockOnly) shownProducts = shownProducts.filter(item => item.variants.some(v => v.productStock > 0));
       const ratingOf = p => { const r = ratingsByProductId.get(p.productId); return r && r.reviewCount > 0 ? r.averageRating : -1; };
-      if (sortBy === "priceAsc") shownProducts.sort((a, b) => a.productPrice - b.productPrice);
-      else if (sortBy === "priceDesc") shownProducts.sort((a, b) => b.productPrice - a.productPrice);
-      else if (sortBy === "rating") shownProducts.sort((a, b) => ratingOf(b) - ratingOf(a));
-      else if (sortBy === "name") shownProducts.sort((a, b) => a.productName.localeCompare(b.productName));
+      if (sortBy === "priceAsc") shownProducts.sort((a, b) => a.product.productPrice - b.product.productPrice);
+      else if (sortBy === "priceDesc") shownProducts.sort((a, b) => b.product.productPrice - a.product.productPrice);
+      else if (sortBy === "rating") shownProducts.sort((a, b) => ratingOf(b.product) - ratingOf(a.product));
+      else if (sortBy === "name") shownProducts.sort((a, b) => cardTitle(a).localeCompare(cardTitle(b)));
 
       if (!shownProducts.length) {
         grid.innerHTML = visibleProducts.length
@@ -1933,7 +1988,8 @@
       const pageStart = (currentPage - 1) * PRODUCTS_PER_PAGE;
       renderPager(shownProducts.length);
 
-      grid.innerHTML = shownProducts.slice(pageStart, pageStart + PRODUCTS_PER_PAGE).map(p => {
+      grid.innerHTML = shownProducts.slice(pageStart, pageStart + PRODUCTS_PER_PAGE).map(item => {
+        const p = item.product;
         const isWishlisted = wishlistProductIds.has(p.productId);
         const isWaitlisted = waitlistProductIds.has(p.productId);
         const priceDrop = priceDropsByProductId.get(p.productId);
@@ -1948,7 +2004,8 @@
               : "No image"}
           </div>
           <div class="product-body">
-            <h3>${escapeHtml(p.productName)}</h3>
+            <h3>${escapeHtml(cardTitle(item))}</h3>
+            ${variantPickerHtml(item)}
             <div class="meta">${escapeHtml(p.productCategory)} &middot; ${p.productStock > 0 ? p.productStock + " in stock" : "out of stock"}</div>
             ${rating && rating.reviewCount > 0
               ? `<div class="rating-row"><span class="stars">${starsFor(rating.averageRating)}</span> (${rating.reviewCount})</div>`

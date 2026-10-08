@@ -25,4 +25,9 @@ public class Product {
     // GST rate in percent (prices include it) and HSN code, both optional - see ProductService's Product.
     private Double gstRate;
     private String hsnCode;
+    // Products that are options of one thing (sizes, packs) share a variantGroup and each has its own variantLabel -
+    // see ProductService's Product. Every option is a product in its own right (own id, price, stock), so nothing in
+    // the cart or checkout depends on these; the storefront only uses them to show the options as one card.
+    private String variantGroup;
+    private String variantLabel;
 }
