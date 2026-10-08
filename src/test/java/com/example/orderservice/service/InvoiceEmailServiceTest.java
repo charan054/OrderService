@@ -65,7 +65,7 @@ class InvoiceEmailServiceTest {
                 return now.get();
             }
         };
-        service = new InvoiceEmailService(orderService, accounts, mailService, clock, 60, "UTC");
+        service = new InvoiceEmailService(orderService, accounts, mailService, new InvoicePdfService("UTC", "Charan Mart"), clock, 60, "UTC");
     }
 
     private Invoice invoice() {
@@ -86,13 +86,13 @@ class InvoiceEmailServiceTest {
     void emailsTheInvoiceToTheVerifiedAddressAndMasksItInTheReply() {
         when(orderService.getInvoice(7, PHNO)).thenReturn(invoice());
         verifiedEmail();
-        when(mailService.send(eq("asha@example.com"), eq("Your Charan Mart invoice for order #7"), anyString())).thenReturn(true);
+        when(mailService.send(eq("asha@example.com"), eq("Your Charan Mart invoice for order #7"), anyString(), anyString(), any(byte[].class), eq("application/pdf"))).thenReturn(true);
 
         InvoiceEmailResult result = service.send(7, PHNO);
 
         assertEquals("a***@example.com", result.sentTo());
         ArgumentCaptor<String> body = ArgumentCaptor.forClass(String.class);
-        verify(mailService).send(anyString(), anyString(), body.capture());
+        verify(mailService).send(anyString(), anyString(), body.capture(), anyString(), any(byte[].class), anyString());
         String text = body.getValue();
         assertTrue(text.contains("Order #7"));
         assertTrue(text.contains("2 x Soap  @ Rs. 30.00 = Rs. 60.00  (1 cancelled)"));
@@ -127,7 +127,7 @@ class InvoiceEmailServiceTest {
         when(orderService.getInvoice(7, PHNO)).thenThrow(new OrderNotFoundException("Order not found"));
 
         assertThrows(OrderNotFoundException.class, () -> service.send(7, PHNO));
-        verify(mailService, never()).send(any(), any(), any());
+        verify(mailService, never()).send(any(), any(), any(), any(), any(), any());
     }
 
     @Test
@@ -138,14 +138,14 @@ class InvoiceEmailServiceTest {
         CustomerAuthException e = assertThrows(CustomerAuthException.class, () -> service.send(7, PHNO));
 
         assertEquals(HttpStatus.CONFLICT, e.getStatus());
-        verify(mailService, never()).send(any(), any(), any());
+        verify(mailService, never()).send(any(), any(), any(), any(), any(), any());
     }
 
     @Test
     void theSameOrderCannotBeSentAgainInsideTheCooldownButCanAfterIt() {
         when(orderService.getInvoice(7, PHNO)).thenReturn(invoice());
         verifiedEmail();
-        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+        when(mailService.send(anyString(), anyString(), anyString(), anyString(), any(byte[].class), anyString())).thenReturn(true);
 
         service.send(7, PHNO);
         now.set(NOW.plusSeconds(30));
@@ -154,19 +154,57 @@ class InvoiceEmailServiceTest {
         now.set(NOW.plusSeconds(61));
         service.send(7, PHNO);
 
-        verify(mailService, times(2)).send(anyString(), anyString(), anyString());
+        verify(mailService, times(2)).send(anyString(), anyString(), anyString(), anyString(), any(byte[].class), anyString());
     }
 
     @Test
     void aFailedSendIsABadGatewayAndDoesNotStartTheCooldown() {
         when(orderService.getInvoice(7, PHNO)).thenReturn(invoice());
         verifiedEmail();
-        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(false, true);
+        when(mailService.send(anyString(), anyString(), anyString(), anyString(), any(byte[].class), anyString())).thenReturn(false, true);
 
         CustomerAuthException e = assertThrows(CustomerAuthException.class, () -> service.send(7, PHNO));
         assertEquals(HttpStatus.BAD_GATEWAY, e.getStatus());
 
         service.send(7, PHNO); // immediate retry is allowed because nothing arrived
-        verify(mailService, times(2)).send(anyString(), anyString(), anyString());
+        verify(mailService, times(2)).send(anyString(), anyString(), anyString(), anyString(), any(byte[].class), anyString());
+    }
+
+    @Test
+    void thePdfRidesAlongAsAnAttachmentNamedAfterTheInvoice() {
+        Invoice base = invoice();
+        Invoice numbered = new Invoice(base.orderId(), base.placedAt(), base.customerName(), base.customerPhno(), base.lines(),
+                base.couponCode(), base.discountAmount(), base.pointsRedeemed(), base.storeCreditUsed(), base.totalPrice(),
+                base.refundedAmount(), base.paymentMethod(), base.paid(), base.status(), base.shippingAddress(),
+                base.deliveryNote(), base.deliverySlot(), "CM/2026-27/000042", NOW, null);
+        when(orderService.getInvoice(7, PHNO)).thenReturn(numbered);
+        verifiedEmail();
+        when(mailService.send(anyString(), anyString(), anyString(), anyString(), any(byte[].class), anyString())).thenReturn(true);
+
+        service.send(7, PHNO);
+
+        ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> fileName = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<byte[]> pdf = ArgumentCaptor.forClass(byte[].class);
+        verify(mailService).send(anyString(), anyString(), text.capture(), fileName.capture(), pdf.capture(), eq("application/pdf"));
+        assertEquals("invoice-CM-2026-27-000042.pdf", fileName.getValue());
+        assertEquals("%PDF", new String(pdf.getValue(), 0, 4, java.nio.charset.StandardCharsets.US_ASCII));
+        assertTrue(text.getValue().contains("also attached as a PDF"));
+    }
+
+    @Test
+    void ifThePdfCannotBeRenderedTheTextInvoiceStillGoesOut() {
+        InvoicePdfService broken = org.mockito.Mockito.mock(InvoicePdfService.class);
+        when(broken.render(any())).thenThrow(new IllegalStateException("boom"));
+        InvoiceEmailService fallback = new InvoiceEmailService(orderService, accounts, mailService, broken,
+                Clock.fixed(NOW, ZoneOffset.UTC), 60, "UTC");
+        when(orderService.getInvoice(7, PHNO)).thenReturn(invoice());
+        verifiedEmail();
+        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+
+        fallback.send(7, PHNO);
+
+        verify(mailService).send(eq("asha@example.com"), anyString(), anyString());
+        verify(mailService, never()).send(any(), any(), any(), any(), any(), any());
     }
 }

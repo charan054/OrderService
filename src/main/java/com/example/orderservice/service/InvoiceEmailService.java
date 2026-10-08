@@ -5,6 +5,8 @@ import com.example.orderservice.dto.InvoiceEmailResult;
 import com.example.orderservice.entity.CustomerAccount;
 import com.example.orderservice.exception.CustomerAuthException;
 import com.example.orderservice.repository.CustomerAccountRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -26,22 +28,25 @@ import java.util.Map;
  */
 @Service
 public class InvoiceEmailService {
+    private static final Logger log = LoggerFactory.getLogger(InvoiceEmailService.class);
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm", Locale.ENGLISH);
 
     private final OrderService orderService;
     private final CustomerAccountRepository accounts;
     private final MailService mailService;
+    private final InvoicePdfService pdfService;
     private final Clock clock;
     private final Duration cooldown;
     private final ZoneId zone;
     private final Map<Long, Instant> lastSent = new HashMap<>();
 
     public InvoiceEmailService(OrderService orderService, CustomerAccountRepository accounts, MailService mailService,
-                               Clock clock, @Value("${invoice.email.cooldown-seconds:60}") long cooldownSeconds,
+                               InvoicePdfService pdfService, Clock clock, @Value("${invoice.email.cooldown-seconds:60}") long cooldownSeconds,
                                @Value("${digest.zone:Asia/Kolkata}") String zone) {
         this.orderService = orderService;
         this.accounts = accounts;
         this.mailService = mailService;
+        this.pdfService = pdfService;
         this.clock = clock;
         this.cooldown = Duration.ofSeconds(cooldownSeconds);
         this.zone = ZoneId.of(zone == null || zone.isBlank() ? "Asia/Kolkata" : zone.trim());
@@ -63,7 +68,7 @@ public class InvoiceEmailService {
             }
             lastSent.put(orderId, now);
         }
-        if (!mailService.send(email, "Your Charan Mart invoice for order #" + orderId, body(invoice))) {
+        if (!deliver(email, invoice)) {
             synchronized (this) {
                 lastSent.remove(orderId); // nothing arrived, so don't make them wait to retry
             }
@@ -72,9 +77,29 @@ public class InvoiceEmailService {
         return new InvoiceEmailResult(mask(email));
     }
 
+    // The PDF goes along as an attachment; if it can't be rendered the plain-text invoice still goes out.
+    private boolean deliver(String email, Invoice invoice) {
+        String subject = "Your Charan Mart invoice for order #" + invoice.orderId();
+        byte[] pdf = null;
+        try {
+            pdf = pdfService.render(invoice);
+        } catch (RuntimeException e) {
+            log.warn("Could not render the invoice PDF for order #{}; sending the text invoice only", invoice.orderId(), e);
+        }
+        if (pdf == null) {
+            return mailService.send(email, subject, body(invoice, false));
+        }
+        return mailService.send(email, subject, body(invoice, true), pdfService.fileName(invoice), pdf, "application/pdf");
+    }
+
     String body(Invoice inv) {
+        return body(inv, false);
+    }
+
+    String body(Invoice inv, boolean pdfAttached) {
         StringBuilder b = new StringBuilder("Hi").append(inv.customerName() == null || inv.customerName().isBlank()
-                ? "" : " " + inv.customerName()).append(",\n\nHere is your invoice from Charan Mart.\n\n");
+                ? "" : " " + inv.customerName()).append(",\n\nHere is your invoice from Charan Mart")
+                .append(pdfAttached ? " (also attached as a PDF).\n\n" : ".\n\n");
         if (inv.invoiceNumber() != null) {
             b.append("Tax invoice ").append(inv.invoiceNumber());
             if (inv.invoiceDate() != null) {
