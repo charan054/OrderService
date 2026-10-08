@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
+import com.example.orderservice.client.StockMovementContext;
 import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.CouponSuggestion;
 import com.example.orderservice.dto.CreateUpiCollectRequest;
@@ -263,7 +264,7 @@ public class OrderService {
         for(OrderItem orderItem : saved.getOrderItems())
         {
             orderItem.setOrderId(saved.getOrderId());
-            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(),-orderItem.getProductQuantity());
+            moveStock(orderItem.getProductId(), -orderItem.getProductQuantity(), StockMovementContext.SALE, saved.getOrderId(), null);
         }
         invoiceNumberService.assign(saved);
         Cart result = orderRepository.save(saved);
@@ -336,7 +337,7 @@ public class OrderService {
         Cart saved = orderRepository.save(cart);
         for (OrderItem orderItem : saved.getOrderItems()) {
             orderItem.setOrderId(saved.getOrderId());
-            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), -orderItem.getProductQuantity());
+            moveStock(orderItem.getProductId(), -orderItem.getProductQuantity(), StockMovementContext.SALE, saved.getOrderId(), "Awaiting UPI payment");
         }
         Cart result = orderRepository.save(saved);
 
@@ -349,7 +350,7 @@ public class OrderService {
             // PhonepayService unreachable) - restore the stock just reserved and remove the order, the same
             // fail-safe shape a declined charge() already gives the synchronous path.
             for (OrderItem orderItem : result.getOrderItems()) {
-                productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
+                moveStock(orderItem.getProductId(), orderItem.getProductQuantity(), StockMovementContext.CANCEL, result.getOrderId(), "Order could not be started");
             }
             orderRepository.delete(result);
             HttpStatus status = HttpStatus.resolve(e.status());
@@ -461,7 +462,7 @@ public class OrderService {
     // nothing PhonepayService needs to reverse.
     private Cart cancelUnpaidOrder(Cart cart, String reason) {
         for (OrderItem orderItem : cart.getOrderItems()) {
-            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), orderItem.getProductQuantity());
+            moveStock(orderItem.getProductId(), orderItem.getProductQuantity(), StockMovementContext.CANCEL, cart.getOrderId(), reason);
             // Same bookkeeping as cancel(): an item that was never going to be delivered shows as cancelled.
             orderItem.setCancelledQuantity(orderItem.getProductQuantity() - orderItem.getReturnedQuantity());
         }
@@ -685,7 +686,7 @@ public class OrderService {
 
         int keptBefore = item.getOutstandingQuantity();
         item.setCancelledQuantity(item.getCancelledQuantity() + quantity);
-        productClient.updateProductStock(serviceApiKey, productId, quantity);
+        moveStock(productId, quantity, StockMovementContext.CANCEL, cart.getOrderId(), "Item cancelled");
         cart.setRefundedAmount(roundMoney(cart.getRefundedAmount() + refundAmount));
         boolean nothingLeft = cart.getOrderItems().stream().allMatch(i -> i.getOutstandingQuantity() == 0);
         if (nothingLeft) {
@@ -738,7 +739,7 @@ public class OrderService {
         int keptBefore = item.getOutstandingQuantity();
         item.setReturnedQuantity(item.getReturnedQuantity() + quantity);
         item.setReturnReason(reason.trim());
-        productClient.updateProductStock(serviceApiKey, productId, quantity);
+        moveStock(productId, quantity, StockMovementContext.RETURN, cart.getOrderId(), "Item returned");
         cart.setRefundedAmount(roundMoney(cart.getRefundedAmount() + refundAmount));
         boolean nothingLeft = cart.getOrderItems().stream().allMatch(i -> i.getOutstandingQuantity() == 0);
         if (nothingLeft) {
@@ -903,7 +904,7 @@ public class OrderService {
             if (outstanding <= 0) {
                 continue;
             }
-            productClient.updateProductStock(serviceApiKey, orderItem.getProductId(), outstanding);
+            moveStock(orderItem.getProductId(), outstanding, returned ? StockMovementContext.RETURN : StockMovementContext.CANCEL, cart.getOrderId(), null);
             if (returned) {
                 orderItem.setReturnedQuantity(orderItem.getReturnedQuantity() + outstanding);
             } else {
@@ -2107,6 +2108,13 @@ public class OrderService {
     // A product's current price, cached implicitly by the caller's own map - used only to turn units sold into
     // an approximate revenue-per-product figure (the order's actual totalPrice already reflects coupon/points
     // discounts at the whole-order level, which aren't split back out per line item anywhere in this system).
+    // Every stock change goes through here so ProductService's stock ledger can say which order caused it.
+    private void moveStock(int productId, int delta, String type, Long orderId, String reason) {
+        try (StockMovementContext.Scope ignored = StockMovementContext.open(type, "order " + orderId, reason)) {
+            productClient.updateProductStock(serviceApiKey, productId, delta);
+        }
+    }
+
     private double productPriceOrZero(int productId) {
         try {
             Product product = productClient.getProductById(productId);
@@ -2137,7 +2145,7 @@ public class OrderService {
                     long t=orderItems.get(i).getId();
                     Product pro=productClient.getProductById(orderItems.get(i).getProductId());
                     price=price-(orderItems.get(i).getProductQuantity()*pro.getProductPrice());
-                    productClient.updateProductStock(serviceApiKey, orderItems.get(i).getProductId(),+orderItems.get(i).getProductQuantity());
+                    moveStock(orderItems.get(i).getProductId(), orderItems.get(i).getProductQuantity(), StockMovementContext.CANCEL, cart.getOrderId(), "Product removed from the order");
                     orderItems.remove(i);
                     orderItemRepository.deleteById(t);
                     i--;
