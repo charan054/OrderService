@@ -888,6 +888,7 @@
                 <label class="orders-date">To <input type="date" id="gstTo" /></label>
                 <button onclick="loadGstReport()">Load Report</button>
                 <button class="blue" onclick="downloadGstCsv()">Download CSV</button>
+                <button class="blue" onclick="downloadGstPdf()">Download PDF</button>
             </div>
             <div id="gstSummary" class="rev-summary"></div>
             <div id="gstTable" class="orders-table-wrap"></div>
@@ -2244,6 +2245,26 @@
         showStatus("gst-report.csv downloaded.", "success");
       } catch (error) {
         showStatus("CSV download failed: " + error.message, "error");
+      }
+    }
+
+    async function downloadGstPdf() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      try {
+        const response = await fetch(`http://localhost:8083/gst/report/pdf?${gstQuery()}`, { headers: { "X-Service-Key": serviceKey } });
+        if (!response.ok) throw new Error((await response.text()) || `HTTP Error: ${response.status}`);
+        const blob = await response.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "gst-report.pdf";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+        showStatus("gst-report.pdf downloaded.", "success");
+      } catch (error) {
+        showStatus("PDF download failed: " + error.message, "error");
       }
     }
 
