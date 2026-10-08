@@ -404,6 +404,7 @@
         .review-item:last-child { border-bottom: none; }
         .review-item .stars { color: #f59e0b; letter-spacing: 1px; font-size: 13px; }
         .review-item .review-meta { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+        .low-stock-badge { color: var(--err-fg, #b42318); background: var(--err-bg, #fee4e2); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
         .verified-badge { color: var(--ok-fg); background: var(--ok-bg); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
         .review-item .review-comment { font-size: 14px; }
 
@@ -1256,6 +1257,19 @@
       renderProducts();
     }
 
+    // "Only 3 left": shown when stock is at or under the product's own low-stock threshold, or 5 if that is smaller (the
+    // dev catalog has thresholds of 0, which would otherwise never warn).
+    function isLowStock(p) {
+      return p.productStock > 0 && p.productStock <= Math.max(5, p.lowStockThreshold || 0);
+    }
+
+    function stockLabelHtml(p) {
+      if (p.productStock <= 0) return "out of stock";
+      return isLowStock(p)
+        ? `<span class="low-stock-badge">Only ${p.productStock} left</span>`
+        : p.productStock + " in stock";
+    }
+
     function starsFor(averageRating) {
       const rounded = Math.round(averageRating);
       return "&#9733;".repeat(rounded) + "&#9734;".repeat(5 - rounded);
@@ -1938,7 +1952,7 @@
 
     function variantPickerHtml(item) {
       if (item.variants.length < 2) return "";
-      const options = item.variants.map(v => `<option value="${v.productId}"${v.productId === item.product.productId ? " selected" : ""}>${escapeHtml(v.variantLabel || v.productName)} &mdash; ₹${v.productPrice}${v.productStock <= 0 ? " (out of stock)" : ""}</option>`).join("");
+      const options = item.variants.map(v => `<option value="${v.productId}"${v.productId === item.product.productId ? " selected" : ""}>${escapeHtml(v.variantLabel || v.productName)} &mdash; ₹${v.productPrice}${v.productStock <= 0 ? " (out of stock)" : isLowStock(v) ? ` (only ${v.productStock} left)` : ""}</option>`).join("");
       return `<select class="variant-picker" data-group="${escapeHtml(item.group)}" aria-label="Choose an option"
                 onchange="selectVariant(this.dataset.group, Number(this.value))">${options}</select>`;
     }
@@ -2007,7 +2021,7 @@
           <div class="product-body">
             <h3>${escapeHtml(cardTitle(item))}</h3>
             ${variantPickerHtml(item)}
-            <div class="meta">${escapeHtml(p.productCategory)} &middot; ${p.productStock > 0 ? p.productStock + " in stock" : "out of stock"}</div>
+            <div class="meta">${escapeHtml(p.productCategory)} &middot; ${stockLabelHtml(p)}</div>
             ${rating && rating.reviewCount > 0
               ? `<div class="rating-row"><span class="stars">${starsFor(rating.averageRating)}</span> (${rating.reviewCount})</div>`
               : `<div class="rating-row">No reviews yet</div>`}
