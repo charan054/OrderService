@@ -36,6 +36,7 @@ public final class AdminPolicy {
             rule(POST, "/admin/login", AdminRole.SUPPORT),
             rule(POST, "/admin/logout", AdminRole.SUPPORT),
             rule(GET, "/admin/me", AdminRole.SUPPORT),
+            rule(GET, "/admin/config", AdminRole.SUPPORT),
             rule(PUT, "/admin/me/password", AdminRole.SUPPORT),
 
             // ---- Owner only: accounts, the audit trail, and handing out money-like balances ----

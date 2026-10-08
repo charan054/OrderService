@@ -13,6 +13,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * Reads X-Service-Key and, if it matches, authenticates the request as ROLE_SERVICE. Leaves the request
@@ -21,16 +22,24 @@ import java.util.List;
  */
 public class ServiceKeyAuthenticationFilter extends OncePerRequestFilter {
     private final String expectedKey;
+    private final Predicate<HttpServletRequest> refused;
 
     public ServiceKeyAuthenticationFilter(String expectedKey) {
+        this(expectedKey, request -> false);
+    }
+
+    // refused: requests the key must not authenticate even when correct (see NamedLoginPolicy). Only asked once the
+    // key has matched, so requests without a key never cost a lookup.
+    public ServiceKeyAuthenticationFilter(String expectedKey, Predicate<HttpServletRequest> refused) {
         this.expectedKey = expectedKey;
+        this.refused = refused;
     }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String provided = request.getHeader("X-Service-Key");
-        if (matches(provided, expectedKey)) {
+        if (matches(provided, expectedKey) && !refused.test(request)) {
             var authentication = new UsernamePasswordAuthenticationToken(
                     "service", null, List.of(new SimpleGrantedAuthority("ROLE_SERVICE")));
             SecurityContextHolder.getContext().setAuthentication(authentication);

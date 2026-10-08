@@ -75,6 +75,9 @@ class AdminPolicyTest {
         assertThat(required("POST", "/admin/logout")).isEqualTo(AdminRole.SUPPORT);
         assertThat(required("GET", "/admin/me")).isEqualTo(AdminRole.SUPPORT);
         assertThat(required("PUT", "/admin/me/password")).isEqualTo(AdminRole.SUPPORT);
+        assertThat(required("GET", "/admin/config")).isEqualTo(AdminRole.SUPPORT);
+        assertThat(required("GET", "/admin/logins")).isEqualTo(AdminRole.OWNER);
+        assertThat(required("DELETE", "/admin/accounts/asha")).isEqualTo(AdminRole.OWNER);
     }
 
     @Test

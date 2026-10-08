@@ -35,4 +35,8 @@ public class AdminAccount {
     @Column(length = 32)
     private String createdBy;
     private Instant lastLoginAt;
+    // Wrong-password (or switched-off account) attempts since the last successful sign-in, and when the latest was -
+    // so an owner can see an account being guessed at. Reset by a successful sign-in.
+    private int failedLogins;
+    private Instant lastFailedLoginAt;
 }

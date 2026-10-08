@@ -916,7 +916,7 @@
                     <span class="method">POST</span>
                 </div>
             </div>
-            <p>The people who can sign in above. SUPPORT looks customers and orders up and answers questions and support requests. MANAGER also ships, delivers, cancels, refunds and runs coupons, pincodes and analytics. OWNER also manages these accounts, reads the audit log and adjusts store credit and loyalty points. Needs an owner account (or the Service Key above).</p>
+            <p>The people who can sign in above. SUPPORT looks customers and orders up and answers questions and support requests. MANAGER also ships, delivers, cancels, refunds and runs coupons, pincodes and analytics. OWNER also manages these accounts, reads the audit log and adjusts store credit and loyalty points. Needs an owner account (or the Service Key above). Once an owner exists you can switch the Service Key off for browsers entirely (server setting ADMIN_REQUIRE_NAMED_LOGIN=true), so every change is made by a named person.</p>
             <div class="orders-filters">
                 <input type="text" id="newAdminUsername" placeholder="New username (letters, digits, . _ -)" autocomplete="off" />
                 <input type="password" id="newAdminPassword" placeholder="Password (at least 10 characters)" autocomplete="new-password" />
@@ -929,8 +929,10 @@
             <div class="orders-actions">
                 <button onclick="createAdminAccount()">Create Account</button>
                 <button onclick="loadAdminAccounts()">Load Accounts</button>
+                <button class="blue" onclick="loadAdminLogins()">Sign-in History</button>
             </div>
             <div id="adminAccountsWrap" class="orders-table-wrap"></div>
+            <div id="adminLoginsWrap" class="orders-table-wrap"></div>
         </div>
         <div class="card wide">
             <div class="card-header">
@@ -1181,9 +1183,33 @@
     }
     restoreAdminSession();
 
+    // When the server has switched the shared key off for browsers (ADMIN_REQUIRE_NAMED_LOGIN), stop offering it: the
+    // saved copy is wiped from this browser and the field is disabled, so everyone signs in as themselves.
+    let namedLoginRequired = false;
+    async function loadAdminConfig() {
+      try {
+        const response = await nativeFetch(`${ADMIN_ORIGIN}/admin/config`);
+        if (!response.ok) return;
+        namedLoginRequired = (await response.json()).namedLoginRequired === true;
+      } catch (e) {
+        return;
+      }
+      if (namedLoginRequired) {
+        try { localStorage.removeItem("cartServiceKey"); } catch (e) { /* nothing stored */ }
+        serviceKeyInput.value = "";
+        serviceKeyInput.disabled = true;
+        serviceKeyInput.placeholder = "Not accepted in the browser - sign in with your admin account above";
+      }
+    }
+    loadAdminConfig();
+
     function requireServiceKey() {
       // Signed in as a named admin: the fetch wrapper above swaps this placeholder for the X-Admin-Token session.
       if (adminToken) return "admin-session";
+      if (namedLoginRequired) {
+        showStatus("Sign in with your admin account above first.", "error");
+        return null;
+      }
       const key = serviceKeyInput.value;
       if (!key) {
         showStatus("Please enter the Service Key above first.", "error");
@@ -1731,7 +1757,7 @@
       const wrap = document.getElementById("adminAccountsWrap");
       const roleOptions = current => ["SUPPORT", "MANAGER", "OWNER"].map(r => `<option value="${r}"${r === current ? " selected" : ""}>${r}</option>`).join("");
       wrap.innerHTML = rows.length
-        ? `<table class="orders-table"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Created by</th><th>Last sign-in</th><th>New password</th></tr></thead><tbody>${rows.map(a => `
+        ? `<table class="orders-table"><thead><tr><th>Username</th><th>Role</th><th>Status</th><th>Created by</th><th>Last sign-in</th><th>Failed since</th><th>New password</th></tr></thead><tbody>${rows.map(a => `
             <tr><td>${escapeHtml(a.username)}</td>
             <td><select id="role-${escapeHtml(a.username)}">${roleOptions(a.role)}</select>
                 <button class="small-btn" onclick="setAdminRole('${escapeHtml(a.username)}')">Save role</button></td>
@@ -1739,8 +1765,10 @@
                 <button class="small-btn" onclick="setAdminActive('${escapeHtml(a.username)}', ${!a.active})">${a.active ? "Disable" : "Enable"}</button></td>
             <td>${escapeHtml(a.createdBy || "")}</td>
             <td>${a.lastLoginAt ? new Date(a.lastLoginAt).toLocaleString() : "never"}</td>
+            <td>${a.failedLogins ? `<strong>${a.failedLogins}</strong> (last ${new Date(a.lastFailedLoginAt).toLocaleString()})` : "0"}</td>
             <td><input type="password" id="pw-${escapeHtml(a.username)}" placeholder="10+ characters" autocomplete="new-password" style="width:150px;margin:0 6px 0 0;padding:6px 8px;" />
-                <button class="small-btn" onclick="resetAdminPassword('${escapeHtml(a.username)}')">Set</button></td></tr>`).join("")}</tbody></table>`
+                <button class="small-btn" onclick="resetAdminPassword('${escapeHtml(a.username)}')">Set</button>
+                <button class="small-btn" onclick="deleteAdminAccount('${escapeHtml(a.username)}')">Delete</button></td></tr>`).join("")}</tbody></table>`
         : "<p>No admin accounts yet. Create the first owner above (with the Service Key), then sign in as them.</p>";
       showStatus(`${rows.length} admin account(s).`, "success");
     }
@@ -1782,6 +1810,30 @@
         { method: "PUT", headers: { "X-Service-Key": serviceKey } });
       await loadAdminAccounts();
       showStatus(`${username} ${active ? "enabled" : "disabled and signed out"}.`, "success");
+    }
+
+    async function deleteAdminAccount(username) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      if (!confirm(`Delete the account "${username}"? Its past actions stay in the audit log under that name. To just stop someone signing in, use Disable instead.`)) return;
+      await apiCall(`${ADMIN_ACCOUNTS_URL}/${encodeURIComponent(username)}`, { method: "DELETE", headers: { "X-Service-Key": serviceKey } });
+      await loadAdminAccounts();
+      showStatus(`Deleted ${username}.`, "success");
+    }
+
+    // Last 90 days of sign-in attempts, newest first - wrong passwords and unknown names included, so guessing shows up.
+    async function loadAdminLogins() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const rows = await apiCall(`${ADMIN_ORIGIN}/admin/logins?limit=100`, { headers: { "X-Service-Key": serviceKey } });
+      const wrap = document.getElementById("adminLoginsWrap");
+      const labels = { OK: "Signed in", WRONG_PASSWORD: "Wrong password", UNKNOWN_USER: "No such user", DISABLED: "Account disabled" };
+      wrap.innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>When</th><th>Username</th><th>Result</th><th>From</th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>${new Date(r.at).toLocaleString()}</td><td>${escapeHtml(r.username || "")}</td>
+            <td>${r.success ? "&#9989; " : "&#10060; "}${escapeHtml(labels[r.result] || r.result)}</td><td>${escapeHtml(r.remoteAddr || "")}</td></tr>`).join("")}</tbody></table>`
+        : "<p>No sign-in attempts recorded yet.</p>";
+      showStatus(`${rows.length} sign-in attempt(s).`, "success");
     }
 
     async function resetAdminPassword(username) {

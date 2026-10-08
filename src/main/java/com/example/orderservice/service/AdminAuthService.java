@@ -4,13 +4,17 @@ import com.example.orderservice.dto.AdminAccountView;
 import com.example.orderservice.dto.AdminLoginResponse;
 import com.example.orderservice.dto.NewAdminAccount;
 import com.example.orderservice.entity.AdminAccount;
+import com.example.orderservice.entity.AdminLoginEvent;
 import com.example.orderservice.entity.AdminRole;
 import com.example.orderservice.entity.AdminSession;
 import com.example.orderservice.exception.AdminAuthException;
 import com.example.orderservice.repository.AdminAccountRepository;
+import com.example.orderservice.repository.AdminLoginEventRepository;
+import com.example.orderservice.repository.AuditLogRepository;
 import com.example.orderservice.repository.AdminSessionRepository;
 import com.example.orderservice.security.AdminPrincipal;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -45,9 +49,15 @@ public class AdminAuthService {
     static final int MAX_PASSWORD_BYTES = 72;
     private static final Pattern USERNAME = Pattern.compile("^[a-z0-9][a-z0-9._-]{2,31}$");
     private static final String INVALID_LOGIN = "Invalid username or password.";
+    // The audit log's name for the shared service key - no account may take it.
+    private static final String SERVICE_KEY_ACTOR = "service-key";
+    private static final Duration LOGIN_HISTORY_KEPT = Duration.ofDays(90);
+    static final int MAX_HISTORY = 500;
 
     private final AdminAccountRepository accounts;
     private final AdminSessionRepository sessions;
+    private final AdminLoginEventRepository loginEvents;
+    private final AuditLogRepository auditLog;
     private final Clock clock;
     private final Duration sessionTtl;
     private final BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();
@@ -55,28 +65,48 @@ public class AdminAuthService {
     // Checked against when the username doesn't exist, so an unknown name costs the same as a wrong password.
     private final String dummyHash = encoder.encode("timing-equaliser-not-a-real-password");
 
-    public AdminAuthService(AdminAccountRepository accounts, AdminSessionRepository sessions, Clock clock,
+    public AdminAuthService(AdminAccountRepository accounts, AdminSessionRepository sessions,
+                            AdminLoginEventRepository loginEvents, AuditLogRepository auditLog, Clock clock,
                             @Value("${admin.session-ttl-hours:12}") long sessionTtlHours) {
         this.accounts = accounts;
         this.sessions = sessions;
+        this.loginEvents = loginEvents;
+        this.auditLog = auditLog;
         this.clock = clock;
         this.sessionTtl = Duration.ofHours(sessionTtlHours);
     }
 
-    @Transactional
+    @Transactional(noRollbackFor = AdminAuthException.class)
     public AdminLoginResponse login(String username, String password) {
+        return login(username, password, null);
+    }
+
+    // noRollbackFor: the failed attempt must still be recorded (event row and the account's failure count) even
+    // though the method ends by throwing the 401.
+    @Transactional(noRollbackFor = AdminAuthException.class)
+    public AdminLoginResponse login(String username, String password, String remoteAddr) {
         Optional<AdminAccount> found = accounts.findByUsername(normalize(username));
         // Always hash once, against the real hash or the dummy, so timing doesn't reveal which usernames exist. An
         // over-long password is never a match (it can't have been set, see requireStrongPassword).
         String candidate = fitsBcrypt(password) ? password : "";
         boolean passwordOk = encoder.matches(candidate, found.map(AdminAccount::getPasswordHash).orElse(dummyHash))
                 && fitsBcrypt(password);
+        Instant now = clock.instant();
+        loginEvents.deleteByAtBefore(now.minus(LOGIN_HISTORY_KEPT));
         if (found.isEmpty() || !passwordOk || !found.get().isActive()) {
+            String result = found.isEmpty() ? "UNKNOWN_USER" : !passwordOk ? "WRONG_PASSWORD" : "DISABLED";
+            found.ifPresent(a -> {
+                a.setFailedLogins(a.getFailedLogins() + 1);
+                a.setLastFailedLoginAt(now);
+                accounts.save(a);
+            });
+            recordLogin(now, username, false, result, remoteAddr);
             throw new AdminAuthException(HttpStatus.UNAUTHORIZED, INVALID_LOGIN);
         }
         AdminAccount account = found.get();
-        Instant now = clock.instant();
+        recordLogin(now, username, true, "OK", remoteAddr);
         sessions.deleteByExpiresAtBefore(now);
+        account.setFailedLogins(0);
         account.setLastLoginAt(now);
         accounts.save(account);
 
@@ -90,6 +120,30 @@ public class AdminAuthService {
         session.setExpiresAt(now.plus(sessionTtl));
         sessions.save(session);
         return new AdminLoginResponse(token, account.getUsername(), account.getRole(), session.getExpiresAt());
+    }
+
+    private void recordLogin(Instant at, String typedUsername, boolean success, String result, String remoteAddr) {
+        AdminLoginEvent event = new AdminLoginEvent();
+        event.setAt(at);
+        // What was typed, made safe to store and show: no control characters, at most the column's width.
+        String shown = normalize(typedUsername).replaceAll("\\p{Cntrl}", "");
+        event.setUsername(shown.length() > 32 ? shown.substring(0, 32) : shown);
+        event.setSuccess(success);
+        event.setResult(result);
+        event.setRemoteAddr(remoteAddr == null ? null : remoteAddr.length() > 64 ? remoteAddr.substring(0, 64) : remoteAddr);
+        loginEvents.save(event);
+    }
+
+    /** Newest first, optionally for one username, for the owner's sign-in history. */
+    @Transactional(readOnly = true)
+    public List<AdminLoginEvent> recentLogins(String username, int limit) {
+        if (limit < 1 || limit > MAX_HISTORY) {
+            throw new AdminAuthException(HttpStatus.BAD_REQUEST, "Limit must be between 1 and " + MAX_HISTORY);
+        }
+        PageRequest page = PageRequest.of(0, limit);
+        return username == null || username.isBlank()
+                ? loginEvents.findAllByOrderByIdDesc(page)
+                : loginEvents.findByUsernameOrderByIdDesc(normalize(username), page);
     }
 
     /** Who a still-valid token belongs to, or empty for an unknown/expired token or a disabled account. */
@@ -132,6 +186,11 @@ public class AdminAuthService {
         if (accounts.findByUsername(username).isPresent()) {
             throw new AdminAuthException(HttpStatus.CONFLICT, "That username is already taken.");
         }
+        // A name with history in the audit log would let new changes be read as the old person's.
+        if (username.equals(SERVICE_KEY_ACTOR) || auditLog.existsByActorIgnoreCase(username)) {
+            throw new AdminAuthException(HttpStatus.CONFLICT,
+                    "That username appears in the audit log. Choose another so the trail stays unambiguous.");
+        }
         AdminAccount account = new AdminAccount();
         account.setUsername(username);
         account.setPasswordHash(encoder.encode(request.password()));
@@ -170,6 +229,24 @@ public class AdminAuthService {
         }
         account.setActive(active);
         return AdminAccountView.of(accounts.save(account));
+    }
+
+    /**
+     * Removes an account, e.g. one made by mistake: ends its sessions and frees nothing else - the audit log keeps its
+     * name, which is why that name can never be given to anyone else. Not yourself, and never the last active owner
+     * (disable instead if you only want to cut someone off).
+     */
+    @Transactional
+    public void delete(String username, String actor) {
+        AdminAccount account = require(username);
+        if (account.getUsername().equalsIgnoreCase(actor)) {
+            throw new AdminAuthException(HttpStatus.CONFLICT, "You can't delete the account you are signed in with.");
+        }
+        if (account.getRole() == AdminRole.OWNER && account.isActive()) {
+            requireAnotherActiveOwner();
+        }
+        sessions.deleteByAdminId(account.getId());
+        accounts.delete(account);
     }
 
     /** An owner (or the service key) sets someone's password without knowing the old one; their sessions end. */
