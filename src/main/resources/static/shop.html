@@ -2106,6 +2106,14 @@
       }
     }
 
+    // Reviews of one option are shown under every option of its group; say which option this one was written for
+    // (only when it is a different one from the product being looked at).
+    function reviewOptionLabel(review, viewedProductId) {
+      if (!review.productId || review.productId === viewedProductId) return "";
+      const option = products.find(p => p.productId === review.productId);
+      return option && option.variantLabel ? ` <span class="meta">(${escapeHtml(option.variantLabel)})</span>` : "";
+    }
+
     async function loadModalReviews(productId) {
       const box = document.getElementById("modalReviews");
       const response = await authFetch(`${BASE_URL}/cart/reviews?productId=${productId}`);
@@ -2113,7 +2121,7 @@
       box.innerHTML = reviews.length
         ? reviews.map(r => `
           <div class="review-item">
-            <div class="review-meta">${escapeHtml(r.reviewerName)} &middot; <span class="stars">${starsFor(r.rating)}</span>${r.verifiedPurchase ? ' <span class="verified-badge" title="This reviewer bought this product from Charan Mart">&#10003; Verified purchase</span>' : ""}</div>
+            <div class="review-meta">${escapeHtml(r.reviewerName)} &middot; <span class="stars">${starsFor(r.rating)}</span>${reviewOptionLabel(r, productId)}${r.verifiedPurchase ? ' <span class="verified-badge" title="This reviewer bought this product from Charan Mart">&#10003; Verified purchase</span>' : ""}</div>
             <div class="review-comment">${escapeHtml(r.comment || "")}</div>
             <button class="details-link" style="font-size:12px;" onclick="reportReview(${r.reviewId})">Report this review</button>
           </div>
