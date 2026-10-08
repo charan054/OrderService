@@ -2136,7 +2136,12 @@
       if (inv.discountAmount > 0) adj.push(`<tr><td colspan="3" class="r">Coupon${inv.couponCode ? " (" + escapeHtml(inv.couponCode) + ")" : ""}</td><td class="r">-${money(inv.discountAmount)}</td></tr>`);
       if (inv.pointsRedeemed > 0) adj.push(`<tr><td colspan="3" class="r">Loyalty points redeemed</td><td class="r">-${money(inv.pointsRedeemed)}</td></tr>`);
       if (inv.storeCreditUsed > 0) adj.push(`<tr><td colspan="3" class="r">Store credit used</td><td class="r">-${money(inv.storeCreditUsed)}</td></tr>`);
-      const html = `<!doctype html><html><head><meta charset="utf-8"><title>Invoice #${inv.orderId}</title>
+      // Cancelled/returned units since checkout - same wording as the order list ("taken off" for cash).
+      const refundRows = inv.refundedAmount > 0
+        ? `<tr><td colspan="3" class="r">${inv.paymentMethod === "CASH" ? "Taken off" : "Refunded"} for cancelled or returned items</td><td class="r">-${money(inv.refundedAmount)}</td></tr>`
+          + `<tr class="total"><td colspan="3" class="r">Net</td><td class="r">${money(inv.totalPrice - inv.refundedAmount)}</td></tr>`
+        : "";
+      const html =`<!doctype html><html><head><meta charset="utf-8"><title>Invoice #${inv.orderId}</title>
         <style>body{font-family:Arial,sans-serif;max-width:640px;margin:30px auto;color:#222}h1{margin:0}table{width:100%;border-collapse:collapse;margin-top:16px}
         th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left}.r{text-align:right}.total td{font-weight:bold;border-top:2px solid #222}
         .meta{color:#555;font-size:14px;line-height:1.6}button{margin-top:20px;padding:8px 16px}@media print{button{display:none}}</style></head><body>
@@ -2150,7 +2155,7 @@
         ${inv.deliverySlot ? "Preferred delivery window: " + escapeHtml(inv.deliverySlot.charAt(0) + inv.deliverySlot.slice(1).toLowerCase()) + "<br>" : ""}
         Payment: ${escapeHtml(inv.paymentMethod)} &middot; ${inv.paid ? "Paid" : "Unpaid"} &middot; Status: ${escapeHtml(inv.status)}</div>
         <table><tr><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr>${rows}${adj.join("")}
-        <tr class="total"><td colspan="3" class="r">Total charged</td><td class="r">${money(inv.totalPrice)}</td></tr></table>
+        <tr class="total"><td colspan="3" class="r">Total charged</td><td class="r">${money(inv.totalPrice)}</td></tr>${refundRows}</table>
         ${gstTableHtml(inv.tax, money)}
         <p class="meta">Item prices show today's catalog price; the total is what this order was actually charged.</p>
         <button onclick="window.print()">Print / Save as PDF</button></body></html>`;
