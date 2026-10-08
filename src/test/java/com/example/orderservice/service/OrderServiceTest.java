@@ -89,7 +89,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -154,6 +156,8 @@ class OrderServiceTest {
 
     @Mock
     private InvoiceNumberService invoiceNumberService;
+    @Mock
+    private CreditNoteService creditNoteService;
 
     @InjectMocks
     private OrderService service;
@@ -3102,6 +3106,58 @@ class OrderServiceTest {
         assertEquals(90.0, result.getRefundedAmount());
         assertEquals(OrderStatus.PLACED, result.getStatus());
         verify(trackingEventRepository, never()).save(any());
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<CreditNoteService.Change> issuedChanges(String reason) {
+        ArgumentCaptor<List<CreditNoteService.Change>> captor = ArgumentCaptor.forClass(List.class);
+        verify(creditNoteService).issue(any(Cart.class), captor.capture(), eq(reason));
+        return captor.getValue();
+    }
+
+    @Test
+    void cancelItemIssuesACreditNoteForTheUnitsTakenOut() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 2, 100), pricedItem(2, 1, 50));
+        cart.setTotalPrice(250);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        service.cancelItem(42L, 1, 1, AUTH, "item-1", null, null);
+
+        List<CreditNoteService.Change> changes = issuedChanges("CANCELLED");
+        assertEquals(1, changes.size());
+        assertEquals(1, changes.get(0).item().getProductId());
+        assertEquals(2, changes.get(0).keptBefore());
+        assertEquals(1, changes.get(0).keptAfter());
+    }
+
+    @Test
+    void returnOrderIssuesOneCreditNoteCoveringEveryItemStillWithTheCustomer() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 2), item(2, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        service.returnOrder(42L, AUTH, "return-1", "damaged in transit");
+
+        List<CreditNoteService.Change> changes = issuedChanges("RETURNED");
+        assertEquals(List.of(2, 1), changes.stream().map(CreditNoteService.Change::keptBefore).toList());
+        assertEquals(List.of(0, 0), changes.stream().map(CreditNoteService.Change::keptAfter).toList());
+    }
+
+    @Test
+    void aFailingCreditNoteNeverUndoesAnAlreadyRefundedCancel() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 2, 100));
+        cart.setTotalPrice(200);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        when(creditNoteService.issue(any(Cart.class), anyList(), anyString())).thenThrow(new IllegalStateException("db down"));
+
+        Cart result = service.cancelItem(42L, 1, 1, AUTH, "item-1", null, null);
+
+        assertEquals(1, itemOf(result, 1).getCancelledQuantity());
     }
 
     // Three equal items of a 20.00 order: 6.67 + 6.67 would leave 6.66, and the last cancel must take exactly that,

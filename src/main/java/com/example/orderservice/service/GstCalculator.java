@@ -27,34 +27,55 @@ public final class GstCalculator {
 
     public static Invoice.Tax compute(List<Item> items, double couponDiscount, boolean interState, String sellerName,
                                       String sellerGstin, String sellerState, String placeOfSupply) {
-        double orderGross = items.stream().mapToDouble(i -> i.unitPrice() * i.originalQuantity()).sum();
-        double discountRatio = orderGross <= 0 ? 0 : Math.min(1, Math.max(0, couponDiscount / orderGross));
+        double discountRatio = discountRatio(items, couponDiscount);
         List<Invoice.TaxLine> lines = new ArrayList<>();
         double taxableTotal = 0, cgstTotal = 0, sgstTotal = 0, igstTotal = 0;
         for (Item item : items) {
             if (item.keptQuantity() <= 0) {
                 continue;
             }
-            double value = round(item.unitPrice() * item.keptQuantity() * (1 - discountRatio));
-            double taxable = round(value / (1 + item.gstRate() / 100.0));
-            double tax = round(value - taxable);
-            double cgst = 0, sgst = 0, igst = 0;
-            if (interState) {
-                igst = tax;
-            } else {
-                cgst = round(tax / 2);
-                sgst = round(tax - cgst);
-            }
-            lines.add(new Invoice.TaxLine(item.productId(), item.productName(), item.hsnCode(), item.gstRate(),
-                    item.keptQuantity(), taxable, cgst, sgst, igst, value));
-            taxableTotal += taxable;
-            cgstTotal += cgst;
-            sgstTotal += sgst;
-            igstTotal += igst;
+            Invoice.TaxLine line = lineTax(item, item.keptQuantity(), discountRatio, interState);
+            lines.add(line);
+            taxableTotal += line.taxableValue();
+            cgstTotal += line.cgst();
+            sgstTotal += line.sgst();
+            igstTotal += line.igst();
         }
         return new Invoice.Tax(sellerName, blankToNull(sellerGstin), blankToNull(sellerState), blankToNull(placeOfSupply),
                 interState, lines, round(taxableTotal), round(cgstTotal), round(sgstTotal), round(igstTotal),
                 round(cgstTotal + sgstTotal + igstTotal));
+    }
+
+    // The share of the order's gross that a coupon took off, applied evenly to every line.
+    public static double discountRatio(List<Item> items, double couponDiscount) {
+        double orderGross = items.stream().mapToDouble(i -> i.unitPrice() * i.originalQuantity()).sum();
+        return orderGross <= 0 ? 0 : Math.min(1, Math.max(0, couponDiscount / orderGross));
+    }
+
+    /** One product's tax if keptQuantity of its units stand: value supplied, split into taxable value and tax. */
+    public static Invoice.TaxLine lineTax(Item item, int keptQuantity, double discountRatio, boolean interState) {
+        double value = round(item.unitPrice() * keptQuantity * (1 - discountRatio));
+        double taxable = round(value / (1 + item.gstRate() / 100.0));
+        double tax = round(value - taxable);
+        double cgst = 0, sgst = 0, igst = 0;
+        if (interState) {
+            igst = tax;
+        } else {
+            cgst = round(tax / 2);
+            sgst = round(tax - cgst);
+        }
+        return new Invoice.TaxLine(item.productId(), item.productName(), item.hsnCode(), item.gstRate(),
+                keptQuantity, taxable, cgst, sgst, igst, value);
+    }
+
+    /** The tax reversed when a product goes from keptBefore to keptAfter units: before minus after, line by line. */
+    public static Invoice.TaxLine reversal(Item item, int keptBefore, int keptAfter, double discountRatio, boolean interState) {
+        Invoice.TaxLine before = lineTax(item, keptBefore, discountRatio, interState);
+        Invoice.TaxLine after = lineTax(item, keptAfter, discountRatio, interState);
+        return new Invoice.TaxLine(item.productId(), item.productName(), item.hsnCode(), item.gstRate(),
+                keptBefore - keptAfter, round(before.taxableValue() - after.taxableValue()),
+                round(before.cgst() - after.cgst()), round(before.sgst() - after.sgst()),
+                round(before.igst() - after.igst()), round(before.total() - after.total()));
     }
 
     // Inter-state only when both states are known and differ; with either unknown the sale is treated as within

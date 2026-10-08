@@ -81,4 +81,46 @@ class GstCalculatorTest {
         assertFalse(GstCalculator.isInterState("", "Maharashtra"));
         assertFalse(GstCalculator.isInterState("Karnataka", null));
     }
+
+    // The reversals of a sequence of cancels, plus the tax still standing, always add back up to the original invoice
+    // to the paisa - even where per-line rounding would otherwise drift (odd price, coupon share, 4 units).
+    @Test
+    void successiveReversalsAddUpToTheOriginalInvoiceToThePaisa() {
+        GstCalculator.Item it = item(1, 5, 9.99, 4, 4);
+        double ratio = 0.0731;
+        for (boolean interState : new boolean[]{false, true}) {
+            Invoice.TaxLine whole = GstCalculator.lineTax(it, 4, ratio, interState);
+            double taxable = 0, cgst = 0, sgst = 0, igst = 0, total = 0;
+            int kept = 4;
+            for (int cancel : new int[]{1, 1, 2}) {
+                Invoice.TaxLine r = GstCalculator.reversal(it, kept, kept - cancel, ratio, interState);
+                assertEquals(cancel, r.quantity());
+                taxable += r.taxableValue();
+                cgst += r.cgst();
+                sgst += r.sgst();
+                igst += r.igst();
+                total += r.total();
+                kept -= cancel;
+            }
+            assertEquals(whole.taxableValue(), Math.round(taxable * 100) / 100.0);
+            assertEquals(whole.cgst(), Math.round(cgst * 100) / 100.0);
+            assertEquals(whole.sgst(), Math.round(sgst * 100) / 100.0);
+            assertEquals(whole.igst(), Math.round(igst * 100) / 100.0);
+            assertEquals(whole.total(), Math.round(total * 100) / 100.0);
+        }
+    }
+
+    @Test
+    void reversingOneUnitReturnsThatUnitsShareOfTaxAfterTheCouponShare() {
+        // 2 x 118 at 18%, a coupon took 10% off the order: one unit supplied for 106.20 -> 90 taxable + 16.20 tax.
+        GstCalculator.Item it = item(1, 18, 118, 2, 2);
+        double ratio = GstCalculator.discountRatio(List.of(it), 23.6);
+
+        Invoice.TaxLine r = GstCalculator.reversal(it, 2, 1, ratio, false);
+
+        assertEquals(106.2, r.total());
+        assertEquals(90.0, r.taxableValue());
+        assertEquals(8.1, r.cgst());
+        assertEquals(8.1, r.sgst());
+    }
 }
