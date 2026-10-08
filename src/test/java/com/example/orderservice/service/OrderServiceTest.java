@@ -392,6 +392,47 @@ class OrderServiceTest {
         verify(codRiskService).assertCashAllowed(CUSTOMER, 500.0);
     }
 
+    @Test
+    void aSubscriptionOrderTakesItsPercentOffIsCashAndRemembersTheSubscription() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 200.0, 10));
+        Cart cart = cart(CUSTOMER, item(1, 2));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+
+        Cart result = service.placeSubscriptionOrder(cart, 7L, 5.0);
+
+        assertEquals(7L, result.getSubscriptionId());
+        assertEquals(20.0, result.getDiscountAmount());
+        assertEquals(380.0, result.getTotalPrice());
+        assertFalse(result.isPaid());
+        verifyNoInteractions(phonepeClient);
+        verify(codRiskService).assertCashAllowed(CUSTOMER, 380.0);
+    }
+
+    @Test
+    void aSubscriptionOrderCannotBePaidOnline() {
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.PHONEPE);
+
+        assertThrows(ProductException.class, () -> service.placeSubscriptionOrder(cart, 7L, 5.0));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void anOrdinaryCheckoutCannotClaimASubscriptionDiscount() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 200.0, 10));
+        Cart cart = cart(CUSTOMER, item(1, 2));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setSubscriptionId(99L);
+
+        Cart result = service.order(cart, null, null);
+
+        assertNull(result.getSubscriptionId());
+        assertEquals(0.0, result.getDiscountAmount());
+        assertEquals(400.0, result.getTotalPrice());
+    }
+
     // COD risk limits are checked against the final total before the order exists or any stock moves.
     @Test
     void aCashOrderRefusedByTheCodRulesCreatesNothing() {

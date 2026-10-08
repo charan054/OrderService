@@ -404,6 +404,9 @@
         .review-item:last-child { border-bottom: none; }
         .review-item .stars { color: #f59e0b; letter-spacing: 1px; font-size: 13px; }
         .review-item .review-meta { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
+        .subscribe-box { margin: 10px 0; padding: 10px 12px; border: 1px dashed var(--border, #d0d5dd); border-radius: 8px; font-size: 14px; }
+        .subscribe-box select, .subscribe-box input[type=number] { width: auto; display: inline-block; margin: 0 6px 6px 0; }
+        .subscription-row { padding: 10px 0; border-bottom: 1px solid var(--border, #eee); }
         .low-stock-badge { color: var(--err-fg, #b42318); background: var(--err-bg, #fee4e2); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
         .verified-badge { color: var(--ok-fg); background: var(--ok-bg); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
         .review-item .review-comment { font-size: 14px; }
@@ -767,6 +770,7 @@
             <button class="modal-close" onclick="closeProductModal()">Close</button>
             <h2 id="modalProductName"></h2>
             <div id="modalRatingSummary" class="rating-row"></div>
+            <div id="modalSubscribe" class="subscribe-box"></div>
 
             <div id="modalGallery" class="fbt-strip hidden"></div>
 
@@ -1439,6 +1443,8 @@
         authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`),
         authFetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`)
       ]);
+      const subscriptionsResponse = await authFetch(`${BASE_URL}/subscriptions/mine?phno=${encodeURIComponent(customerPhno)}`);
+      const mySubscriptions = subscriptionsResponse.ok ? await subscriptionsResponse.json() : [];
       const feedbackResponse = await authFetch(`${BASE_URL}/feedback/mine?phno=${encodeURIComponent(customerPhno)}`);
       ratedOrderIds = new Set((feedbackResponse.ok ? await feedbackResponse.json() : []).map(f => f.orderId));
       const profile = profileResponse.ok ? await profileResponse.json() : null;
@@ -1523,6 +1529,8 @@
         ${orderFilterBarHtml(historyPage)}
         ${ordersHtml}
         ${supportTickets.length ? `<h3 style="margin:20px 0 10px;">Support requests</h3>${supportTickets.map(supportTicketHtml).join("")}` : ""}
+        <h3 style="margin:20px 0 10px;">Subscriptions</h3>
+        ${mySubscriptions.length ? mySubscriptions.map(subscriptionRowHtml).join("") : `<p style="color:var(--muted);">No subscriptions - open a product and choose "Subscribe &amp; save" to get it delivered regularly at a discount.</p>`}
         <h3 style="margin:20px 0 10px;">Waiting for restock</h3>
         ${waitlistHtml || `<p style="color:var(--muted);">Nothing on your restock waitlist - tap "Notify me" on an out-of-stock product to add it here.</p>`}
         <h3 style="margin:20px 0 10px;">Saved addresses</h3>
@@ -2081,7 +2089,81 @@
         ? `<span class="stars">${starsFor(rating.averageRating)}</span> ${rating.averageRating.toFixed(1)} (${rating.reviewCount} reviews)`
         : "No reviews yet";
 
+      renderSubscribeBox(product);
       await Promise.all([loadModalReviews(productId), loadModalQuestions(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
+    }
+
+    // ---------- subscribe & save ----------
+    let subscriptionTerms = null;
+
+    async function loadSubscriptionTerms() {
+      if (subscriptionTerms) return subscriptionTerms;
+      const response = await fetch(`${BASE_URL}/subscriptions/terms`);
+      subscriptionTerms = response.ok ? await response.json() : { discountPercent: 0, intervalDays: [30], maxQuantity: 20 };
+      return subscriptionTerms;
+    }
+
+    async function renderSubscribeBox(product) {
+      const box = document.getElementById("modalSubscribe");
+      if (!product || product.productStock <= 0) { box.innerHTML = ""; return; }
+      const terms = await loadSubscriptionTerms();
+      if (!(terms.discountPercent > 0)) { box.innerHTML = ""; return; }
+      box.innerHTML = `
+        <strong>Subscribe &amp; save ${terms.discountPercent}%</strong>
+        <span class="meta"> &middot; cash on delivery, skip or cancel any time</span><br>
+        <input type="number" id="subQuantity" value="1" min="1" max="${terms.maxQuantity}" aria-label="Quantity" />
+        every
+        <select id="subInterval">${terms.intervalDays.map(d => `<option value="${d}"${d === 30 ? " selected" : ""}>${d} days</option>`).join("")}</select><br>
+        <label style="display:flex; align-items:center; gap:6px; margin:4px 0 8px;"><input type="checkbox" id="subStartNow" style="width:auto;" checked /> Send the first one now</label>
+        <button class="secondary" style="width:auto;" onclick="subscribeToProduct(${product.productId})">Subscribe</button>
+        <div id="subscribeMessage" class="meta"></div>`;
+    }
+
+    async function subscribeToProduct(productId) {
+      const message = document.getElementById("subscribeMessage");
+      const addressesResponse = await authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const addresses = addressesResponse.ok ? await addressesResponse.json() : [];
+      const address = addresses.find(a => a.isDefault) || addresses[0];
+      const response = await authFetch(`${BASE_URL}/subscriptions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phno: customerPhno,
+          productId,
+          quantity: Number(document.getElementById("subQuantity").value) || 1,
+          intervalDays: Number(document.getElementById("subInterval").value),
+          shippingAddressId: address ? address.id : null,
+          startNow: document.getElementById("subStartNow").checked
+        })
+      });
+      message.textContent = response.ok
+        ? "Subscribed! Find it under My account > Subscriptions." + (address ? "" : " (No saved address yet - add one in My account before the first delivery.)")
+        : ((await response.text()) || "Couldn't subscribe right now. Please try again.");
+    }
+
+    function subscriptionRowHtml(s) {
+      const product = products.find(p => p.productId === s.productId);
+      const name = product ? product.productName : "Product #" + s.productId;
+      const next = s.status === "ACTIVE" && s.nextRunAt ? ` &middot; next ${new Date(s.nextRunAt).toLocaleDateString()}` : "";
+      const buttons = s.status === "CANCELLED" ? "" : `
+        ${s.status === "ACTIVE"
+          ? `<button class="secondary" style="width:auto;" onclick="subscriptionAction(${s.id}, 'pause')">Pause</button>
+             <button class="secondary" style="width:auto;" onclick="subscriptionAction(${s.id}, 'skip')">Skip next</button>`
+          : `<button class="secondary" style="width:auto;" onclick="subscriptionAction(${s.id}, 'resume')">Resume</button>`}
+        <button class="secondary" style="width:auto;" onclick="subscriptionAction(${s.id}, 'cancel')">Cancel</button>`;
+      return `<div class="subscription-row">
+        <strong>${s.quantity} &times; ${escapeHtml(name)}</strong>
+        <span class="meta">every ${s.intervalDays} days &middot; ${s.discountPercent}% off &middot; ${escapeHtml(s.status)}${next} &middot; ${s.ordersPlaced} order(s) so far</span>
+        ${s.lastError && s.status !== "CANCELLED" ? `<div class="error-text">Last problem: ${escapeHtml(s.lastError)}</div>` : ""}
+        <div>${buttons}</div></div>`;
+    }
+
+    async function subscriptionAction(id, action) {
+      if (action === "cancel" && !confirm("Cancel this subscription?")) return;
+      const url = `${BASE_URL}/subscriptions/${id}` + (action === "cancel" ? "" : "/" + action) + `?phno=${encodeURIComponent(customerPhno)}`;
+      const response = await authFetch(url, { method: action === "cancel" ? "DELETE" : "PUT" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't update the subscription."); return; }
+      loadAccountView();
     }
 
     function closeProductModal() {

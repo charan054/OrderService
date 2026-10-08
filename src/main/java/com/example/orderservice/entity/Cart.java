@@ -38,6 +38,9 @@ public class Cart {
     // discountAmount before charging. Kept on the saved order purely as a record of what was applied - re-editing
     // this field after the fact has no effect on anything.
     private String couponCode;
+    // Set only by SubscriptionService (via OrderService.placeSubscriptionOrder): the subscription this order is a repeat
+    // delivery of. Cleared on anything that comes in over HTTP, so a customer cannot claim the discount.
+    private Long subscriptionId;
     private double discountAmount;
     // Set by the caller at checkout (optional); order() validates it against the customer's LoyaltyAccount
     // balance and turns it into an additional discount (1 point = ₹1) on top of any coupon, before charging.
