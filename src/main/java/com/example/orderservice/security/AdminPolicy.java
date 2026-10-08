@@ -43,6 +43,10 @@ public final class AdminPolicy {
             rule(ANY, "/admin/**", AdminRole.OWNER),
             rule(ANY, "/audit/**", AdminRole.OWNER),
             rule(POST, "/storecredit/adjust", AdminRole.OWNER),
+            // Gift cards: a manager may redeem one for a customer; minting, listing and voiding are owner-only.
+            rule(POST, "/giftcards/redeem", AdminRole.MANAGER),
+            rule(ANY, "/giftcards", AdminRole.OWNER),
+            rule(ANY, "/giftcards/**", AdminRole.OWNER),
             rule(POST, "/loyalty/adjust", AdminRole.OWNER),
             // Rebinding a phone to a new email hands the account to whoever holds that email.
             rule(PUT, "/customer/admin/email", AdminRole.OWNER),

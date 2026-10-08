@@ -1496,7 +1496,7 @@
         ${profileHtml}
         <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="downloadMyData()">Download my data</button>
           <span class="meta">Everything we store about you, as a JSON file.</span></p>
-        ${storeCreditHtml(storeCredit)}
+        ${storeCreditHtml(storeCredit)}${giftCardRedeemHtml()}
         ${emailPrefs ? `<p style="margin:8px 0;"><label style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="marketingEmails" style="width:auto;" ${emailPrefs.marketingEmails ? "checked" : ""} onchange="setMarketingEmails(this)" />
           Email me cart reminders, restock / price-drop alerts and points-expiry warnings</label>
@@ -1668,9 +1668,34 @@
       loadAccountView();
     }
 
+    // Always shown in My account: anyone can be handed a gift card, with or without a wallet yet.
+    function giftCardRedeemHtml() {
+      return `<div style="margin:12px 0;"><strong>Gift card</strong>
+        <span class="meta">Have a Charan Mart gift card? Enter its code to add its value to your store credit.</span>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
+          <input type="text" id="giftCardCode" placeholder="GC-XXXX-XXXX-XXXX-XXXX" autocomplete="off" style="flex:1 1 220px; text-transform:uppercase;" />
+          <button onclick="redeemGiftCard()">Redeem</button>
+        </div></div>`;
+    }
+
+    async function redeemGiftCard() {
+      const code = document.getElementById("giftCardCode").value.trim();
+      if (!code) { alert("Enter your gift card code."); return; }
+      const response = await authFetch(`${BASE_URL}/giftcards/redeem`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: Number(customerPhno), code })
+      });
+      if (!response.ok) { alert((await response.text()) || "Couldn't redeem that gift card. Please try again."); return; }
+      const result = await response.json();
+      alert(`₹${result.amount.toFixed(2)} added to your store credit. Your balance is now ₹${result.balance.toFixed(2)}.`);
+      loadStoreCredit();
+      loadAccountView();
+    }
+
     function storeCreditHtml(credit) {
       if (!credit || (credit.balance <= 0 && !credit.transactions.length)) return "";
-      const label = { REFUND: "Refund", SPENT: "Used at checkout", REVERSED: "Returned (payment failed)", ADJUSTED: "Adjustment" };
+      const label = { REFUND: "Refund", SPENT: "Used at checkout", REVERSED: "Returned (payment failed)", ADJUSTED: "Adjustment", GIFT_CARD: "Gift card" };
       const rows = credit.transactions.slice(0, 5).map(t => `
         <div class="meta">${new Date(t.createdAt).toLocaleDateString()} &middot; ${label[t.type] || escapeHtml(t.type)}${t.orderId ? " (order #" + t.orderId + ")" : ""}
           &middot; ${t.amount >= 0 ? "+" : "-"}₹${Math.abs(t.amount).toFixed(2)}</div>`).join("");
