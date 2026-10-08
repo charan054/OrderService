@@ -176,8 +176,31 @@ public class OrderService {
     // more specific signal of which flow the caller wants.
     public Cart order(Cart cart, String authorization, String idempotencyKey, Long payerPhno, String payerPin, String payerUpiId)
     {
+        return placeOrder(cart, authorization, idempotencyKey, payerPhno, payerPin, payerUpiId, null);
+    }
+
+    /** What makes an order a subscription delivery: which subscription it belongs to and the percent taken off. */
+    private record SubscriptionTerms(long subscriptionId, double discountPercent) {
+    }
+
+    /**
+     * Places a subscription's repeat order (called by SubscriptionService). It is always cash on delivery - an unattended
+     * order has no PIN or approval to charge with - and gets the subscription's percent off on top of any coupon. Public
+     * checkout can never set a subscription: sanitizeNewOrder() clears the field on anything that comes in over HTTP.
+     */
+    public Cart placeSubscriptionOrder(Cart cart, long subscriptionId, double discountPercent) {
+        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
+            throw new ProductException("Subscription orders are cash on delivery");
+        }
+        return placeOrder(cart, null, null, null, null, null, new SubscriptionTerms(subscriptionId, discountPercent));
+    }
+
+    private Cart placeOrder(Cart cart, String authorization, String idempotencyKey, Long payerPhno, String payerPin,
+                            String payerUpiId, SubscriptionTerms subscription)
+    {
         validatePhno(cart.getCustomerPhno());
         sanitizeNewOrder(cart);
+        cart.setSubscriptionId(subscription == null ? null : subscription.subscriptionId());
         normalizeDeliveryNote(cart);
         normalizeDeliverySlot(cart);
         if (cart.getPaymentMethod() == null) {
@@ -206,6 +229,9 @@ public class OrderService {
         // Resolved (and normalized onto the cart) BEFORE charging, same reasoning as stock: an invalid/inactive
         // code must fail before anything - including a payment - has happened.
         double discount = resolveDiscount(cart, price);
+        if (subscription != null) {
+            discount += roundMoney((price - discount) * subscription.discountPercent() / 100.0);
+        }
         // Same fail-fast reasoning, applied on top of the coupon discount: redeeming more points than the
         // customer's balance actually holds, or more than what's left to pay, must fail before any payment.
         double pointsDiscount = resolvePointsRedemption(cart, price - discount);
@@ -314,6 +340,7 @@ public class OrderService {
         cart.setUpiId(null);
         cart.setPaymentDeadline(null);
         cart.setDiscountAmount(0);
+        cart.setSubscriptionId(null);
     }
 
     private static final long UPI_COLLECT_TIMEOUT_MINUTES = 4;
