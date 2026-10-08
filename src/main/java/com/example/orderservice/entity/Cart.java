@@ -56,6 +56,10 @@ public class Cart {
     // payment / nothing refunded. Response-only (used for the customer email and the storefront message), not stored.
     @Transient
     private String refundDestination;
+    // Sequential tax-invoice number (PREFIX/2026-27/000123) and the date it was issued - see InvoiceNumberService.
+    @Column(length = 30, unique = true)
+    private String invoiceNumber;
+    private Instant invoiceDate;
     // Set by the caller at checkout (optional); order() validates it belongs to the same customerPhno before
     // saving it as a record of which saved address the order shipped to. Purely informational once saved - like
     // couponCode, re-editing this field after the fact has no effect on anything.

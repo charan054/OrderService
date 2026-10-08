@@ -16,6 +16,9 @@ public class OrderItem {
     // What one unit cost when the order was placed (null for orders placed before this was recorded). Per-item
     // cancel/return needs it to work out an item's share of what was actually paid.
     private Double unitPrice;
+    // GST rate (percent) that applied to this item when it was sold - the catalog's rate, or the store default
+    // (gst.default-rate) when the product has none. Null for orders placed before this was recorded.
+    private Double gstRate;
     // Units cancelled (before shipping) or returned (after delivery) one item at a time - see
     // OrderService.cancelItem()/returnItem(). productQuantity itself always stays what was originally ordered.
     private int cancelledQuantity;
