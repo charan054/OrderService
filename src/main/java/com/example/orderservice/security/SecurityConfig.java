@@ -93,7 +93,7 @@ public class SecurityConfig {
                         // that moves money (see OrderController) - the session only proves who the customer is.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/reviews", "/cart/reviews/flag", "/cart/*/cancel", "/cart/*/return",
                                 "/cart/*/items/*/cancel", "/cart/*/items/*/return", "/cart/*/invoice/email",
-                                "/wishlist/self/add", "/waitlist/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask", "/feedback/submit", "/support/tickets", "/support/tickets/*/reply").hasAnyRole("CUSTOMER", "SERVICE")
+                                "/wishlist/self/add", "/waitlist/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask", "/feedback/submit", "/support/tickets", "/support/tickets/*/reply", "/giftcards/redeem").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.PUT, "/savedcart", "/cart/*/delivery", "/prefs/mine").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove", "/waitlist/self/remove", "/addresses/self/remove").hasAnyRole("CUSTOMER", "SERVICE")
 

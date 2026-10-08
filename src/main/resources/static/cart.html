@@ -894,6 +894,36 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#127873;</div>
+                <div class="title-wrap">
+                    <h2>Gift Cards</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Mint one-time codes worth a fixed amount. A customer enters one under My account to add its value to their store credit. The codes are shown <strong>once</strong>, right after minting - copy them then (only a hash is kept). Owners only (or the Service Key above).</p>
+            <div class="orders-filters">
+                <input type="number" id="gcCount" min="1" max="100" value="1" title="How many cards" />
+                <input type="number" id="gcAmount" min="1" step="1" placeholder="Value of each, ₹" />
+                <input type="number" id="gcDays" min="0" placeholder="Valid for days (blank = default, 0 = never)" />
+                <input type="text" id="gcNote" maxlength="100" placeholder="Note, e.g. who it is for (optional)" />
+            </div>
+            <div class="orders-actions">
+                <button onclick="mintGiftCards()">Mint Cards</button>
+                <select id="gcStatus">
+                    <option value="">All cards</option>
+                    <option value="ACTIVE">Active</option>
+                    <option value="REDEEMED">Redeemed</option>
+                    <option value="EXPIRED">Expired</option>
+                    <option value="VOIDED">Voided</option>
+                </select>
+                <button class="blue" onclick="loadGiftCards()">Load Cards</button>
+            </div>
+            <textarea id="gcMinted" rows="5" readonly hidden style="width:100%; font-family:monospace; margin-bottom:12px;"></textarea>
+            <div id="gcSummary" class="rev-summary"></div>
+            <div id="gcTable" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">&#128100;</div>
                 <div class="title-wrap">
                     <h2>Customer Lookup</h2>
@@ -2117,6 +2147,59 @@
       await loadOrdersTable();
       showStatus(`${result.succeeded} order(s) updated, ${result.failed} skipped.`, result.failed ? "error" : "success");
       if (result.failed) openResultTab("Bulk " + action, result);
+    }
+
+    // ---------- gift cards ----------
+    const GIFT_CARDS_URL = "http://localhost:8083/giftcards";
+
+    async function mintGiftCards() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const amount = Number(document.getElementById("gcAmount").value);
+      const count = Number(document.getElementById("gcCount").value);
+      const days = document.getElementById("gcDays").value;
+      if (!amount || !count) {
+        showStatus("Enter how many cards and the value of each.", "error");
+        return;
+      }
+      const result = await apiCall(`${GIFT_CARDS_URL}/mint`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
+        body: JSON.stringify({ count, amount, note: document.getElementById("gcNote").value, expiresInDays: days === "" ? null : Number(days) })
+      });
+      const box = document.getElementById("gcMinted");
+      box.value = result.cards.map(c => `${c.code}   ₹${c.amount}   ${c.expiresAt ? "expires " + new Date(c.expiresAt).toLocaleDateString() : "no expiry"}`).join("\n");
+      box.hidden = false;
+      box.focus();
+      box.select();
+      await loadGiftCards();
+      showStatus(`Minted ${result.cards.length} card(s) worth ₹${result.totalValue}. Copy the codes now - they are not shown again.`, "success");
+    }
+
+    async function loadGiftCards() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const status = document.getElementById("gcStatus").value;
+      const r = await apiCall(`${GIFT_CARDS_URL}?limit=200${status ? "&status=" + status : ""}`, { headers: { "X-Service-Key": serviceKey } });
+      document.getElementById("gcSummary").innerHTML =
+        `<div><b>${r.outstandingCards}</b><span>cards still redeemable</span></div><div><b>₹${Number(r.outstandingValue).toFixed(2)}</b><span>owed in goods</span></div>`;
+      document.getElementById("gcTable").innerHTML = r.cards.length
+        ? `<table class="orders-table"><thead><tr><th>Card</th><th class="num">Value</th><th>Status</th><th>Made</th><th>Note</th><th>Expires</th><th>Redeemed by</th><th></th></tr></thead><tbody>${r.cards.map(c => `
+            <tr><td>GC-····-${escapeHtml(c.last4)}</td><td class="num">₹${Number(c.amount).toFixed(2)}</td><td>${escapeHtml(c.status)}</td>
+            <td>${new Date(c.createdAt).toLocaleDateString()} by ${escapeHtml(c.createdBy || "")}</td><td>${escapeHtml(c.note || "")}</td>
+            <td>${c.expiresAt ? new Date(c.expiresAt).toLocaleDateString() : "never"}</td>
+            <td>${c.redeemedBy ? escapeHtml(String(c.redeemedBy)) + " &middot; " + new Date(c.redeemedAt).toLocaleDateString() : ""}</td>
+            <td>${c.status === "ACTIVE" ? `<button class="small-btn" onclick="voidGiftCard(${c.id})">Void</button>` : ""}</td></tr>`).join("")}</tbody></table>`
+        : "<p>No gift cards" + (status ? " with that status" : " yet") + ".</p>";
+    }
+
+    async function voidGiftCard(id) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      if (!confirm("Void this gift card? Its code stops working.")) return;
+      await apiCall(`${GIFT_CARDS_URL}/${id}/void`, { method: "PUT", headers: { "X-Service-Key": serviceKey } });
+      await loadGiftCards();
+      showStatus("Gift card voided.", "success");
     }
 
     // ---------- GST report ----------

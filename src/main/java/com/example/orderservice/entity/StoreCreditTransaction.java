@@ -28,7 +28,9 @@ public class StoreCreditTransaction {
         // A checkout that reserved credit but whose payment then failed - the credit is given straight back.
         REVERSED,
         // Admin correction or goodwill credit.
-        ADJUSTED
+        ADJUSTED,
+        // A gift card redeemed into the wallet.
+        GIFT_CARD
     }
 
     @Id
