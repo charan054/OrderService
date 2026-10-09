@@ -932,7 +932,7 @@
       } catch (e) { /* fall back to the browser copy */ }
       const note = document.getElementById("cartNote");
       note.classList.add("hidden");
-      if (!Array.isArray(saved) || !saved.length) { cartPersistReady = true; return; }
+      if (!Array.isArray(saved) || !saved.length) { cartPersistReady = true; await applyPendingSharedItems(); return; }
       const notes = [];
       try {
         const response = await authFetch(`${BASE_URL}/cart/search`);
@@ -959,6 +959,38 @@
         note.textContent = notes.join(" · ");
         note.classList.remove("hidden");
       }
+      await applyPendingSharedItems();
+    }
+
+    // wishlist.html ("Add all to my cart" on someone's shared wishlist) leaves product ids under pendingCartAdds in
+    // localStorage and sends the visitor here; once signed in, the in-stock ones not already in the cart go in with
+    // quantity 1. The key is removed first so a reload can never add them twice.
+    async function applyPendingSharedItems() {
+      let ids = [];
+      try {
+        ids = JSON.parse(localStorage.getItem("pendingCartAdds") || "[]");
+        localStorage.removeItem("pendingCartAdds");
+      } catch (e) { return; }
+      ids = Array.isArray(ids) ? ids.filter(id => Number.isInteger(id)) : [];
+      if (!ids.length) return;
+      try {
+        const response = await authFetch(`${BASE_URL}/cart/search`);
+        if (!response.ok) return;
+        const catalog = await response.json();
+        let added = 0;
+        ids.forEach(id => {
+          const product = catalog.find(p => p.productId === id);
+          if (!product || product.productStock <= 0 || cart.some(item => item.productId === id)) return;
+          cart.push({ productId: product.productId, name: product.productName, price: product.productPrice, quantity: 1 });
+          added++;
+        });
+        if (!added) return;
+        renderCart();
+        const note = document.getElementById("cartNote");
+        const message = `${added} item${added === 1 ? "" : "s"} from the shared wishlist added to your cart`;
+        note.textContent = note.classList.contains("hidden") || !note.textContent ? message : note.textContent + " · " + message;
+        note.classList.remove("hidden");
+      } catch (e) { /* the shared list is still on its own page; nothing is lost */ }
     }
 
     function logout() {
@@ -1365,7 +1397,8 @@
       const status = response.ok ? await response.json() : { shared: false };
       if (status.shared) {
         const link = `${BASE_URL}/wishlist.html?t=${status.token}`;
-        box.innerHTML = `Anyone with this link can view your wishlist: <input id="wishlistShareLink" readonly value="${escapeHtml(link)}" style="width:min(100%,420px);" onclick="this.select()" />
+        const views = Number(status.views) || 0;
+        box.innerHTML = `Anyone with this link can view your wishlist (opened ${views} time${views === 1 ? "" : "s"}): <input id="wishlistShareLink" readonly value="${escapeHtml(link)}" style="width:min(100%,420px);" onclick="this.select()" />
           <button onclick="copyWishlistLink()">Copy</button> <button onclick="stopSharingWishlist()">Stop sharing</button> <span id="wishlistShareMsg"></span>`;
       } else {
         box.innerHTML = `<button onclick="startSharingWishlist()">Share my wishlist</button> <span id="wishlistShareMsg"></span>`;

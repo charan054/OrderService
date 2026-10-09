@@ -33,6 +33,7 @@
     <h2>A shared wishlist</h2>
     <p class="sub" id="status">Loading...</p>
     <div class="grid" id="grid"></div>
+    <button class="btn" id="addAll" style="border:0; cursor:pointer;" hidden onclick="addAllToCart()">Add all to my cart</button>
     <a class="btn" href="/shop.html">Browse the store</a>
 </main>
 <script>
@@ -41,6 +42,17 @@
     }
     // Only http(s) image URLs are rendered - the value comes from the catalog, but never trust it as markup.
     function safeImage(u) { return /^https?:\/\//i.test(u || "") ? u : ""; }
+    let inStockIds = [];
+
+    // Hands the in-stock products to the storefront: it adds them to the visitor cart once they are signed in.
+    function addAllToCart() {
+      try { localStorage.setItem("pendingCartAdds", JSON.stringify(inStockIds)); } catch (e) {
+        document.getElementById("status").textContent = "Your browser blocked saving the list - open the store and add items there.";
+        return;
+      }
+      location.href = "/shop.html";
+    }
+
     async function load() {
       const status = document.getElementById("status");
       const token = new URLSearchParams(location.search).get("t") || "";
@@ -48,6 +60,8 @@
         const r = await fetch("/wishlist/shared/" + encodeURIComponent(token));
         if (!r.ok) { status.textContent = "This wishlist link is not valid any more."; return; }
         const items = await r.json();
+        inStockIds = items.filter(p => p.inStock).map(p => p.productId);
+        document.getElementById("addAll").hidden = inStockIds.length === 0;
         status.textContent = items.length ? items.length + " item(s) someone wants to share with you." : "This wishlist is empty right now.";
         document.getElementById("grid").innerHTML = items.map(p => {
           const img = safeImage(p.productImageUrl);

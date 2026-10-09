@@ -29,9 +29,9 @@ public class WishlistShareController {
     @GetMapping("/share")
     public Map<String, Object> shareStatus(@RequestParam long phno) {
         CustomerAccess.requireSelfOrService(phno);
-        return service.hasLink(phno)
-                ? Map.of("shared", true, "token", service.getOrCreateToken(phno))
-                : Map.of("shared", false);
+        return service.findLink(phno)
+                .<Map<String, Object>>map(link -> Map.of("shared", true, "token", link.getToken(), "views", link.getViewCount()))
+                .orElse(Map.of("shared", false));
     }
 
     @DeleteMapping("/share")
