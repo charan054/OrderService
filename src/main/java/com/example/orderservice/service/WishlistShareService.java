@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Lets a customer hand out a read-only link to their wishlist. Names, prices and stock are looked up live on every
@@ -62,6 +63,12 @@ public class WishlistShareService {
         return shares.findByCustomerPhno(phno).isPresent();
     }
 
+    // The owner's link, if any (for showing how often it has been opened).
+    public Optional<WishlistShare> findLink(long phno) {
+        validatePhno(phno);
+        return shares.findByCustomerPhno(phno);
+    }
+
     // Revoking kills the old link for good; sharing again mints a brand-new token.
     @Transactional
     public void revoke(long phno) {
@@ -76,6 +83,7 @@ public class WishlistShareService {
         if (share == null) {
             throw new OrderNotFoundException("This wishlist link is not valid any more");
         }
+        shares.incrementViewCount(token);
         List<SharedWishlistItem> items = new ArrayList<>();
         for (Wishlist entry : wishlist.findByCustomerPhno(share.getCustomerPhno())) {
             Product product;

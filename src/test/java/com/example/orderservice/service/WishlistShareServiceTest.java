@@ -114,6 +114,26 @@ class WishlistShareServiceTest {
         assertEquals(2, items.size());
         assertTrue(items.get(0).inStock());
         assertFalse(items.get(1).inStock());
+        verify(shares).incrementViewCount(TOKEN);
+    }
+
+    @Test
+    void anInvalidTokenIsNeverCounted() {
+        when(shares.findById(TOKEN)).thenReturn(Optional.empty());
+
+        assertThrows(OrderNotFoundException.class, () -> service.view(TOKEN));
+        assertThrows(OrderNotFoundException.class, () -> service.view("../etc"));
+        verify(shares, never()).incrementViewCount(any());
+    }
+
+    @Test
+    void findLinkReturnsTheOwnersShareWithItsViewCount() {
+        WishlistShare s = share();
+        s.setViewCount(7);
+        when(shares.findByCustomerPhno(PHNO)).thenReturn(Optional.of(s));
+
+        assertEquals(7, service.findLink(PHNO).orElseThrow().getViewCount());
+        assertTrue(service.hasLink(PHNO));
     }
 
     @Test

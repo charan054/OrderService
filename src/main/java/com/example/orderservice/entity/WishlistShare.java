@@ -17,4 +17,6 @@ public class WishlistShare {
     private String token;
     private long customerPhno;
     private Instant createdAt;
+    // How many times the public link has been opened (every load counts, including the owner's own and refreshes).
+    private long viewCount;
 }

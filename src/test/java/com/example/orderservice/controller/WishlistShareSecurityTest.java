@@ -78,6 +78,13 @@ class WishlistShareSecurityTest {
                 .andExpect(jsonPath("$[0].productName").value("Shared soap"))
                 .andExpect(content().string(not(containsString(String.valueOf(OWNER)))));
 
+        // Two opens so far (the one above and this one) - the owner sees the count, the public view never does.
+        mockMvc.perform(get("/wishlist/shared/" + token)).andExpect(status().isOk());
+        mockMvc.perform(get("/wishlist/share").param("phno", String.valueOf(OWNER)).header("X-Customer-Token", session(OWNER)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.views").value(2))
+                .andExpect(jsonPath("$.token").value(token));
+
         mockMvc.perform(delete("/wishlist/share").param("phno", String.valueOf(OWNER)).header("X-Customer-Token", session(OWNER)))
                 .andExpect(status().isOk());
         mockMvc.perform(get("/wishlist/shared/" + token)).andExpect(status().isNotFound());
