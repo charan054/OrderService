@@ -353,6 +353,16 @@
           cursor: pointer;
         }
 
+        .compare-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); margin: 4px 0; cursor: pointer; }
+        .compare-check input { width: auto; margin: 0; }
+        #compareBar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; gap: 10px; align-items: center;
+                      justify-content: center; padding: 10px 16px; background: var(--card, #fff); border-top: 1px solid var(--border, #ddd); }
+        #compareBar button { width: auto; }
+        .compare-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .compare-table th, .compare-table td { border-bottom: 1px solid var(--border, #ddd); padding: 8px; text-align: left; vertical-align: top; }
+        .compare-table img { max-width: 90px; max-height: 90px; object-fit: contain; }
+        .compare-table .best { font-weight: 700; color: #15803d; }
+        .compare-scroll { overflow-x: auto; }
         .modal-overlay {
           position: fixed;
           inset: 0;
@@ -765,6 +775,20 @@
         </div>
     </section>
 
+    <div id="compareBar" class="hidden">
+        <span id="compareCount"></span>
+        <button onclick="openCompare()">Compare</button>
+        <button class="secondary" onclick="clearCompare()">Clear</button>
+    </div>
+
+    <div id="compareModal" class="modal-overlay hidden">
+        <div class="modal-box">
+            <button class="modal-close" onclick="closeCompare()">Close</button>
+            <h2>Compare products</h2>
+            <div id="compareBody" class="compare-scroll"></div>
+        </div>
+    </div>
+
     <div id="productModal" class="modal-overlay hidden">
         <div class="modal-box">
             <button class="modal-close" onclick="closeProductModal()">Close</button>
@@ -953,6 +977,8 @@
       cart = [];
       storeCreditBalance = 0;
       walletPoints = null;
+      compareIds.clear();
+      renderCompareBar();
       document.getElementById("loginSection").classList.remove("hidden");
       document.getElementById("shopSection").classList.add("hidden");
       showLoginStep("request");
@@ -2046,6 +2072,8 @@
               ? `<div class="rating-row"><span class="stars">${starsFor(rating.averageRating)}</span> (${rating.reviewCount})</div>`
               : `<div class="rating-row">No reviews yet</div>`}
             <button class="details-link" onclick="openProductModal(${p.productId})">Reviews &amp; similar items</button>
+            <label class="compare-check"><input type="checkbox" ${compareIds.has(p.productId) ? "checked" : ""}
+                   onchange="toggleCompare(${p.productId}, this)" /> Compare</label>
             ${priceDrop ? `<div class="price-drop-badge">Price dropped ₹${priceDrop.priceDrop.toFixed(2)}</div>` : ""}
             <div class="price-row"><span class="price">₹${p.productPrice}</span></div>
             ${p.productStock <= 0
@@ -2058,6 +2086,69 @@
         </div>
       `;
       }).join("");
+      renderCompareBar();
+    }
+
+    // ---------- compare ----------
+    // Up to 3 products picked from the grid (kept in memory only), shown side by side in a table. The better value in
+    // each comparable row (lowest price, highest rating, most stock) is highlighted.
+    const COMPARE_MAX = 3;
+    const compareIds = new Set();
+
+    function toggleCompare(productId, box) {
+      if (compareIds.has(productId)) compareIds.delete(productId);
+      else if (compareIds.size >= COMPARE_MAX) {
+        box.checked = false;
+        alert(`You can compare up to ${COMPARE_MAX} products at a time.`);
+        return;
+      } else compareIds.add(productId);
+      renderCompareBar();
+    }
+
+    function renderCompareBar() {
+      const bar = document.getElementById("compareBar");
+      bar.classList.toggle("hidden", compareIds.size === 0);
+      document.getElementById("compareCount").textContent = compareIds.size + " selected (max " + COMPARE_MAX + ")";
+    }
+
+    function clearCompare() {
+      compareIds.clear();
+      renderCompareBar();
+      renderProducts();
+    }
+
+    function closeCompare() {
+      document.getElementById("compareModal").classList.add("hidden");
+    }
+
+    function openCompare() {
+      const picked = [...compareIds].map(id => products.find(p => p.productId === id)).filter(Boolean);
+      if (picked.length < 2) { alert("Pick at least 2 products to compare."); return; }
+      document.getElementById("compareBody").innerHTML = compareTableHtml(picked);
+      document.getElementById("compareModal").classList.remove("hidden");
+    }
+
+    function compareTableHtml(picked) {
+      const ratingOf = p => { const r = ratingsByProductId.get(p.productId); return r && r.reviewCount > 0 ? r.averageRating : null; };
+      const available = picked.filter(p => p.productStock > 0);
+      const prices = (available.length ? available : picked).map(p => p.productPrice);
+      const ratings = picked.map(ratingOf);
+      const stocks = picked.map(p => p.productStock);
+      const bestPrice = Math.min(...prices);
+      const bestRating = Math.max(...ratings.map(r => r === null ? -1 : r));
+      const bestStock = Math.max(...stocks);
+      const row = (label, cells) => `<tr><th>${label}</th>${cells.map(c => `<td>${c}</td>`).join("")}</tr>`;
+      return `<table class="compare-table">
+        <tr><th></th>${picked.map(p => `<td>${p.productImageUrl ? `<img src="${escapeHtml(p.productImageUrl)}" alt="" onerror="this.remove()" />` : ""}</td>`).join("")}</tr>
+        ${row("Name", picked.map(p => `<strong>${escapeHtml(p.productName)}</strong>`))}
+        ${row("Category", picked.map(p => escapeHtml(p.productCategory || "-")))}
+        ${row("Price", picked.map(p => `<span class="${p.productPrice === bestPrice && (p.productStock > 0 || !available.length) ? "best" : ""}">₹${p.productPrice}</span>`))}
+        ${row("Rating", picked.map((p, i) => ratings[i] === null ? "No reviews yet"
+            : `<span class="${ratings[i] === bestRating ? "best" : ""}">${ratings[i].toFixed(1)} (${ratingsByProductId.get(p.productId).reviewCount})</span>`))}
+        ${row("In stock", picked.map(p => p.productStock <= 0 ? "Out of stock"
+            : `<span class="${p.productStock === bestStock ? "best" : ""}">${p.productStock} available</span>`))}
+        ${row("", picked.map(p => p.productStock > 0 ? `<button onclick="addToCart(${p.productId})">Add to cart</button>` : ""))}
+      </table>`;
     }
 
     // Per-browser only (localStorage), same as the phone-number login itself - no server-side storage, capped
