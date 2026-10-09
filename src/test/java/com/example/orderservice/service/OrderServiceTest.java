@@ -2903,6 +2903,67 @@ class OrderServiceTest {
     }
 
     @Test
+    void saveAddressRejectsAPincodeThatIsNotSixDigits() {
+        for (String bad : new String[]{"1100", "0110001", "11000a", "1100011", "011000"}) {
+            ShippingAddress a = address(CUSTOMER, false);
+            a.setPincode(bad);
+            assertThrows(ProductException.class, () -> service.saveAddress(a), bad);
+        }
+        verify(shippingAddressRepository, never()).save(any());
+    }
+
+    @Test
+    void saveAddressTrimsThePincode() {
+        ShippingAddress a = address(CUSTOMER, false);
+        a.setPincode(" 411001 ");
+        when(shippingAddressRepository.save(a)).thenReturn(a);
+
+        assertEquals("411001", service.saveAddress(a).getPincode());
+    }
+
+    @Test
+    void setDefaultAddressMakesItTheOnlyDefault() {
+        ShippingAddress oldDefault = address(CUSTOMER, true);
+        oldDefault.setId(1L);
+        ShippingAddress chosen = address(CUSTOMER, false);
+        chosen.setId(2L);
+        when(shippingAddressRepository.findById(2L)).thenReturn(Optional.of(chosen));
+        when(shippingAddressRepository.findByCustomerPhnoAndIsDefaultTrue(CUSTOMER)).thenReturn(List.of(oldDefault));
+        when(shippingAddressRepository.save(any(ShippingAddress.class))).thenAnswer(i -> i.getArgument(0));
+
+        ShippingAddress result = service.setDefaultAddress(CUSTOMER, 2L);
+
+        assertTrue(result.isDefault());
+        assertFalse(oldDefault.isDefault());
+        verify(shippingAddressRepository).save(oldDefault);
+    }
+
+    @Test
+    void setDefaultAddressOnTheCurrentDefaultChangesNothing() {
+        ShippingAddress current = address(CUSTOMER, true);
+        current.setId(1L);
+        when(shippingAddressRepository.findById(1L)).thenReturn(Optional.of(current));
+        when(shippingAddressRepository.findByCustomerPhnoAndIsDefaultTrue(CUSTOMER)).thenReturn(List.of(current));
+
+        org.junit.jupiter.api.Assertions.assertSame(current, service.setDefaultAddress(CUSTOMER, 1L));
+        verify(shippingAddressRepository, never()).save(any());
+    }
+
+    @Test
+    void setDefaultAddressCannotTouchAnotherCustomersAddressOrAMissingOne() {
+        ShippingAddress others = address(9000000001L, false);
+        others.setId(7L);
+        when(shippingAddressRepository.findById(7L)).thenReturn(Optional.of(others));
+        when(shippingAddressRepository.findById(8L)).thenReturn(Optional.empty());
+
+        assertThrows(OrderNotFoundException.class, () -> service.setDefaultAddress(CUSTOMER, 7L));
+        assertThrows(OrderNotFoundException.class, () -> service.setDefaultAddress(CUSTOMER, 8L));
+        assertThrows(ProductException.class, () -> service.setDefaultAddress(555, 7L));
+        assertFalse(others.isDefault());
+        verify(shippingAddressRepository, never()).save(any());
+    }
+
+    @Test
     void saveAddressSavesANonDefaultAddressWithoutTouchingExistingDefaults() {
         ShippingAddress a = address(CUSTOMER, false);
         when(shippingAddressRepository.save(a)).thenReturn(a);
