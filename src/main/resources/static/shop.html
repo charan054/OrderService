@@ -1553,6 +1553,37 @@
         ${pager}`;
     }
 
+    // "Picked for you" strip at the top of My account. Server picks (see RecommendationService); a card opens the
+    // product details, or adds one to the cart straight away. Names come from the catalog, so they are escaped.
+    function recommendationsHtml(recommendations) {
+      if (!recommendations.length) return "";
+      const anyPersonal = recommendations.some(r => r.reason === "BOUGHT_WITH");
+      return `<h3 style="margin:16px 0 10px;">Picked for you</h3>
+        <p style="font-size:13px; color:var(--muted); margin:-4px 0 10px;">${anyPersonal ? "Based on what you have ordered before." : "Popular with our customers."}</p>
+        <div class="recommendation-strip" style="display:flex; gap:12px; overflow-x:auto; padding-bottom:6px;">
+          ${recommendations.map(r => `<div class="recommendation-card" style="min-width:150px; max-width:170px; border:1px solid var(--border); border-radius:10px; padding:10px; background:var(--surface);">
+            <div style="height:90px; display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:8px; background:var(--surface-2); color:var(--muted); font-size:12px;">
+              ${r.productImageUrl && /^https?:\/\//i.test(r.productImageUrl)
+                ? `<img src="${escapeHtml(r.productImageUrl)}" alt="${escapeHtml(r.productName)}" style="max-width:100%; max-height:100%;" onerror="this.parentElement.textContent='No image'" />`
+                : "No image"}</div>
+            <div style="font-weight:600; font-size:14px; margin-top:6px;">${escapeHtml(r.productName)}</div>
+            <div style="font-size:12px; color:var(--muted);">${escapeHtml(r.productCategory)}</div>
+            <div style="font-weight:700; margin:4px 0;">&#8377;${Number(r.productPrice).toFixed(2)}</div>
+            <button style="width:auto; padding:4px 10px;" onclick="addRecommendedToCart(${r.productId})">Add</button>
+            <button class="secondary" style="width:auto; padding:4px 10px;" onclick="openProductModal(${r.productId})">Details</button>
+          </div>`).join("")}
+        </div>`;
+    }
+
+    function addRecommendedToCart(productId) {
+      const product = products.find(p => p.productId === productId);
+      if (!product) { alert("That product is not in the current catalog view."); return; }
+      const existing = cart.find(item => item.productId === productId);
+      if (existing) existing.quantity += 1;
+      else cart.push({ productId, name: product.productName, price: product.productPrice, quantity: 1 });
+      renderCart();
+    }
+
     async function loadAccountView() {
       const view = document.getElementById("accountView");
       view.innerHTML = `<p style="color:var(--muted);">Loading your account...</p>`;
@@ -1581,6 +1612,8 @@
       const storeCredit = creditResponse.ok ? await creditResponse.json() : null;
       const prefsResponse = await authFetch(`${BASE_URL}/prefs/mine?phno=${encodeURIComponent(customerPhno)}`);
       const emailPrefs = prefsResponse.ok ? await prefsResponse.json() : null;
+      const recommendationsResponse = await authFetch(`${BASE_URL}/cart/recommendations?phno=${encodeURIComponent(customerPhno)}&limit=8`);
+      const recommendations = recommendationsResponse.ok ? await recommendationsResponse.json() : [];
 
       const profileHtml = profile ? `
         <div class="account-summary">
@@ -1637,6 +1670,7 @@
 
       view.innerHTML = `
         ${profileHtml}
+        ${recommendationsHtml(recommendations)}
         <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="downloadMyData()">Download my data</button>
           <span class="meta">Everything we store about you, as a JSON file.</span></p>
         ${storeCreditHtml(storeCredit)}${giftCardRedeemHtml()}
