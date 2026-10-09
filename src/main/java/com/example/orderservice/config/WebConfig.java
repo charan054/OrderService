@@ -22,8 +22,14 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        // A directory that does not exist yet (nothing uploaded so far) has no trailing slash in its URI, which Spring
+        // would warn about and patch up at every start - give it one up front.
+        String location = Paths.get(reviewPhotoDir).toAbsolutePath().normalize().toUri().toString();
+        if (!location.endsWith("/")) {
+            location += "/";
+        }
         registry.addResourceHandler("/review-photos/**")
-                .addResourceLocations(Paths.get(reviewPhotoDir).toAbsolutePath().normalize().toUri().toString())
+                .addResourceLocations(location)
                 .setCacheControl(CacheControl.maxAge(7, TimeUnit.DAYS).cachePublic());
     }
 }
