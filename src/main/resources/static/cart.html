@@ -567,6 +567,19 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">🩺</div>
+                <div class="title-wrap">
+                    <h2>Service Health</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Is each service of the stack answering, and is the database reachable. A service counts as up when it replies to HTTP at all. Requires the Service Key above.</p>
+            <button onclick="checkHealth()">Check Now</button>
+            <div id="healthBoard" style="margin-top:10px;"></div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">📊</div>
                 <div class="title-wrap">
                     <h2>Sales Analytics</h2>
@@ -2082,6 +2095,27 @@
       row.hidden = action === "hide";
       renderModerationTable();
       showStatus(`Review #${row.reviewId} ${row.hidden ? "hidden from" : "shown on"} the storefront.`, "success");
+    }
+
+    async function checkHealth() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const data = await apiCall(`${BASE_URL}/health`, { headers: { "X-Service-Key": serviceKey } });
+      if (!Array.isArray(data)) return;
+      document.getElementById("healthBoard").innerHTML = healthBoardHtml(data)
+        + `<div style="font-size:12px; opacity:.7; margin-top:6px;">Checked ${new Date().toLocaleTimeString()}</div>`;
+    }
+
+    function healthBoardHtml(rows) {
+      return rows.map(r => {
+        const up = r.status === "UP";
+        return `<div style="display:flex; align-items:center; gap:8px; padding:4px 0;">
+          <span style="width:10px; height:10px; border-radius:50%; background:${up ? "#16a34a" : "#dc2626"}; display:inline-block;"></span>
+          <strong style="min-width:140px;">${escapeHtml(r.name)}</strong>
+          <span>${up ? "UP" : "DOWN"}</span>
+          <span style="opacity:.7; font-size:13px;">${r.responseMillis} ms${r.detail ? " - " + escapeHtml(r.detail) : ""}</span>
+        </div>`;
+      }).join("");
     }
 
     async function getSalesAnalytics() {
