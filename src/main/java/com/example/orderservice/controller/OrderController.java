@@ -31,6 +31,8 @@ import com.example.orderservice.dto.DigestResult;
 import com.example.orderservice.dto.PendingPaymentSweepResult;
 import com.example.orderservice.dto.StockAlertRunResult;
 import com.example.orderservice.service.DigestService;
+import com.example.orderservice.service.HealthService;
+import com.example.orderservice.dto.ServiceHealth;
 import com.example.orderservice.service.LowStockAlertService;
 import com.example.orderservice.service.OrderService;
 import com.example.orderservice.service.StockAlertService;
@@ -61,6 +63,8 @@ public class OrderController {
     private DigestService digestService;
     @Autowired
     private LowStockAlertService lowStockAlertService;
+    @Autowired
+    private HealthService healthService;
     // Authorization is the buyer's OWN PhonepayService session token ("Bearer <token>") - that is who gets
     // charged. It's optional here (unlike before) only so the storefront checkout can instead send payerPhno/
     // payerPin for a PHONEPE order with no token yet; OrderService exchanges those for a token itself via
@@ -381,6 +385,11 @@ public class OrderController {
     @GetMapping("/digest/preview")
     public DigestResult previewDigest(){
         return digestService.preview();
+    }
+    // Admin-only: is every service of the stack answering, and is the database reachable.
+    @GetMapping("/health")
+    public List<ServiceHealth> health(){
+        return healthService.check();
     }
     // Admin-only: run the low-stock alert now (emails only products that newly dropped below their threshold).
     @PostMapping("/lowstock/alert")
