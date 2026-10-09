@@ -418,6 +418,7 @@
         .subscribe-box select, .subscribe-box input[type=number] { width: auto; display: inline-block; margin: 0 6px 6px 0; }
         .subscription-row { padding: 10px 0; border-bottom: 1px solid var(--border, #eee); }
         .low-stock-badge { color: var(--err-fg, #b42318); background: var(--err-bg, #fee4e2); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
+        .new-badge { color: #fff; background: var(--accent); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 6px; white-space: nowrap; vertical-align: middle; }
         .verified-badge { color: var(--ok-fg); background: var(--ok-bg); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
         .review-item .review-comment { font-size: 14px; }
 
@@ -692,6 +693,7 @@
                 </div>
                 <div class="grid-tabs">
                     <button class="active" id="tabAll" onclick="showTab('all')">All products</button>
+                    <button id="tabNew" onclick="showTab('new')">New</button>
                     <button id="tabWishlist" onclick="showTab('wishlist')">Wishlist (<span id="wishlistCount">0</span>)</button>
                     <button id="tabRecent" onclick="showTab('recent')">Recently viewed</button>
                     <button id="tabAccount" onclick="showTab('account')">My account</button>
@@ -1308,6 +1310,14 @@
       return p.productStock > 0 && p.productStock <= Math.max(5, p.lowStockThreshold || 0);
     }
 
+    // A product counts as new for this many days after it was first added (createdAt is null for older products).
+    const NEW_PRODUCT_DAYS = 14;
+
+    function isNewProduct(p) {
+      const added = p.createdAt ? Date.parse(p.createdAt) : NaN;
+      return !isNaN(added) && Date.now() - added < NEW_PRODUCT_DAYS * 24 * 60 * 60 * 1000;
+    }
+
     function stockLabelHtml(p) {
       if (p.productStock <= 0) return "out of stock";
       return isLowStock(p)
@@ -1383,6 +1393,7 @@
     function showTab(tab) {
       activeTab = tab;
       document.getElementById("tabAll").classList.toggle("active", tab === "all");
+      document.getElementById("tabNew").classList.toggle("active", tab === "new");
       document.getElementById("tabWishlist").classList.toggle("active", tab === "wishlist");
       document.getElementById("tabAccount").classList.toggle("active", tab === "account");
       document.getElementById("tabNotifications").classList.toggle("active", tab === "notifications");
@@ -2104,6 +2115,8 @@
       const grid = document.getElementById("productGrid");
       const visibleProducts = activeTab === "wishlist"
         ? products.filter(p => wishlistProductIds.has(p.productId))
+        : activeTab === "new"
+        ? products.filter(isNewProduct).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
         : activeTab === "recent"
         ? recentlyViewedIds().map(id => products.find(p => p.productId === id)).filter(Boolean)
         : products;
@@ -2128,6 +2141,8 @@
           ? `<p style="color:var(--muted);">No products match your filters.</p>`
           : activeTab === "wishlist"
           ? `<p style="color:var(--muted);">Nothing wishlisted yet - tap the heart on a product to save it here.</p>`
+          : activeTab === "new"
+          ? `<p style="color:var(--muted);">Nothing new in the last ${NEW_PRODUCT_DAYS} days - check back soon.</p>`
           : activeTab === "recent"
           ? `<p style="color:var(--muted);">No products viewed yet - open a product's details to see it here.</p>`
           : `<p style="color:var(--muted);">No products available right now.</p>`;
@@ -2157,7 +2172,7 @@
               : "No image"}
           </div>
           <div class="product-body">
-            <h3>${escapeHtml(cardTitle(item))}</h3>
+            <h3>${escapeHtml(cardTitle(item))}${isNewProduct(p) ? `<span class="new-badge">New</span>` : ""}</h3>
             ${variantPickerHtml(item)}
             <div class="meta">${escapeHtml(p.productCategory)} &middot; ${stockLabelHtml(p)}</div>
             ${rating && rating.reviewCount > 0

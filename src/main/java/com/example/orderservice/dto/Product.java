@@ -30,4 +30,7 @@ public class Product {
     // the cart or checkout depends on these; the storefront only uses them to show the options as one card.
     private String variantGroup;
     private String variantLabel;
+    // When ProductService first saw the product (UTC); null for products that predate the field. The storefront
+    // uses it for the New shelf and badge.
+    private java.time.Instant createdAt;
 }
