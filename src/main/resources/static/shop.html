@@ -697,6 +697,7 @@
                     <button id="tabAccount" onclick="showTab('account')">My account</button>
                     <button id="tabNotifications" onclick="showTab('notifications')">My notifications</button>
                 </div>
+                <div id="wishlistShare" class="hidden" style="margin:0 0 12px; font-size:14px;"></div>
                 <div id="productGrid" class="product-grid"></div>
                 <div id="productPager" class="pager hidden"></div>
                 <div id="accountView" class="hidden"></div>
@@ -1346,6 +1347,37 @@
       renderProducts();
     }
 
+    async function loadWishlistShare() {
+      const box = document.getElementById("wishlistShare");
+      const response = await authFetch(`${BASE_URL}/wishlist/share?phno=${encodeURIComponent(customerPhno)}`);
+      const status = response.ok ? await response.json() : { shared: false };
+      if (status.shared) {
+        const link = `${BASE_URL}/wishlist.html?t=${status.token}`;
+        box.innerHTML = `Anyone with this link can view your wishlist: <input id="wishlistShareLink" readonly value="${escapeHtml(link)}" style="width:min(100%,420px);" onclick="this.select()" />
+          <button onclick="copyWishlistLink()">Copy</button> <button onclick="stopSharingWishlist()">Stop sharing</button> <span id="wishlistShareMsg"></span>`;
+      } else {
+        box.innerHTML = `<button onclick="startSharingWishlist()">Share my wishlist</button> <span id="wishlistShareMsg"></span>`;
+      }
+    }
+
+    async function startSharingWishlist() {
+      await authFetch(`${BASE_URL}/wishlist/share?phno=${encodeURIComponent(customerPhno)}`, { method: "POST" });
+      loadWishlistShare();
+    }
+
+    async function stopSharingWishlist() {
+      await authFetch(`${BASE_URL}/wishlist/share?phno=${encodeURIComponent(customerPhno)}`, { method: "DELETE" });
+      loadWishlistShare();
+    }
+
+    function copyWishlistLink() {
+      const input = document.getElementById("wishlistShareLink");
+      input.select();
+      const done = () => { document.getElementById("wishlistShareMsg").textContent = "Copied"; };
+      if (navigator.clipboard) navigator.clipboard.writeText(input.value).then(done, () => document.execCommand("copy") && done());
+      else if (document.execCommand("copy")) done();
+    }
+
     function showTab(tab) {
       activeTab = tab;
       document.getElementById("tabAll").classList.toggle("active", tab === "all");
@@ -1356,6 +1388,8 @@
       document.getElementById("productGrid").classList.toggle("hidden", tab === "account" || tab === "notifications");
       if (tab === "account" || tab === "notifications") document.getElementById("productPager").classList.add("hidden");
       currentPage = 1;
+      document.getElementById("wishlistShare").classList.toggle("hidden", tab !== "wishlist");
+      if (tab === "wishlist") loadWishlistShare();
       document.getElementById("accountView").classList.toggle("hidden", tab !== "account");
       document.getElementById("notificationsView").classList.toggle("hidden", tab !== "notifications");
       document.querySelector(".search-row").classList.toggle("hidden", tab === "account" || tab === "notifications");
