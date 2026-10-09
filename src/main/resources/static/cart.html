@@ -2143,28 +2143,65 @@
       return String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
     }
 
-    async function loadOrdersTable() {
+    // Table state: which page is showing and how it is sorted (the server does both).
+    let ordersPage = 0;
+    let ordersSort = "orderId";
+    let ordersDir = "desc";
+    const ORDERS_PAGE_SIZE = 25;
+
+    function sortOrdersBy(column) {
+      if (ordersSort === column) {
+        ordersDir = ordersDir === "desc" ? "asc" : "desc";
+      } else {
+        ordersSort = column;
+        ordersDir = column === "customerName" || column === "status" ? "asc" : "desc";
+      }
+      ordersPage = 0;
+      loadOrdersTable(true);
+    }
+
+    function goToOrdersPage(page) {
+      ordersPage = page;
+      loadOrdersTable(true);
+    }
+
+    // keepPage is true when paging/sorting; a fresh "Load Orders" click (filters may have changed) goes back to page 1.
+    async function loadOrdersTable(keepPage) {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
+      if (keepPage !== true) ordersPage = 0;
 
-      const rows = await apiCall(`${BASE_URL}/orders/search?${ordersQuery()}`, {
+      const query = `${ordersQuery()}&sort=${ordersSort}&dir=${ordersDir}&page=${ordersPage}&size=${ORDERS_PAGE_SIZE}`;
+      const result = await apiCall(`${BASE_URL}/orders/page?${query}`, {
         headers: { "X-Service-Key": serviceKey }
       });
+      // A shrinking result (an order cancelled elsewhere, a narrower filter) can leave the page past the end.
+      if (result.rows.length === 0 && result.totalElements > 0 && ordersPage > 0) {
+        ordersPage = result.totalPages - 1;
+        return loadOrdersTable(true);
+      }
+      const rows = result.rows;
       const wrap = document.getElementById("ordersTableWrap");
       if (!rows.length) {
         wrap.innerHTML = `<p>No orders match these filters.</p>`;
       } else {
-        const total = rows.reduce((sum, r) => sum + r.totalPrice, 0);
+        const arrow = col => ordersSort === col ? (ordersDir === "asc" ? " &#9650;" : " &#9660;") : "";
+        const th = (col, label) => `<th style="cursor:pointer" onclick="sortOrdersBy('${col}')" title="Sort by ${label}">${label}${arrow(col)}</th>`;
+        const pageTotal = rows.reduce((sum, r) => sum + r.totalPrice, 0);
+        const pager = result.totalPages > 1 ? `<div style="margin-top:10px;display:flex;gap:10px;align-items:center;">
+            <button ${result.page === 0 ? "disabled" : ""} onclick="goToOrdersPage(${result.page - 1})">Previous</button>
+            <span>Page ${result.page + 1} of ${result.totalPages}</span>
+            <button ${result.page >= result.totalPages - 1 ? "disabled" : ""} onclick="goToOrdersPage(${result.page + 1})">Next</button></div>` : "";
         wrap.innerHTML = `<table class="orders-table"><thead><tr>
-            <th><input type="checkbox" onclick="toggleAllOrderChecks(this.checked)" title="Select all" /></th><th>Order</th><th>Placed</th><th>Customer</th><th>Phone</th><th>Status</th><th>Payment</th><th>Paid</th><th>Items</th><th>Coupon</th><th>Note</th><th>Total</th>
+            <th><input type="checkbox" onclick="toggleAllOrderChecks(this.checked)" title="Select all" /></th>${th("orderId", "Order")}${th("placedAt", "Placed")}${th("customerName", "Customer")}<th>Phone</th>${th("status", "Status")}<th>Payment</th><th>Paid</th><th>Items</th><th>Coupon</th><th>Note</th>${th("totalPrice", "Total")}
           </tr></thead><tbody>${rows.map(r => `<tr>
             <td><input type="checkbox" class="orderCheck" value="${r.orderId}" /></td><td>#${r.orderId}</td><td>${r.placedAt ? new Date(r.placedAt).toLocaleString() : "-"}</td>
             <td>${escapeCell(r.customerName)}</td><td>${r.customerPhno}</td><td>${escapeCell(r.status)}</td>
             <td>${escapeCell(r.paymentMethod)}</td><td>${r.paid ? "Yes" : "No"}</td><td>${escapeCell(r.items)}</td>
             <td>${escapeCell(r.couponCode || "")}</td><td>${escapeCell(r.deliveryNote || "")}</td><td class="num">₹${r.totalPrice.toFixed(2)}</td></tr>`).join("")}
-          </tbody><tfoot><tr><td colspan="11"><strong>${rows.length} order(s)</strong></td><td class="num"><strong>₹${total.toFixed(2)}</strong></td></tr></tfoot></table>`;
+          </tbody><tfoot><tr><td colspan="11"><strong>${result.totalElements} order(s) match &middot; showing ${rows.length} &middot; all matching: ₹${result.matchingTotal.toFixed(2)}</strong></td><td class="num"><strong>₹${pageTotal.toFixed(2)}</strong></td></tr></tfoot></table>${pager}`;
       }
-      showStatus(`${rows.length} order(s) loaded.`, "success");
+      showStatus(`${result.totalElements} order(s) match; showing ${rows.length}.`, "success");
     }
 
     function toggleAllOrderChecks(checked) {
@@ -2184,7 +2221,7 @@
         headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
         body: JSON.stringify(ids)
       });
-      await loadOrdersTable();
+      await loadOrdersTable(true);
       showStatus(`${result.succeeded} order(s) updated, ${result.failed} skipped.`, result.failed ? "error" : "success");
       if (result.failed) openResultTab("Bulk " + action, result);
     }
