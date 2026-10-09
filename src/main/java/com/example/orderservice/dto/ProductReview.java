@@ -8,10 +8,16 @@ import java.time.LocalDateTime;
 // admin concern, not something a customer browsing reviews needs to see.
 // productId is the option (variant) the review was written for: ProductService lists the reviews of a whole variant
 // group under any of its options, so the review can belong to a sibling of the product that was asked for.
+// photoUrl is the optional photo the reviewer attached (null when none).
 public record ProductReview(long reviewId, String reviewerName, long reviewerPhno, int rating, String comment,
-                             LocalDateTime createdAt, Long productId) {
+                             LocalDateTime createdAt, Long productId, String photoUrl) {
+    public ProductReview(long reviewId, String reviewerName, long reviewerPhno, int rating, String comment,
+                         LocalDateTime createdAt, Long productId) {
+        this(reviewId, reviewerName, reviewerPhno, rating, comment, createdAt, productId, null);
+    }
+
     public ProductReview(long reviewId, String reviewerName, long reviewerPhno, int rating, String comment,
                          LocalDateTime createdAt) {
-        this(reviewId, reviewerName, reviewerPhno, rating, comment, createdAt, null);
+        this(reviewId, reviewerName, reviewerPhno, rating, comment, createdAt, null, null);
     }
 }

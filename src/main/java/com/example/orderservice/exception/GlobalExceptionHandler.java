@@ -12,6 +12,12 @@ public class GlobalExceptionHandler {
         return ResponseEntity.badRequest().body(e.getMessage());
     }
 
+    // A multipart upload over spring.servlet.multipart.max-file-size (the review photo limit).
+    @ExceptionHandler(org.springframework.web.multipart.MaxUploadSizeExceededException.class)
+    public ResponseEntity<String> handleUploadTooLarge(org.springframework.web.multipart.MaxUploadSizeExceededException e) {
+        return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body("The photo is too big - the limit is 2 MB");
+    }
+
     @ExceptionHandler(PaymentException.class)
     public ResponseEntity<String> handlePaymentException(PaymentException e) {
         return ResponseEntity.status(e.getStatus()).body(e.getMessage());
