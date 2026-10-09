@@ -18,6 +18,7 @@ import com.example.orderservice.dto.Invoice;
 import com.example.orderservice.dto.InvoiceEmailResult;
 import com.example.orderservice.service.InvoiceEmailService;
 import com.example.orderservice.service.InvoicePdfService;
+import com.example.orderservice.dto.LowStockAlertResult;
 import com.example.orderservice.dto.LowStockItem;
 import com.example.orderservice.dto.ModerationReview;
 import com.example.orderservice.dto.SalesAnalytics;
@@ -30,6 +31,7 @@ import com.example.orderservice.dto.DigestResult;
 import com.example.orderservice.dto.PendingPaymentSweepResult;
 import com.example.orderservice.dto.StockAlertRunResult;
 import com.example.orderservice.service.DigestService;
+import com.example.orderservice.service.LowStockAlertService;
 import com.example.orderservice.service.OrderService;
 import com.example.orderservice.service.StockAlertService;
 import jakarta.transaction.Transactional;
@@ -57,6 +59,8 @@ public class OrderController {
     private InvoicePdfService invoicePdfService;
     @Autowired
     private DigestService digestService;
+    @Autowired
+    private LowStockAlertService lowStockAlertService;
     // Authorization is the buyer's OWN PhonepayService session token ("Bearer <token>") - that is who gets
     // charged. It's optional here (unlike before) only so the storefront checkout can instead send payerPhno/
     // payerPin for a PHONEPE order with no token yet; OrderService exchanges those for a token itself via
@@ -377,6 +381,11 @@ public class OrderController {
     @GetMapping("/digest/preview")
     public DigestResult previewDigest(){
         return digestService.preview();
+    }
+    // Admin-only: run the low-stock alert now (emails only products that newly dropped below their threshold).
+    @PostMapping("/lowstock/alert")
+    public LowStockAlertResult runLowStockAlert(){
+        return lowStockAlertService.run();
     }
     // Admin-only: email the digest now (needs ADMIN_EMAIL / digest.to) instead of waiting for the daily run.
     @PostMapping("/digest/send")
