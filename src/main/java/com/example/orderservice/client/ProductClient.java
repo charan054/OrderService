@@ -59,6 +59,11 @@ public interface ProductClient {
     ProductReviewsResult getReviews(@RequestHeader("X-Service-Key") String serviceKey, @PathVariable long productId,
                                     @RequestParam int page, @RequestParam int size);
 
+    // Every photo link a review (hidden ones too) still uses - X-Service-Key only. ReviewPhotoTidyService deletes
+    // the uploaded files that nothing in this list names.
+    @GetMapping("/product/reviews/photos")
+    List<String> getReviewPhotoUrls(@RequestHeader("X-Service-Key") String serviceKey);
+
     // Public on ProductService's side (matches "/product/*/reviews", POST open).
 
     @PostMapping("/product/{productId}/reviews")

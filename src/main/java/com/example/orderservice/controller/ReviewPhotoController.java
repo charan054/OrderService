@@ -1,8 +1,10 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.dto.PhotoTidyResult;
 import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.security.CustomerAccess;
 import com.example.orderservice.service.ReviewPhotoService;
+import com.example.orderservice.service.ReviewPhotoTidyService;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -20,9 +22,11 @@ import java.util.Map;
 @RequestMapping("/cart/reviews/photo")
 public class ReviewPhotoController {
     private final ReviewPhotoService photos;
+    private final ReviewPhotoTidyService tidyService;
 
-    public ReviewPhotoController(ReviewPhotoService photos) {
+    public ReviewPhotoController(ReviewPhotoService photos, ReviewPhotoTidyService tidyService) {
         this.photos = photos;
+        this.tidyService = tidyService;
     }
 
     @PostMapping
@@ -44,5 +48,12 @@ public class ReviewPhotoController {
         // Absolute, built from how this request reached us: shop.html renders it straight into an img src.
         String url = ServletUriComponentsBuilder.fromCurrentContextPath().path("/review-photos/").path(name).toUriString();
         return Map.of("url", url);
+    }
+
+    // Admin-only (service key; not one of the customer paths in SecurityConfig, so it falls under the default rule).
+    // dryRun defaults to true: you must send dryRun=false to actually delete files.
+    @PostMapping("/tidy")
+    public PhotoTidyResult tidy(@RequestParam(defaultValue = "true") boolean dryRun) {
+        return tidyService.tidy(dryRun);
     }
 }

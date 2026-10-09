@@ -1,5 +1,6 @@
 package com.example.orderservice.service;
 
+import com.example.orderservice.dto.PhotoTidyResult;
 import com.example.orderservice.exception.ProductException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,10 +16,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
+import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -281,5 +285,129 @@ class ReviewPhotoServiceTest {
                 "http://localhost:8083/review-photos/" + name + "/../../x"}) {
             assertThrows(ProductException.class, () -> service.requireOwnUpload(bad), bad);
         }
+    }
+
+    // ---------- tidy ----------
+
+    private Path plant(String name, Duration age) throws IOException {
+        Path file = photoDir().resolve(name);
+        Files.write(file, new byte[]{1, 2, 3, 4});
+        Files.setLastModifiedTime(file, FileTime.from(clock.instant().minus(age)));
+        return file;
+    }
+
+    private static String newName(String ext) {
+        return UUID.randomUUID() + ext;
+    }
+
+    private static final Duration HOUR = Duration.ofHours(1);
+
+    @Test
+    void tidyDeletesOnlyOldPhotosNothingRefersToAndLeavesTheRestAlone() throws IOException {
+        String used = newName(".jpg"), orphan = newName(".png"), fresh = newName(".jpg");
+        Path usedFile = plant(used, Duration.ofDays(3));
+        Path orphanFile = plant(orphan, Duration.ofDays(3));
+        Path freshFile = plant(fresh, Duration.ofMinutes(30));
+        Path foreign = plant("notes.txt", Duration.ofDays(30));
+
+        PhotoTidyResult result = service.tidy(() -> List.of("https://shop.example/review-photos/" + used), false, HOUR);
+
+        assertEquals(3, result.total());
+        assertEquals(1, result.inUse());
+        assertEquals(1, result.tooRecent());
+        assertEquals(1, result.orphaned());
+        assertEquals(4, result.orphanedBytes());
+        assertEquals(List.of(orphan), result.files());
+        assertFalse(Files.exists(orphanFile));
+        assertTrue(Files.exists(usedFile));
+        assertTrue(Files.exists(freshFile));
+        assertTrue(Files.exists(foreign));
+    }
+
+    @Test
+    void aDryRunReportsTheSameThingButDeletesNothing() throws IOException {
+        Path orphanFile = plant(newName(".jpg"), Duration.ofDays(3));
+
+        PhotoTidyResult result = service.tidy(List::of, true, HOUR);
+
+        assertTrue(result.dryRun());
+        assertEquals(1, result.orphaned());
+        assertTrue(Files.exists(orphanFile));
+    }
+
+    @Test
+    void aPhotoJustOverTheAgeLimitGoesAndOneJustUnderStays() throws IOException {
+        Path old = plant(newName(".jpg"), HOUR.plusSeconds(1));
+        Path young = plant(newName(".jpg"), HOUR.minusSeconds(1));
+
+        service.tidy(List::of, false, HOUR);
+
+        assertFalse(Files.exists(old));
+        assertTrue(Files.exists(young));
+    }
+
+    @Test
+    void aPhotoWithATimestampInTheFutureIsTreatedAsTooRecent() throws IOException {
+        Path odd = plant(newName(".jpg"), Duration.ofDays(-2));
+
+        PhotoTidyResult result = service.tidy(List::of, false, HOUR);
+
+        assertEquals(1, result.tooRecent());
+        assertTrue(Files.exists(odd));
+    }
+
+    @Test
+    void aReferenceCountsWhateverHostQueryOrCaseItCarries() throws IOException {
+        String a = newName(".jpg"), b = newName(".png");
+        Path fileA = plant(a, Duration.ofDays(3));
+        Path fileB = plant(b, Duration.ofDays(3));
+
+        PhotoTidyResult result = service.tidy(() -> List.of(
+                "http://localhost:8083/review-photos/" + a + "?v=2#top",
+                "  https://other.example/x/review-photos/" + b.toUpperCase() + "  "), false, HOUR);
+
+        assertEquals(2, result.inUse());
+        assertEquals(0, result.orphaned());
+        assertTrue(Files.exists(fileA));
+        assertTrue(Files.exists(fileB));
+    }
+
+    @Test
+    void ifTheListOfPhotosInUseCannotBeGotNothingIsDeleted() throws IOException {
+        Path orphanFile = plant(newName(".jpg"), Duration.ofDays(3));
+
+        assertThrows(IllegalStateException.class, () -> service.tidy(() -> {
+            throw new IllegalStateException("ProductService is down");
+        }, false, HOUR));
+        assertThrows(IllegalStateException.class, () -> service.tidy(() -> null, false, HOUR));
+
+        assertTrue(Files.exists(orphanFile));
+    }
+
+    @Test
+    void aPhotoUploadedWhileTheListIsBeingFetchedIsNeverACandidate() throws IOException {
+        // The folder is listed first, so a file that appears during the fetch is not even looked at.
+        Path[] late = new Path[1];
+        PhotoTidyResult result = service.tidy(() -> {
+            try {
+                late[0] = plant(newName(".jpg"), Duration.ofDays(3));
+            } catch (IOException e) {
+                throw new IllegalStateException(e);
+            }
+            return List.of();
+        }, false, HOUR);
+
+        assertEquals(0, result.total());
+        assertTrue(Files.exists(late[0]));
+    }
+
+    @Test
+    void tidyOnAFolderThatDoesNotExistYetIsAnEmptyResult() throws IOException {
+        ReviewPhotoService empty = new ReviewPhotoService(dir.resolve("never-created").toString(), clock);
+
+        PhotoTidyResult result = empty.tidy(List::of, false, HOUR);
+
+        assertEquals(0, result.total());
+        assertEquals(0, result.orphaned());
     }
 }

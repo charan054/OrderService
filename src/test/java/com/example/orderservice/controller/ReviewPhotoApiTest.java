@@ -171,4 +171,29 @@ class ReviewPhotoApiTest {
                         .header("X-Service-Key", VALID_KEY))
                 .andExpect(status().isOk());
     }
+
+    @Test
+    void tidyingPhotosIsForTheServiceKeyOnly() throws Exception {
+        mockMvc.perform(post("/cart/reviews/photo/tidy")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/cart/reviews/photo/tidy").header("X-Customer-Token", session(OWNER)))
+                .andExpect(status().isForbidden());
+        verify(productClient, never()).getReviewPhotoUrls(any());
+    }
+
+    @Test
+    void tidyDefaultsToADryRunAndNeverTouchesAFreshUpload() throws Exception {
+        String url = upload(OWNER);
+        when(productClient.getReviewPhotoUrls(VALID_KEY)).thenReturn(java.util.List.of());
+
+        mockMvc.perform(post("/cart/reviews/photo/tidy").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dryRun").value(true));
+        // Even a real run keeps it: nobody has attached it to a review yet, but it is minutes old.
+        mockMvc.perform(post("/cart/reviews/photo/tidy").param("dryRun", "false").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.dryRun").value(false))
+                .andExpect(jsonPath("$.orphaned").value(0));
+
+        mockMvc.perform(get(URI.create(url).getPath())).andExpect(status().isOk());
+    }
 }
