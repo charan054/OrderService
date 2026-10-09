@@ -155,4 +155,47 @@ class DigestServiceTest {
         assertFalse(body.contains("Item 16 - 1 left"));
         assertTrue(body.contains("... and 5 more"));
     }
+
+    private com.example.orderservice.dto.RecentStockChange change(String name, String type, int delta, int after, String reason, String actor) {
+        return new com.example.orderservice.dto.RecentStockChange(1, name, type, delta, after, reason, null, actor, Instant.parse("2026-10-07T03:00:00Z"));
+    }
+
+    @Test
+    void handMadeStockChangesAreListedAndBigOnesFlagged() {
+        when(orderService.getRecentStockChanges(24)).thenReturn(List.of(
+                change("Rice", "CORRECTION", -3, 7, "damaged", "asha"),
+                change("Soap", "RESTOCK", 50, 80, "supplier delivery", "ravi")));
+
+        String body = service("owner@example.com").preview().body();
+
+        assertTrue(body.contains("Stock changes made by hand (last 24 hours)"));
+        assertTrue(body.contains("     Correction Rice -3 (now 7) - damaged [asha]"));
+        assertTrue(body.contains("BIG  Restock    Soap +50 (now 80) - supplier delivery [ravi]"));
+    }
+
+    @Test
+    void noHandMadeStockChangesSaysSo() {
+        when(orderService.getRecentStockChanges(24)).thenReturn(List.of());
+
+        assertTrue(service("owner@example.com").preview().body().contains("No corrections or restock receipts."));
+    }
+
+    @Test
+    void aLongStockChangeListIsCappedAndAFailureCostsOnlyThatSection() {
+        List<com.example.orderservice.dto.RecentStockChange> many = new ArrayList<>();
+        for (int i = 1; i <= 18; i++) {
+            many.add(change("Item " + i, "CORRECTION", 1, 5, null, null));
+        }
+        when(orderService.getRecentStockChanges(24)).thenReturn(many);
+
+        String body = service("owner@example.com").preview().body();
+        assertTrue(body.contains("Item 15 +1 (now 5)"));
+        assertFalse(body.contains("Item 16 +1"));
+        assertTrue(body.contains("... and 3 more"));
+
+        when(orderService.getRecentStockChanges(24)).thenThrow(new IllegalStateException("ProductService down"));
+        String degraded = service("owner@example.com").preview().body();
+        assertTrue(degraded.contains("Yesterday:   3 order(s)"));
+        assertTrue(degraded.contains("(not available right now)"));
+    }
 }

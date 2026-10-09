@@ -33,6 +33,7 @@ import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.dto.TopSellingProduct;
 import com.example.orderservice.dto.UpiCollectRequestResponse;
 import com.example.orderservice.dto.WaitlistStatus;
+import com.example.orderservice.dto.RecentStockChange;
 import com.example.orderservice.dto.WishlistPriceAlert;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
@@ -2472,6 +2473,11 @@ public class OrderService {
     // Admin-only restock report: every catalog product whose stock is at or below its own lowStockThreshold, with
     // OUT (stock 0) listed before LOW, lowest stock first, plus how many customers are waiting on it. Computed live
     // from the catalog on each call (no scheduler/push provider exists here).
+    // Hand-made stock changes (corrections, restock receipts) of the last N hours, from ProductService's ledger.
+    public List<RecentStockChange> getRecentStockChanges(int hours) {
+        return productClient.getRecentStockChanges(serviceApiKey, hours);
+    }
+
     public List<LowStockItem> getLowStockReport() {
         List<LowStockItem> items = new ArrayList<>();
         for (Product p : productClient.findAll()) {

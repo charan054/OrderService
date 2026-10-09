@@ -8,6 +8,7 @@ import com.example.orderservice.dto.ModerationReviewsResult;
 import com.example.orderservice.dto.ProductReview;
 import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.ProductSearchResult;
+import com.example.orderservice.dto.RecentStockChange;
 import com.example.orderservice.dto.ReviewSubmission;
 import com.example.orderservice.entity.OrderItem;
 import org.springframework.cloud.openfeign.FeignClient;
@@ -52,6 +53,8 @@ public interface ProductClient {
     // ProductService's public listing omits reviewerPhno (it doubles as the ownership check for update/delete),
     // so the Verified-purchase badge reads from the X-Service-Key-only internal listing instead. Used by
     // OrderService's own /cart/reviews proxy, since shop.html only ever calls its own origin.
+    @GetMapping("/product/stock-movements/recent")
+    List<RecentStockChange> getRecentStockChanges(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam int hours);
     @GetMapping("/product/internal/{productId}/reviews")
     ProductReviewsResult getReviews(@RequestHeader("X-Service-Key") String serviceKey, @PathVariable long productId,
                                     @RequestParam int page, @RequestParam int size);
