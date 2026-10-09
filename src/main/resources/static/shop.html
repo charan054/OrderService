@@ -842,6 +842,9 @@
                     <option value="1">&#9733;&#9734;&#9734;&#9734;&#9734; - Terrible</option>
                 </select>
                 <input type="text" id="reviewComment" placeholder="Your comment" />
+                <label style="display:block; font-size:13px; margin:2px 0 8px;">Add a photo (optional, JPEG or PNG, up to 2 MB)
+                    <input type="file" id="reviewPhoto" accept="image/jpeg,image/png" style="margin-top:4px;" />
+                </label>
                 <div id="reviewFormError" class="error-text hidden"></div>
                 <button onclick="submitReview()">Submit review</button>
             </div>
@@ -2728,6 +2731,31 @@
       return option && option.variantLabel ? ` <span class="meta">(${escapeHtml(option.variantLabel)})</span>` : "";
     }
 
+    // A review photo is only ever one we served (an http(s) URL); it opens full size in a new tab.
+    function reviewPhotoHtml(photoUrl) {
+      if (!photoUrl || !/^https?:\/\//i.test(photoUrl)) return "";
+      return `<a href="${escapeHtml(photoUrl)}" target="_blank" rel="noopener noreferrer" title="Open the photo">
+        <img class="review-photo" src="${escapeHtml(photoUrl)}" alt="Photo from this review" loading="lazy"
+             style="max-width:160px; max-height:160px; border-radius:8px; margin:6px 0; display:block;" onerror="this.parentElement.style.display='none'" /></a>`;
+    }
+
+    // Uploads the chosen picture (if any) and returns its URL; null when nothing was chosen. Throws a message on failure.
+    async function uploadReviewPhoto() {
+      const input = document.getElementById("reviewPhoto");
+      const file = input && input.files && input.files[0];
+      if (!file) return null;
+      if (!/^image\/(jpeg|png)$/.test(file.type)) throw new Error("Please choose a JPEG or PNG photo.");
+      if (file.size > 2 * 1024 * 1024) throw new Error("That photo is over 2 MB - please choose a smaller one.");
+      const form = new FormData();
+      form.append("file", file);
+      const response = await authFetch(`${BASE_URL}/cart/reviews/photo?phno=${encodeURIComponent(customerPhno)}`, { method: "POST", body: form });
+      if (!response.ok) {
+        const text = (await response.text()).trim();
+        throw new Error(text && text.length < 200 ? text : "The photo could not be uploaded.");
+      }
+      return (await response.json()).url;
+    }
+
     async function loadModalReviews(productId) {
       const box = document.getElementById("modalReviews");
       const response = await authFetch(`${BASE_URL}/cart/reviews?productId=${productId}`);
@@ -2737,6 +2765,7 @@
           <div class="review-item">
             <div class="review-meta">${escapeHtml(r.reviewerName)} &middot; <span class="stars">${starsFor(r.rating)}</span>${reviewOptionLabel(r, productId)}${r.verifiedPurchase ? ' <span class="verified-badge" title="This reviewer bought this product from Charan Mart">&#10003; Verified purchase</span>' : ""}</div>
             <div class="review-comment">${escapeHtml(r.comment || "")}</div>
+            ${reviewPhotoHtml(r.photoUrl)}
             <button class="details-link" style="font-size:12px;" onclick="reportReview(${r.reviewId})">Report this review</button>
           </div>
         `).join("")
@@ -2792,10 +2821,19 @@
         return;
       }
 
+      let photoUrl = null;
+      try {
+        photoUrl = await uploadReviewPhoto();
+      } catch (e) {
+        errorBox.textContent = e.message;
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
       const response = await authFetch(`${BASE_URL}/cart/reviews?productId=${modalProductId}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reviewerName, reviewerPhno: Number(reviewerPhno), rating, comment })
+        body: JSON.stringify({ reviewerName, reviewerPhno: Number(reviewerPhno), rating, comment, photoUrl })
       });
 
       if (!response.ok) {
@@ -2806,6 +2844,7 @@
 
       document.getElementById("reviewerName").value = "";
       document.getElementById("reviewComment").value = "";
+      document.getElementById("reviewPhoto").value = "";
       await loadModalReviews(modalProductId);
       await loadRatings();
       const rating2 = ratingsByProductId.get(modalProductId);

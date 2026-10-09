@@ -122,6 +122,8 @@ public class OrderService {
     @Autowired
     private ShippingAddressRepository shippingAddressRepository;
     @Autowired
+    private ReviewPhotoService reviewPhotoService;
+    @Autowired
     private ServiceablePincodeRepository serviceablePincodeRepository;
     @Autowired
     private NotificationLogRepository notificationLogRepository;
@@ -1945,13 +1947,21 @@ public class OrderService {
     }
 
     public StorefrontReview addProductReview(long productId, String reviewerName, long reviewerPhno, int rating, String comment) {
-        ProductReview saved = productClient.addReview(productId, new ReviewSubmission(reviewerName, reviewerPhno, rating, comment));
+        return addProductReview(productId, reviewerName, reviewerPhno, rating, comment, null);
+    }
+
+    // photoUrl, when given, must be a photo uploaded through ReviewPhotoService - the storefront never links to
+    // pictures hosted elsewhere.
+    public StorefrontReview addProductReview(long productId, String reviewerName, long reviewerPhno, int rating, String comment,
+                                             String photoUrl) {
+        String photo = photoUrl == null || photoUrl.isBlank() ? null : reviewPhotoService.requireOwnUpload(photoUrl);
+        ProductReview saved = productClient.addReview(productId, new ReviewSubmission(reviewerName, reviewerPhno, rating, comment, photo));
         return toStorefrontReview(saved, productId, hasKeptPurchase(saved.reviewerPhno(), productId));
     }
 
     private static StorefrontReview toStorefrontReview(ProductReview r, long productId, boolean verified) {
         return new StorefrontReview(r.reviewId(), r.reviewerName(), r.rating(), r.comment(), r.createdAt(), verified,
-                r.productId() != null ? r.productId() : productId);
+                r.productId() != null ? r.productId() : productId, r.photoUrl());
     }
 
     // "Kept" = an order that was actually placed and not later cancelled; a returned order still counts (they did

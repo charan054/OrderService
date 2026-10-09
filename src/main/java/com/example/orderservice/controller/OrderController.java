@@ -307,7 +307,8 @@ public class OrderController {
     @PostMapping("/reviews")
     public StorefrontReview addReview(@RequestParam long productId, @RequestBody ReviewSubmission review) {
         CustomerAccess.requireSelfOrService(review.reviewerPhno());
-        return orderService.addProductReview(productId, review.reviewerName(), review.reviewerPhno(), review.rating(), review.comment());
+        return orderService.addProductReview(productId, review.reviewerName(), review.reviewerPhno(), review.rating(), review.comment(),
+                review.photoUrl());
     }
     // Signed-in customer (any - a report names no one's phone) or service: report a review for moderation.
     @PostMapping("/reviews/flag")
