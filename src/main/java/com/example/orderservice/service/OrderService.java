@@ -1606,7 +1606,7 @@ public class OrderService {
                 .filter(o -> o.getCustomerPhno() == phno)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
         return new GuestOrderSummary(order.getOrderId(), String.valueOf(order.getStatus()), order.getTotalPrice(),
-                String.valueOf(order.getPaymentMethod()), order.isPaid());
+                String.valueOf(order.getPaymentMethod()), order.isPaid(), order.getCarrier(), order.getTrackingNumber());
     }
 
     public Invoice getInvoice(long orderId, long phno) {
