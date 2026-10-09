@@ -837,9 +837,16 @@
       return response;
     }
 
+    // Header chip with the wallet (store credit - gift cards are redeemed into it) and loyalty points, so the
+    // balance is visible without opening My account. Click it to jump there (gift card redeem lives there).
+    let walletPoints = null;
     function showAccountInfo() {
+      const wallet = customerPhno
+        ? ` <button class="secondary" id="walletChip" onclick="showTab('account')" title="Store credit and gift card balance - open My account">`
+          + `Wallet ₹${storeCreditBalance.toFixed(2)}${walletPoints === null ? "" : " · " + walletPoints + " pts"}</button>`
+        : "";
       document.getElementById("accountInfo").innerHTML = customerPhno
-        ? `Signed in as ${customerPhno} <button class="secondary" onclick="logout()">Log out</button>`
+        ? `Signed in as ${customerPhno}${wallet} <button class="secondary" onclick="logout()">Log out</button>`
         : "";
     }
 
@@ -944,6 +951,8 @@
       cartPersistReady = false;
       customerPhno = null;
       cart = [];
+      storeCreditBalance = 0;
+      walletPoints = null;
       document.getElementById("loginSection").classList.remove("hidden");
       document.getElementById("shopSection").classList.add("hidden");
       showLoginStep("request");
@@ -1200,6 +1209,7 @@
         if (response.ok) storeCreditBalance = (await response.json()).balance;
       } catch (e) { /* treat as none */ }
       document.getElementById("storeCreditBox").classList.toggle("hidden", !(storeCreditBalance > 0));
+      showAccountInfo();
       document.getElementById("storeCreditHint").textContent = storeCreditBalance > 0
         ? `You have ₹${storeCreditBalance.toFixed(2)} store credit. It comes off after any coupon and points.` : "";
     }
@@ -1223,6 +1233,8 @@
         return;
       }
       const account = await response.json();
+      walletPoints = account.pointsBalance;
+      showAccountInfo();
       const expires = account.pointsBalance > 0 && account.pointsExpireAt
         ? ` They expire on ${new Date(account.pointsExpireAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })} unless you use them.` : "";
       hint.textContent = `You have ${account.pointsBalance} loyalty points (1 point = ₹1).${expires}`;
