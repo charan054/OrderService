@@ -593,7 +593,10 @@
             </div>
             <p>Is each service of the stack answering, and is the database reachable. A service counts as up when it replies to HTTP at all. Requires the Service Key above.</p>
             <button onclick="checkHealth()">Check Now</button>
+            <button class="blue" onclick="loadHealthHistory()">Uptime (last 24 hours)</button>
+            <button onclick="recordHealthSample()">Record a sample now</button>
             <div id="healthBoard" style="margin-top:10px;"></div>
+            <div id="healthHistory" style="margin-top:12px;"></div>
         </div>
 
         <div class="card">
@@ -2145,6 +2148,43 @@
       if (!Array.isArray(data)) return;
       document.getElementById("healthBoard").innerHTML = healthBoardHtml(data)
         + `<div style="font-size:12px; opacity:.7; margin-top:6px;">Checked ${new Date().toLocaleTimeString()}</div>`;
+    }
+
+    // Uptime strip: one square per hour for the last 24 hours, per service - green all probes up, amber some down, red
+    // none up, grey no probes that hour (nobody was looking, which is not the same as down). Samples are taken by the
+    // background job when HEALTH_HISTORY_ENABLED=true, or by "Record a sample now".
+    async function loadHealthHistory() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const data = await apiCall(`${BASE_URL}/health/history?hours=24`, { headers: { "X-Service-Key": serviceKey } });
+      document.getElementById("healthHistory").innerHTML = healthHistoryHtml(data);
+    }
+
+    async function recordHealthSample() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const rows = await apiCall(`${BASE_URL}/health/history/record`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      if (!Array.isArray(rows)) return;
+      showStatus(`Sample recorded: ${rows.filter(r => r.status === "UP").length} of ${rows.length} up.`, "success");
+      loadHealthHistory();
+    }
+
+    function healthHistoryHtml(history) {
+      if (!history || !history.services || !history.services.length) {
+        return `<p style="font-size:13px; opacity:.8;">No samples in the last ${history ? history.hours : 24} hours yet. Click "Record a sample now", or start OrderService with HEALTH_HISTORY_ENABLED=true to sample every few minutes.</p>`;
+      }
+      const colour = b => b.samples === 0 ? "#cbd5e1" : b.up === b.samples ? "#16a34a" : b.up === 0 ? "#dc2626" : "#f59e0b";
+      const tip = b => {
+        const hour = new Date(b.hourStart).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        return b.samples === 0 ? `${hour}: no samples` : `${hour}: ${b.up} of ${b.samples} probes up`;
+      };
+      return `<div style="font-size:13px; margin-bottom:4px;"><strong>Last ${history.hours} hours</strong> &middot; ${history.totalSamples} sample(s) &middot; older than ${history.retentionDays} days is deleted</div>`
+        + history.services.map(s => `<div style="display:flex; align-items:center; gap:8px; padding:3px 0; flex-wrap:wrap;">
+            <strong style="min-width:140px;">${escapeHtml(s.name)}</strong>
+            <span class="health-strip" style="display:inline-flex; gap:2px;">${s.buckets.map(b => `<span title="${escapeHtml(tip(b))}" style="width:9px; height:18px; border-radius:2px; background:${colour(b)}; display:inline-block;"></span>`).join("")}</span>
+            <span style="font-size:13px;">${s.uptimePercent === null ? "no data" : s.uptimePercent.toFixed(1) + "% up"}</span>
+            <span style="opacity:.7; font-size:12px;">${s.lastStatus} at ${new Date(s.lastCheckedAt).toLocaleTimeString()}</span>
+          </div>`).join("");
     }
 
     function healthBoardHtml(rows) {
