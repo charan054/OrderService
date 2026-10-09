@@ -66,6 +66,8 @@ public class OrderController {
     private LowStockAlertService lowStockAlertService;
     @Autowired
     private HealthService healthService;
+    @Autowired
+    private com.example.orderservice.service.RecommendationService recommendationService;
     // Authorization is the buyer's OWN PhonepayService session token ("Bearer <token>") - that is who gets
     // charged. It's optional here (unlike before) only so the storefront checkout can instead send payerPhno/
     // payerPin for a PHONEPE order with no token yet; OrderService exchanges those for a token itself via
@@ -278,6 +280,14 @@ public class OrderController {
     @GetMapping("/ratings")
     public List<ProductRatingSummary> getRatings(@RequestParam List<Integer> productIds){
         return orderService.getRatingSummaries(productIds);
+    }
+    // "Picked for you": a signed-in customer (own phone number only) or the service key. Built from this customer's
+    // own purchases, so unlike frequently-bought-together it is personal data.
+    @GetMapping("/recommendations")
+    public List<com.example.orderservice.dto.Recommendation> recommendations(@RequestParam long phno,
+                                                                             @RequestParam(required = false) Integer limit) {
+        CustomerAccess.requireSelfOrService(phno);
+        return recommendationService.forCustomer(phno, limit);
     }
     // Public, same catalog-browsing trust level as /cart/display - a ranked list, not any one customer's data.
     @GetMapping("/frequentlyboughttogether")
