@@ -286,6 +286,18 @@
         .order-items { margin: -4px 0 10px 12px; font-size: 0.9em; }
         .order-item-line { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
         .link-button { background: none; border: none; padding: 0; width: auto; color: var(--primary); cursor: pointer; text-decoration: underline; font-size: inherit; }
+        .stepper { display: flex; flex-wrap: wrap; align-items: center; list-style: none; margin: 8px 0 4px; padding: 0; }
+        .stepper li { display: inline-flex; align-items: center; font-size: 12px; color: var(--muted); }
+        .stepper li + li::before { content: ""; width: 22px; height: 2px; background: var(--border); margin: 0 6px; }
+        .stepper li.done + li::before { background: var(--green); }
+        .stepper .dot { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--border); font-size: 10px; margin-right: 4px; }
+        .stepper li.done, .stepper li.current { color: var(--dark); font-weight: 600; }
+        .stepper li.done .dot { background: var(--green); border-color: var(--green); color: #fff; }
+        .stepper li.current .dot { border-color: var(--primary); }
+        .stepper li.current.final-ok .dot { background: var(--green); border-color: var(--green); color: #fff; }
+        .stepper li.current.final-bad { color: var(--red); }
+        .stepper li.current.final-bad .dot { background: var(--red); border-color: var(--red); color: #fff; }
+        .stepper .when { font-weight: 400; color: var(--muted); margin-left: 4px; }
         .order-row {
           display: flex;
           justify-content: space-between;
@@ -1079,6 +1091,30 @@
       document.getElementById("trackOrderResult").innerHTML = "";
     }
 
+    // Placed -> Shipped -> Delivered progress for an order. Cancelled and Returned end the line in red; an order that
+    // is still awaiting its UPI payment starts with that step. timeline (optional, from /cart/{id}/tracking) adds the
+    // date each step was reached. Pure presentation of the status the server already reports.
+    const STEPPER_LABELS = { PENDING_PAYMENT: "Awaiting payment", PLACED: "Placed", SHIPPED: "Shipped", DELIVERED: "Delivered",
+      RETURNED: "Returned", CANCELLED: "Cancelled" };
+
+    function orderStepperHtml(status, timeline) {
+      let steps;
+      if (status === "CANCELLED") steps = ["PLACED", "CANCELLED"];
+      else if (status === "RETURNED") steps = ["PLACED", "SHIPPED", "DELIVERED", "RETURNED"];
+      else if (status === "PENDING_PAYMENT") steps = ["PENDING_PAYMENT", "PLACED", "SHIPPED", "DELIVERED"];
+      else if (status === "PLACED" || status === "SHIPPED" || status === "DELIVERED") steps = ["PLACED", "SHIPPED", "DELIVERED"];
+      else return "";
+      const at = steps.indexOf(status);
+      const bad = status === "CANCELLED" || status === "RETURNED";
+      return `<ol class="stepper" aria-label="Order progress">${steps.map((step, i) => {
+        const reached = i <= at ? (timeline || []).find(e => e.status === step) : null;
+        const when = reached ? `<span class="when">${new Date(reached.timestamp).toLocaleDateString()}</span>` : "";
+        const state = i < at ? "done" : i === at ? "current" + (bad ? " final-bad" : step === "DELIVERED" ? " final-ok" : "") : "todo";
+        const mark = i < at || (i === at && (step === "DELIVERED")) ? "&#10003;" : i === at && bad ? "&#10005;" : "";
+        return `<li class="${state}"${i === at ? ' aria-current="step"' : ""}><span class="dot">${mark}</span>${escapeHtml(STEPPER_LABELS[step])}${when}</li>`;
+      }).join("")}</ol>`;
+    }
+
     async function lookupOrder() {
       const phno = document.getElementById("trackPhno").value.trim();
       const orderId = document.getElementById("trackOrderId").value.trim();
@@ -1106,7 +1142,9 @@
       const timeline = trackingResponse.ok ? await trackingResponse.json() : [];
 
       resultBox.innerHTML = `
+        ${orderStepperHtml(order.status, timeline)}
         <div class="cart-line"><span>Status</span><span>${escapeHtml(order.status)}</span></div>
+        ${order.carrier || order.trackingNumber ? `<div class="cart-line"><span>Shipment</span><span>${order.carrier ? escapeHtml(order.carrier) : ""}${order.carrier && order.trackingNumber ? ", " : ""}${order.trackingNumber ? "tracking " + escapeHtml(order.trackingNumber) : ""}</span></div>` : ""}
         <div class="cart-line"><span>Total</span><span>₹${order.totalPrice.toFixed(2)}</span></div>
         <div class="cart-line"><span>Payment</span><span>${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span></div>
         ${deliveryEtaLine(order.status, timeline)}
@@ -1663,6 +1701,7 @@
           <div>
             <strong>Order #${order.orderId}</strong>
             <span class="meta">${escapeHtml(order.status)} &middot; ${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : " (unpaid)") : ""}</span>
+            ${orderStepperHtml(order.status)}
             ${order.carrier || order.trackingNumber ? `<span class="meta">Shipped${order.carrier ? " via " + escapeHtml(order.carrier) : ""}${order.trackingNumber ? ", tracking " + escapeHtml(order.trackingNumber) : ""}</span>` : ""}
           </div>
           <div class="price">₹${order.totalPrice.toFixed(2)}${order.refundedAmount > 0 ? `<span class="meta">₹${order.refundedAmount.toFixed(2)} ${order.paymentMethod === "CASH" ? "taken off" : "refunded"}</span>` : ""}</div>
