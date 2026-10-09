@@ -472,6 +472,24 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">❓</div>
+                <div class="title-wrap">
+                    <h2>Help / FAQ</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>The questions and answers shown in the storefront Help tab, lowest order number first. Leave the entry id empty to add a new one; give an id to edit or delete it. Requires the Service Key above.</p>
+            <input type="number" id="faqId" placeholder="Entry id (empty = new)" />
+            <input type="number" id="faqOrder" placeholder="Order (lowest first)" />
+            <input type="text" id="faqQuestion" placeholder="Question (max 200 characters)" maxlength="200" />
+            <textarea id="faqAnswer" rows="4" placeholder="Answer (max 2000 characters)" maxlength="2000"></textarea>
+            <button class="blue" onclick="saveFaq()">Save Entry</button>
+            <button onclick="listFaq()">List Entries</button>
+            <button onclick="deleteFaq()">Delete Entry</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">🚚</div>
                 <div class="title-wrap">
                     <h2>Serviceable Pincodes</h2>
@@ -2598,6 +2616,38 @@
       if (!data || !data.codes) return;
       document.getElementById("bulkCouponCodes").value = data.codes.join("\n");
       showStatus(`${data.codes.length} single-use codes generated.`, "success");
+    }
+
+    async function saveFaq() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const id = document.getElementById("faqId").value.trim();
+      const data = await apiCall(`http://localhost:8083/faq/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
+        body: JSON.stringify({ id: id ? Number(id) : null, sortOrder: Number(document.getElementById("faqOrder").value || 0),
+          question: document.getElementById("faqQuestion").value, answer: document.getElementById("faqAnswer").value })
+      });
+      showStatus("FAQ entry saved. Result opened in new tab.", "success");
+      openResultTab("FAQ Entry", data);
+    }
+
+    async function listFaq() {
+      const data = await apiCall(`http://localhost:8083/faq`, {});
+      openResultTab("FAQ Entries", data);
+    }
+
+    async function deleteFaq() {
+      const id = document.getElementById("faqId").value.trim();
+      if (!id) return showStatus("Enter the entry id to delete.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      if (!confirm(`Delete FAQ entry ${id}?`)) return;
+      await apiCall(`http://localhost:8083/faq/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      showStatus("FAQ entry deleted.", "success");
     }
 
     async function addPincode() {
