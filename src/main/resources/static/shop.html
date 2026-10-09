@@ -688,7 +688,8 @@
         <div class="layout">
             <div>
                 <div class="search-row">
-                    <input type="text" id="searchName" placeholder="Search products" oninput="onSearchChange()" />
+                    <input type="text" id="searchName" placeholder="Search products" oninput="onSearchChange()" list="searchSuggestions" autocomplete="off" />
+                    <datalist id="searchSuggestions"></datalist>
                     <select id="searchCategory" onchange="onSearchChange()" disabled>
                         <option value="">Loading categories...</option>
                     </select>
@@ -1401,6 +1402,7 @@
     }
 
     function refreshCategoryOptions() {
+      buildSearchIndex();
       allCategories = [...new Set(products.map(p => p.productCategory).filter(Boolean))].sort();
       const select = document.getElementById("searchCategory");
       const current = select.disabled ? "" : select.value;
@@ -1410,7 +1412,91 @@
       select.disabled = false;
     }
 
+    // ---- search suggestions and "did you mean" ----
+    // Built from the unfiltered catalog (see refreshCategoryOptions), so it works without any extra request: product
+    // names and category names the customer could be looking for.
+    let searchIndex = [];
+
+    function buildSearchIndex() {
+      const seen = new Set();
+      searchIndex = [];
+      const add = (text, kind) => {
+        const key = text.toLowerCase();
+        if (!text || seen.has(key)) return;
+        seen.add(key);
+        searchIndex.push({ text, kind });
+      };
+      products.forEach(p => add(String(p.productName || "").trim(), "product"));
+      products.forEach(p => add(String(p.productCategory || "").trim(), "category"));
+    }
+
+    // Classic edit distance (insert, delete, substitute, each 1) - small inputs, so the simple version is plenty.
+    function levenshtein(a, b) {
+      if (a === b) return 0;
+      let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+      for (let i = 1; i <= a.length; i++) {
+        const row = [i];
+        for (let j = 1; j <= b.length; j++) {
+          row[j] = Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        }
+        previous = row;
+      }
+      return previous[b.length];
+    }
+
+    // Names that start with, or else contain, what has been typed - for the type-ahead list.
+    function searchSuggestions(term, limit = 8) {
+      const t = String(term || "").trim().toLowerCase();
+      if (t.length < 2) return [];
+      const starts = [], contains = [];
+      searchIndex.forEach(entry => {
+        const name = entry.text.toLowerCase();
+        if (name === t) return;
+        if (name.startsWith(t)) starts.push(entry.text);
+        else if (name.includes(t)) contains.push(entry.text);
+      });
+      return starts.concat(contains).slice(0, limit);
+    }
+
+    // Closest names to a term that matched nothing: compares against each whole name and each word of it, and only
+    // accepts a small distance (about a third of the length), so "shampo" finds "Dove Shampoo" but "xyz" finds nothing.
+    function didYouMean(term, limit = 3) {
+      const t = String(term || "").trim().toLowerCase();
+      if (t.length < 3) return [];
+      const allowed = Math.max(1, Math.floor(t.length / 3));
+      const scored = [];
+      searchIndex.forEach(entry => {
+        const name = entry.text.toLowerCase();
+        const candidates = [name, ...name.split(/[^a-z0-9]+/).filter(w => w.length >= 3)];
+        const best = Math.min(...candidates.map(c => levenshtein(t, c)));
+        if (best > 0 && best <= allowed && best < t.length) scored.push({ text: entry.text, best });
+      });
+      return scored.sort((a, b) => a.best - b.best || a.text.localeCompare(b.text)).slice(0, limit).map(s => s.text);
+    }
+
+    function updateSearchSuggestions() {
+      const list = document.getElementById("searchSuggestions");
+      if (!list) return;
+      list.innerHTML = searchSuggestions(document.getElementById("searchName").value)
+        .map(text => `<option value="${escapeHtml(text)}"></option>`).join("");
+    }
+
+    function applySuggestion(text) {
+      document.getElementById("searchName").value = text;
+      updateSearchSuggestions();
+      loadProducts();
+    }
+
+    function noSearchResultsHtml() {
+      const term = document.getElementById("searchName").value.trim();
+      const similar = didYouMean(term);
+      return `<p style="color:var(--muted);">No results for &ldquo;${escapeHtml(term)}&rdquo;.${similar.length
+        ? ` Did you mean ${similar.map(s => `<button class="secondary" style="width:auto; padding:2px 10px; margin:0 4px;" data-s="${escapeHtml(s)}" onclick="applySuggestion(this.dataset.s)">${escapeHtml(s)}</button>`).join("")}?`
+        : " Try a shorter word, or pick a category."}</p>`;
+    }
+
     function onSearchChange() {
+      updateSearchSuggestions();
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = setTimeout(loadProducts, 250);
     }
@@ -2251,6 +2337,8 @@
           ? `<p style="color:var(--muted);">Nothing new in the last ${NEW_PRODUCT_DAYS} days - check back soon.</p>`
           : activeTab === "recent"
           ? `<p style="color:var(--muted);">No products viewed yet - open a product's details to see it here.</p>`
+          : document.getElementById("searchName").value.trim()
+          ? noSearchResultsHtml()
           : `<p style="color:var(--muted);">No products available right now.</p>`;
         renderPager(0);
         return;
