@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.dto.DigestResult;
 import com.example.orderservice.dto.LowStockItem;
+import com.example.orderservice.dto.RecentStockChange;
 import com.example.orderservice.dto.RevenueTimeseries;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.OrderStatus;
@@ -29,6 +30,9 @@ import java.util.function.Supplier;
 public class DigestService {
     private static final Logger log = LoggerFactory.getLogger(DigestService.class);
     private static final int MAX_LOW_STOCK_LINES = 15;
+    private static final int MAX_STOCK_CHANGE_LINES = 15;
+    // A hand-made change of at least this many units is flagged BIG in the digest.
+    private static final int BIG_STOCK_CHANGE = 20;
 
     private final OrderService orderService;
     private final CartRepository orders;
@@ -105,6 +109,25 @@ public class DigestService {
                     .append(item.waitlistCount() > 0 ? ", " + item.waitlistCount() + " waiting" : "").append('\n'));
             if (low.size() > MAX_LOW_STOCK_LINES) {
                 lines.append("  ... and ").append(low.size() - MAX_LOW_STOCK_LINES).append(" more\n");
+            }
+            return lines.toString();
+        });
+
+        section(body, "Stock changes made by hand (last 24 hours)", () -> {
+            List<RecentStockChange> changes = orderService.getRecentStockChanges(24);
+            if (changes.isEmpty()) {
+                return "  No corrections or restock receipts.\n";
+            }
+            StringBuilder lines = new StringBuilder();
+            changes.stream().limit(MAX_STOCK_CHANGE_LINES).forEach(c -> lines.append("  ")
+                    .append(Math.abs(c.delta()) >= BIG_STOCK_CHANGE ? "BIG  " : "     ")
+                    .append(c.type().equals("RESTOCK") ? "Restock    " : "Correction ")
+                    .append(c.productName()).append(' ').append(c.delta() > 0 ? "+" : "").append(c.delta())
+                    .append(" (now ").append(c.stockAfter()).append(")")
+                    .append(c.reason() == null || c.reason().isBlank() ? "" : " - " + c.reason())
+                    .append(c.actor() == null || c.actor().isBlank() ? "" : " [" + c.actor() + "]").append('\n'));
+            if (changes.size() > MAX_STOCK_CHANGE_LINES) {
+                lines.append("  ... and ").append(changes.size() - MAX_STOCK_CHANGE_LINES).append(" more\n");
             }
             return lines.toString();
         });
