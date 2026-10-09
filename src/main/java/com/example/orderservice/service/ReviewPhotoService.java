@@ -1,5 +1,6 @@
 package com.example.orderservice.service;
 
+import com.example.orderservice.dto.PhotoTidyResult;
 import com.example.orderservice.exception.ProductException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -23,19 +24,27 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Deque;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * Photos customers attach to reviews. Each upload is checked by its actual bytes (JPEG or PNG only, never the declared
@@ -114,6 +123,72 @@ public class ReviewPhotoService {
             throw new ProductException("That photo is not one you uploaded - attach it with the photo button");
         }
         return url;
+    }
+
+    // The files this service wrote: <uuid>.jpg / <uuid>.png. Anything else in the folder is not ours and is left alone.
+    private static final Pattern STORED_NAME = Pattern.compile("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(?:jpg|png)");
+
+    /**
+     * Finds (and unless dryRun deletes) stored photos that no review refers to. Safety rules, in order of importance:
+     * a failure to get the reference list propagates before anything is deleted; the folder is listed BEFORE the list
+     * is fetched, so a photo uploaded meanwhile is never a candidate; a photo younger than minAge is never touched
+     * (it may be uploaded but not yet attached to a review); only files named like our own uploads are considered, and
+     * never through a symbolic link; a photo is "in use" if ANY reference ends in its file name (hidden reviews count).
+     */
+    public PhotoTidyResult tidy(Supplier<? extends Collection<String>> referencedUrls, boolean dryRun, Duration minAge) {
+        Instant newest = clock.instant().minus(minAge);
+        List<Path> candidates = new ArrayList<>();
+        if (Files.isDirectory(directory)) {
+            try (Stream<Path> files = Files.list(directory)) {
+                files.filter(f -> STORED_NAME.matcher(f.getFileName().toString()).matches()
+                        && Files.isRegularFile(f, LinkOption.NOFOLLOW_LINKS)).forEach(candidates::add);
+            } catch (IOException e) {
+                throw new IllegalStateException("Could not list the review photos", e);
+            }
+        }
+        Collection<String> urls = referencedUrls.get();
+        if (urls == null) {
+            throw new IllegalStateException("No list of photos in use - nothing was deleted");
+        }
+        Set<String> inUseNames = new HashSet<>();
+        for (String url : urls) {
+            if (url == null) continue;
+            String clean = url.trim();
+            int cut = clean.length();
+            int query = clean.indexOf('?');
+            int hash = clean.indexOf('#');
+            if (query >= 0) cut = Math.min(cut, query);
+            if (hash >= 0) cut = Math.min(cut, hash);
+            clean = clean.substring(0, cut);
+            inUseNames.add(clean.substring(clean.lastIndexOf('/') + 1).toLowerCase());
+        }
+        int inUse = 0, tooRecent = 0, orphaned = 0;
+        long bytes = 0;
+        List<String> orphanNames = new ArrayList<>();
+        for (Path file : candidates) {
+            String name = file.getFileName().toString();
+            try {
+                if (inUseNames.contains(name)) {
+                    inUse++;
+                    continue;
+                }
+                long modified = Files.getLastModifiedTime(file, LinkOption.NOFOLLOW_LINKS).toMillis();
+                if (modified > newest.toEpochMilli()) {
+                    tooRecent++;
+                    continue;
+                }
+                long size = Files.size(file);
+                if (!dryRun && !Files.deleteIfExists(file)) {
+                    continue;
+                }
+                orphaned++;
+                bytes += size;
+                orphanNames.add(name);
+            } catch (IOException e) {
+                // One unreadable or undeletable file must not stop the rest; it is simply not counted.
+            }
+        }
+        return new PhotoTidyResult(dryRun, candidates.size(), inUse, tooRecent, orphaned, bytes, orphanNames);
     }
 
     // ---------- limits ----------

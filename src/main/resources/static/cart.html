@@ -1140,6 +1140,21 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128247;</div>
+                <div class="title-wrap">
+                    <h2>Tidy Review Photos</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Photos stay on disk after their review is deleted, or if a customer uploads one and never posts it. Preview lists the files no review uses (hidden reviews still count as using theirs); Delete removes them for good. Photos uploaded in the last hour are never touched. If ProductService cannot be reached nothing is deleted. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="tidyReviewPhotos(false)">Preview</button>
+                <button class="red" onclick="tidyReviewPhotos(true)">Delete Unused Photos</button>
+            </div>
+            <div id="photoTidyOut"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">&#10067;</div>
                 <div class="title-wrap">
                     <h2>Customer Questions</h2>
@@ -2126,6 +2141,28 @@
       moderationRows = rows || [];
       renderModerationTable();
       showStatus(`${moderationRows.length} flagged review(s) waiting.`, "success");
+    }
+
+    // Preview (dryRun=true) first; the delete button asks again with the count from a fresh preview.
+    async function tidyReviewPhotos(apply) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      if (apply) {
+        const preview = await apiCall(`${BASE_URL}/reviews/photo/tidy?dryRun=true`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+        if (!preview) return;
+        if (preview.orphaned === 0) {
+          document.getElementById("photoTidyOut").textContent = "No unused photos - nothing to delete.";
+          return showStatus("No unused photos.", "success");
+        }
+        if (!confirm(`Delete ${preview.orphaned} unused photo(s)? This cannot be undone.`)) return;
+      }
+      const data = await apiCall(`${BASE_URL}/reviews/photo/tidy?dryRun=${!apply}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      if (!data) return;
+      const kb = Math.round(data.orphanedBytes / 1024);
+      document.getElementById("photoTidyOut").innerHTML =
+        `<p><strong>${data.dryRun ? "Preview (nothing deleted)" : "Deleted"}:</strong> ${data.orphaned} unused photo(s), ${kb} KB. `
+        + `${data.inUse} in use, ${data.tooRecent} too recent to touch, ${data.total} photo(s) in total.</p>`;
+      showStatus(data.dryRun ? `${data.orphaned} unused photo(s) found.` : `${data.orphaned} unused photo(s) deleted.`, "success");
     }
 
     async function moderateReview(index, action) {
