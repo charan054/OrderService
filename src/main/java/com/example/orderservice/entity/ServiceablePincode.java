@@ -15,4 +15,7 @@ public class ServiceablePincode {
     @Id
     private String pincode;
     private int deliveryDays;
+    // Optional: lets the storefront fill in the city/state when a customer types the pincode.
+    private String city;
+    private String state;
 }

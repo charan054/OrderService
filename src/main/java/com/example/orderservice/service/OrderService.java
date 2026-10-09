@@ -50,6 +50,7 @@ import com.example.orderservice.dto.CancellationReport;
 import com.example.orderservice.dto.OrderHistoryPage;
 import com.example.orderservice.entity.ServiceablePincode;
 import com.example.orderservice.entity.ShippingAddress;
+import com.example.orderservice.dto.PincodeImportResult;
 import com.example.orderservice.dto.PincodeServiceability;
 import com.example.orderservice.entity.StockWaitlist;
 import com.example.orderservice.entity.TrackingEvent;
@@ -1301,11 +1302,11 @@ public class OrderService {
     public PincodeServiceability checkPincode(String pincode) {
         String p = normalizePincode(pincode);
         if (serviceablePincodeRepository.count() == 0) {
-            return new PincodeServiceability(p, true, null);
+            return new PincodeServiceability(p, true, null, null, null);
         }
         return serviceablePincodeRepository.findById(p)
-                .map(sp -> new PincodeServiceability(p, true, sp.getDeliveryDays()))
-                .orElse(new PincodeServiceability(p, false, null));
+                .map(sp -> new PincodeServiceability(p, true, sp.getDeliveryDays(), sp.getCity(), sp.getState()))
+                .orElse(new PincodeServiceability(p, false, null, null, null));
     }
 
     public ServiceablePincode savePincode(ServiceablePincode pincode) {
@@ -1313,7 +1314,52 @@ public class OrderService {
         if (pincode.getDeliveryDays() < 1 || pincode.getDeliveryDays() > 30) {
             throw new ProductException("Delivery days must be between 1 and 30");
         }
+        pincode.setCity(blankToNull(pincode.getCity() == null ? null : pincode.getCity().trim()));
+        pincode.setState(blankToNull(pincode.getState() == null ? null : pincode.getState().trim()));
         return serviceablePincodeRepository.save(pincode);
+    }
+
+    private static final int MAX_PINCODE_IMPORT_ROWS = 5000;
+
+    // Bulk load from CSV text: pincode,deliveryDays[,city,state] per line; a header row (first cell not a number) and
+    // blank lines are skipped. A bad row is reported with its line number and never stops the rest, same as the
+    // product bulk import.
+    public PincodeImportResult importPincodes(String csv) {
+        List<String> errors = new ArrayList<>();
+        int imported = 0;
+        String[] lines = csv == null ? new String[0] : csv.split("\\r?\\n");
+        if (lines.length > MAX_PINCODE_IMPORT_ROWS + 1) {
+            throw new ProductException("Import at most " + MAX_PINCODE_IMPORT_ROWS + " pincodes at a time");
+        }
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i].trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            String[] cells = line.split(",", -1);
+            if (i == 0 && !cells[0].trim().matches("[0-9]+")) {
+                continue;
+            }
+            try {
+                ServiceablePincode sp = new ServiceablePincode();
+                sp.setPincode(cells[0].trim());
+                if (cells.length < 2) {
+                    throw new ProductException("Delivery days are missing");
+                }
+                try {
+                    sp.setDeliveryDays(Integer.parseInt(cells[1].trim()));
+                } catch (NumberFormatException e) {
+                    throw new ProductException("Delivery days must be a number");
+                }
+                sp.setCity(cells.length > 2 ? cells[2] : null);
+                sp.setState(cells.length > 3 ? cells[3] : null);
+                savePincode(sp);
+                imported++;
+            } catch (ProductException e) {
+                errors.add("Line " + (i + 1) + ": " + e.getMessage());
+            }
+        }
+        return new PincodeImportResult(imported, errors);
     }
 
     public void removePincode(String pincode) {
