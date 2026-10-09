@@ -813,6 +813,7 @@
             <h2 id="modalProductName"></h2>
             <div id="modalRatingSummary" class="rating-row"></div>
             <div id="modalSubscribe" class="subscribe-box"></div>
+            <div id="modalAlert" class="subscribe-box"></div>
 
             <div id="modalGallery" class="fbt-strip hidden"></div>
 
@@ -854,6 +855,7 @@
     let products = [];
     let cart = []; // {productId, name, price, quantity, stock}
     let wishlistProductIds = new Set();
+    let wishlistItems = []; // the raw wishlist entries (productId, priceWhenAdded)
     let waitlistProductIds = new Set();
     let priceDropsByProductId = new Map();
     let activeTab = "all";
@@ -1509,6 +1511,7 @@
       const wishlist = wishlistResponse.ok ? await wishlistResponse.json() : [];
       const priceDrops = priceDropsResponse.ok ? await priceDropsResponse.json() : [];
 
+      wishlistItems = wishlist;
       wishlistProductIds = new Set(wishlist.map(item => item.productId));
       priceDropsByProductId = new Map(priceDrops.map(drop => [drop.productId, drop]));
       document.getElementById("wishlistCount").textContent = wishlistProductIds.size;
@@ -1816,15 +1819,7 @@
         </div>
       `).join("");
 
-      const waitlistHtml = waitlist.map(w => `
-        <div class="order-row">
-          <div>
-            <strong>${escapeHtml(w.productName)}</strong>
-            <span class="meta">${w.inStock ? `Back in stock (${w.currentStock})` : "Still out of stock"}</span>
-          </div>
-          <button class="secondary" style="width:auto;" onclick="removeFromWaitlistInAccount(${w.productId})">Remove</button>
-        </div>
-      `).join("");
+      const alertsListHtml = alertsHtml(waitlist);
 
       view.innerHTML = `
         ${profileHtml}
@@ -1843,8 +1838,9 @@
         ${supportTickets.length ? `<h3 style="margin:20px 0 10px;">Support requests</h3>${supportTickets.map(supportTicketHtml).join("")}` : ""}
         <h3 style="margin:20px 0 10px;">Subscriptions</h3>
         ${mySubscriptions.length ? mySubscriptions.map(subscriptionRowHtml).join("") : `<p style="color:var(--muted);">No subscriptions - open a product and choose "Subscribe &amp; save" to get it delivered regularly at a discount.</p>`}
-        <h3 style="margin:20px 0 10px;">Waiting for restock</h3>
-        ${waitlistHtml || `<p style="color:var(--muted);">Nothing on your restock waitlist - tap "Notify me" on an out-of-stock product to add it here.</p>`}
+        <h3 style="margin:20px 0 10px;">My alerts</h3>
+        <p style="font-size:13px; color:var(--muted); margin:-4px 0 10px;">Products you are watching for a restock or a price drop. Removing one also removes it from your wishlist / restock waitlist.</p>
+        ${alertsListHtml}
         <h3 style="margin:20px 0 10px;">Saved addresses</h3>
         ${addressesHtml || `<p style="color:var(--muted);">No saved addresses yet.</p>`}
         <div style="margin-top:12px;">
@@ -2139,11 +2135,6 @@
         alert(body || "Could not return this order.");
         return;
       }
-      loadAccountView();
-    }
-
-    async function removeFromWaitlistInAccount(productId) {
-      await toggleWaitlist(productId);
       loadAccountView();
     }
 
@@ -2494,7 +2485,81 @@
         : "No reviews yet";
 
       renderSubscribeBox(product);
+      renderModalAlert(productId);
       await Promise.all([loadModalReviews(productId), loadModalQuestions(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
+    }
+
+    // ---- one "Alert me" for restock and price drops ----
+    // Restock alerts live on the waitlist and price-drop alerts on the wishlist (that is where the "price when saved"
+    // baseline is kept), so the single control below simply keeps the right ones in step.
+    function productAlertActive(productId) {
+      return wishlistProductIds.has(productId) || waitlistProductIds.has(productId);
+    }
+
+    function renderModalAlert(productId) {
+      const box = document.getElementById("modalAlert");
+      const product = products.find(p => p.productId === productId);
+      if (!product) { box.innerHTML = ""; return; }
+      const outOfStock = product.productStock <= 0;
+      const active = productAlertActive(productId);
+      box.innerHTML = `<button class="${active ? "secondary" : ""}" style="width:auto;" onclick="setProductAlert(${productId}, ${!active})">${
+        active ? "Alerts on &#10003; - turn off" : outOfStock ? "Alert me when it is back or cheaper" : "Alert me if the price drops"}</button>
+        <span class="meta" style="display:block; margin-top:6px;">${outOfStock
+          ? "We email you when it is back in stock, and if its price drops."
+          : "We email you if its price drops below what it costs today."} Alerts use your wishlist${outOfStock ? " and restock waitlist" : ""}; turning them off removes it from both.</span>`;
+    }
+
+    async function setProductAlert(productId, on) {
+      const product = products.find(p => p.productId === productId);
+      const outOfStock = product && product.productStock <= 0;
+      const query = `phno=${encodeURIComponent(customerPhno)}&productId=${encodeURIComponent(productId)}`;
+      const calls = [];
+      if (on) {
+        if (outOfStock && !waitlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/waitlist/self/add?${query}`, { method: "POST" }));
+        if (!wishlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/wishlist/self/add?${query}`, { method: "POST" }));
+      } else {
+        if (waitlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/waitlist/self/remove?${query}`, { method: "DELETE" }));
+        if (wishlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/wishlist/self/remove?${query}`, { method: "DELETE" }));
+      }
+      await Promise.all(calls);
+      await Promise.all([loadWishlist(), loadWaitlist()]);
+      renderModalAlert(productId);
+    }
+
+    // "My alerts" in My account: every product being watched for a restock and/or a price drop, in one list.
+    function alertsHtml(waitlist) {
+      const ids = [...new Set([...wishlistItems.map(w => w.productId), ...waitlist.map(w => w.productId)])];
+      if (!ids.length) {
+        return `<p style="color:var(--muted);">No alerts yet - open a product and tap "Alert me" to hear about restocks and price drops.</p>`;
+      }
+      return ids.map(id => {
+        const waiting = waitlist.find(w => w.productId === id);
+        const saved = wishlistItems.find(w => w.productId === id);
+        const catalogProduct = products.find(p => p.productId === id);
+        const name = waiting ? waiting.productName : catalogProduct ? catalogProduct.productName : "Product #" + id;
+        const lines = [];
+        if (waiting) lines.push(`Restock: ${waiting.inStock ? `back in stock (${waiting.currentStock})` : "still out of stock"}`);
+        if (saved) {
+          const drop = priceDropsByProductId.get(id);
+          if (drop) lines.push(`Price: dropped &#8377;${drop.priceDrop.toFixed(2)} (was &#8377;${drop.priceWhenAdded.toFixed(2)}, now &#8377;${drop.currentPrice.toFixed(2)})`);
+          else if (saved.priceWhenAdded != null && catalogProduct) lines.push(`Price: &#8377;${Number(catalogProduct.productPrice).toFixed(2)} (no drop since &#8377;${Number(saved.priceWhenAdded).toFixed(2)})`);
+          else lines.push("Price: watching");
+        }
+        return `<div class="order-row">
+          <div><strong>${escapeHtml(name)}</strong>${lines.map(l => `<span class="meta">${l}</span>`).join("")}</div>
+          <button class="secondary" style="width:auto;" onclick="removeAlertInAccount(${id})">Remove</button>
+        </div>`;
+      }).join("");
+    }
+
+    async function removeAlertInAccount(productId) {
+      const query = `phno=${encodeURIComponent(customerPhno)}&productId=${encodeURIComponent(productId)}`;
+      const calls = [];
+      if (waitlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/waitlist/self/remove?${query}`, { method: "DELETE" }));
+      if (wishlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/wishlist/self/remove?${query}`, { method: "DELETE" }));
+      await Promise.all(calls);
+      await Promise.all([loadWishlist(), loadWaitlist()]);
+      loadAccountView();
     }
 
     // ---------- subscribe & save ----------
