@@ -912,6 +912,28 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128202;</div>
+                <div class="title-wrap">
+                    <h2>Sales Breakdown</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>What sold, by product or by category: units, orders, revenue (net of refunds, coupons included) and share of the total. Orders count on the day they were placed; cancelled, returned and unpaid UPI orders are left out. Click a column heading to sort. Needs a manager or owner (or the Service Key above).</p>
+            <div class="rev-controls">
+                <label class="orders-date">From <input type="date" id="sbFrom" /></label>
+                <label class="orders-date">To <input type="date" id="sbTo" /></label>
+                <select id="sbGroup">
+                    <option value="product">By product</option>
+                    <option value="category">By category</option>
+                </select>
+                <button onclick="loadSalesBreakdown(false)">Load</button>
+                <button class="blue" onclick="downloadSalesBreakdownCsv()">Download CSV</button>
+            </div>
+            <div id="sbSummary" class="rev-summary"></div>
+            <div id="sbTable" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">&#129534;</div>
                 <div class="title-wrap">
                     <h2>GST Report</h2>
@@ -2359,6 +2381,87 @@
         showStatus("gst-report.pdf downloaded.", "success");
       } catch (error) {
         showStatus("PDF download failed: " + error.message, "error");
+      }
+    }
+
+    // ---------- sales breakdown ----------
+    let sbSort = "revenue";
+    let sbDir = "desc";
+
+    (function initSalesBreakdownDates() {
+      const to = new Date();
+      const from = new Date();
+      from.setDate(from.getDate() - 29);
+      document.getElementById("sbTo").value = localIsoDate(to);
+      document.getElementById("sbFrom").value = localIsoDate(from);
+    })();
+
+    function salesBreakdownQuery() {
+      const q = new URLSearchParams();
+      const from = document.getElementById("sbFrom").value;
+      const to = document.getElementById("sbTo").value;
+      if (from) q.set("from", from);
+      if (to) q.set("to", to);
+      q.set("groupBy", document.getElementById("sbGroup").value);
+      q.set("sort", sbSort);
+      q.set("dir", sbDir);
+      q.set("zone", Intl.DateTimeFormat().resolvedOptions().timeZone);
+      return q.toString();
+    }
+
+    function sortSalesBreakdownBy(column) {
+      if (sbSort === column) {
+        sbDir = sbDir === "desc" ? "asc" : "desc";
+      } else {
+        sbSort = column;
+        sbDir = column === "label" ? "asc" : "desc";
+      }
+      loadSalesBreakdown(true);
+    }
+
+    // keepSort is true when a column heading was clicked; a fresh Load keeps whatever sort is showing too.
+    async function loadSalesBreakdown(keepSort) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const result = await apiCall(`${BASE_URL}/analytics/breakdown?${salesBreakdownQuery()}`, {
+        headers: { "X-Service-Key": serviceKey }
+      });
+      const byProduct = result.groupBy === "product";
+      document.getElementById("sbSummary").innerHTML =
+        `<strong>${rupees(result.totalRevenue)}</strong> from <strong>${result.totalUnits}</strong> unit(s) in <strong>${result.totalOrders}</strong> order(s), ${escapeCell(result.from)} to ${escapeCell(result.to)}`
+        + (result.truncated ? ` &middot; showing the top ${result.rows.length} rows (the CSV has every row)` : "");
+      const wrap = document.getElementById("sbTable");
+      if (!result.rows.length) {
+        wrap.innerHTML = `<p>No sales in this range.</p>`;
+        return;
+      }
+      const arrow = col => sbSort === col ? (sbDir === "asc" ? " &#9650;" : " &#9660;") : "";
+      const th = (col, label, cls) => `<th ${cls ? `class="${cls}"` : ""} style="cursor:pointer" onclick="sortSalesBreakdownBy('${col}')" title="Sort by ${label}">${label}${arrow(col)}</th>`;
+      wrap.innerHTML = `<table class="orders-table"><thead><tr>
+          ${th("label", byProduct ? "Product" : "Category")}${byProduct ? "<th>Category</th>" : ""}${th("units", "Units", "num")}${th("orders", "Orders", "num")}${th("revenue", "Revenue", "num")}<th class="num">Share</th>
+        </tr></thead><tbody>${result.rows.map(r => `<tr>
+          <td>${escapeCell(r.label)}</td>${byProduct ? `<td>${escapeCell(r.category)}</td>` : ""}<td class="num">${r.units}</td><td class="num">${r.orders}</td>
+          <td class="num">${rupees(r.revenue)}</td><td class="num">${r.sharePercent.toFixed(1)}%</td></tr>`).join("")}
+        </tbody></table>`;
+    }
+
+    async function downloadSalesBreakdownCsv() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      try {
+        const response = await fetch(`${BASE_URL}/analytics/breakdown/export?${salesBreakdownQuery()}`, { headers: { "X-Service-Key": serviceKey } });
+        if (!response.ok) throw new Error((await response.text()) || `HTTP Error: ${response.status}`);
+        const blob = await response.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `sales-by-${document.getElementById("sbGroup").value}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+        showStatus("Sales breakdown CSV downloaded.", "success");
+      } catch (error) {
+        showStatus("CSV download failed: " + error.message, "error");
       }
     }
 

@@ -962,7 +962,7 @@ public class OrderService {
     // What the customer is still actually paying for: nothing once cancelled/returned (older returned orders
     // predate refundedAmount, so status decides) or while a UPI payment is still awaiting approval, otherwise the
     // total minus any per-item refunds.
-    private static double netPaid(Cart cart) {
+    static double netPaid(Cart cart) {
         if (cart.getStatus() == OrderStatus.CANCELLED || cart.getStatus() == OrderStatus.RETURNED
                 || cart.getStatus() == OrderStatus.PENDING_PAYMENT) {
             return 0;
