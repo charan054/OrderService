@@ -862,6 +862,25 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void adminOrderPageWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(get("/cart/orders/page")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void adminOrderPageWithValidKeyReturnsPagingFields() throws Exception {
+        mockMvc.perform(get("/cart/orders/page").param("size", "5").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.size").value(5))
+                .andExpect(jsonPath("$.rows").isArray());
+    }
+
+    @Test
+    void adminOrderPageRejectsAnUnknownSortColumn() throws Exception {
+        mockMvc.perform(get("/cart/orders/page").param("sort", "password").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void adminOrderExportWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(get("/cart/orders/export")).andExpect(status().isUnauthorized());
     }

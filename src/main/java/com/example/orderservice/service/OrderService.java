@@ -3,6 +3,7 @@ package com.example.orderservice.service;
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.client.StockMovementContext;
+import com.example.orderservice.dto.AdminOrderPage;
 import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.CouponSuggestion;
 import com.example.orderservice.dto.CreateUpiCollectRequest;
@@ -2376,6 +2377,53 @@ public class OrderService {
         }
         rows.sort(Comparator.comparingLong(AdminOrderRow::orderId).reversed());
         return rows;
+    }
+
+    static final int MAX_ADMIN_PAGE_SIZE = 100;
+
+    // The admin table's paged, sortable view of searchOrders() (same filters; the CSV export stays unpaged).
+    // sort is one of orderId (default), placedAt, customerName, status, totalPrice; dir is asc or desc (default
+    // desc, so the newest order is first). Rows with no value for the sort column (e.g. an undated order) sort
+    // last in either direction. Filtering and sorting are still in memory over all orders.
+    public AdminOrderPage searchOrdersPage(String status, String paymentMethod, Long phno,
+                                           java.time.LocalDate from, java.time.LocalDate to,
+                                           String sort, String dir, int page, int size) {
+        if (page < 0) {
+            throw new ProductException("Page must be 0 or more");
+        }
+        if (size < 1 || size > MAX_ADMIN_PAGE_SIZE) {
+            throw new ProductException("Page size must be between 1 and " + MAX_ADMIN_PAGE_SIZE);
+        }
+        boolean ascending;
+        if (dir == null || dir.isBlank() || dir.equalsIgnoreCase("desc")) {
+            ascending = false;
+        } else if (dir.equalsIgnoreCase("asc")) {
+            ascending = true;
+        } else {
+            throw new ProductException("dir must be asc or desc");
+        }
+        // Direction is baked into each key comparator so a missing value (nullsLast) stays last either way.
+        Comparator<Long> ids = ascending ? Comparator.naturalOrder() : Comparator.reverseOrder();
+        Comparator<Double> numbers = ascending ? Comparator.naturalOrder() : Comparator.reverseOrder();
+        Comparator<String> text = ascending ? String.CASE_INSENSITIVE_ORDER : String.CASE_INSENSITIVE_ORDER.reversed();
+        Comparator<Instant> times = ascending ? Comparator.naturalOrder() : Comparator.reverseOrder();
+        String sortKey = sort == null || sort.isBlank() ? "orderId" : sort.trim();
+        Comparator<AdminOrderRow> comparator = switch (sortKey) {
+            case "orderId" -> Comparator.comparing(AdminOrderRow::orderId, ids);
+            case "placedAt" -> Comparator.comparing(AdminOrderRow::placedAt, Comparator.nullsLast(times));
+            case "customerName" -> Comparator.comparing(AdminOrderRow::customerName, Comparator.nullsLast(text));
+            case "status" -> Comparator.comparing(AdminOrderRow::status, Comparator.nullsLast(text));
+            case "totalPrice" -> Comparator.comparing(AdminOrderRow::totalPrice, numbers);
+            default -> throw new ProductException("Unknown sort column: " + sort);
+        };
+        List<AdminOrderRow> all = new ArrayList<>(searchOrders(status, paymentMethod, phno, from, to));
+        all.sort(comparator.thenComparing(AdminOrderRow::orderId, ids));
+        double matchingTotal = all.stream().mapToDouble(AdminOrderRow::totalPrice).sum();
+        int totalPages = (int) Math.ceil(all.size() / (double) size);
+        int fromIndex = (int) Math.min((long) page * size, all.size());
+        int toIndex = Math.min(fromIndex + size, all.size());
+        return new AdminOrderPage(new ArrayList<>(all.subList(fromIndex, toIndex)), page, size, all.size(),
+                totalPages, matchingTotal);
     }
 
     // Same filters as searchOrders(), rendered as CSV (RFC 4180 quoting). Free-text cells starting with =, +, -

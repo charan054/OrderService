@@ -2634,6 +2634,67 @@ class OrderServiceTest {
         assertThrows(ProductException.class, () -> service.searchOrders(null, "bitcoin", null, null, null));
     }
 
+    private void sevenAdminOrders() {
+        Cart a = adminOrder(1, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "bravo");
+        a.setTotalPrice(300.0);
+        Cart b = adminOrder(2, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "Alpha");
+        b.setTotalPrice(100.0);
+        Cart c = adminOrder(3, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, null);
+        c.setTotalPrice(200.0);
+        Cart d = adminOrder(4, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "charlie");
+        d.setTotalPrice(400.0);
+        Cart e = adminOrder(5, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "delta");
+        e.setTotalPrice(500.0);
+        when(orderRepository.findAll()).thenReturn(List.of(a, b, c, d, e));
+        when(trackingEventRepository.findAll()).thenReturn(List.of(
+                trackedAt(1, "2026-10-01T00:00:00Z"), trackedAt(2, "2026-10-02T00:00:00Z"),
+                trackedAt(4, "2026-10-04T00:00:00Z"), trackedAt(5, "2026-10-05T00:00:00Z")));
+    }
+
+    @Test
+    void searchOrdersPageDefaultsToNewestFirstAndPages() {
+        sevenAdminOrders();
+
+        com.example.orderservice.dto.AdminOrderPage first = service.searchOrdersPage(null, null, null, null, null, null, null, 0, 2);
+        com.example.orderservice.dto.AdminOrderPage last = service.searchOrdersPage(null, null, null, null, null, null, null, 2, 2);
+        com.example.orderservice.dto.AdminOrderPage beyond = service.searchOrdersPage(null, null, null, null, null, null, null, 9, 2);
+
+        assertEquals(List.of(5L, 4L), first.rows().stream().map(AdminOrderRow::orderId).toList());
+        assertEquals(5, first.totalElements());
+        assertEquals(3, first.totalPages());
+        assertEquals(1500.0, first.matchingTotal());
+        assertEquals(List.of(1L), last.rows().stream().map(AdminOrderRow::orderId).toList());
+        assertTrue(beyond.rows().isEmpty());
+    }
+
+    @Test
+    void searchOrdersPageSortsByTotalAndByNameWithMissingValuesLast() {
+        sevenAdminOrders();
+
+        List<Long> byTotalAsc = service.searchOrdersPage(null, null, null, null, null, "totalPrice", "asc", 0, 10)
+                .rows().stream().map(AdminOrderRow::orderId).toList();
+        List<Long> byNameAsc = service.searchOrdersPage(null, null, null, null, null, "customerName", "asc", 0, 10)
+                .rows().stream().map(AdminOrderRow::orderId).toList();
+        List<Long> byNameDesc = service.searchOrdersPage(null, null, null, null, null, "customerName", "desc", 0, 10)
+                .rows().stream().map(AdminOrderRow::orderId).toList();
+        List<Long> byPlacedDesc = service.searchOrdersPage(null, null, null, null, null, "placedAt", "desc", 0, 10)
+                .rows().stream().map(AdminOrderRow::orderId).toList();
+
+        assertEquals(List.of(2L, 3L, 1L, 4L, 5L), byTotalAsc);
+        assertEquals(List.of(2L, 1L, 4L, 5L, 3L), byNameAsc);
+        assertEquals(List.of(5L, 4L, 1L, 2L, 3L), byNameDesc);
+        assertEquals(List.of(5L, 4L, 2L, 1L, 3L), byPlacedDesc);
+    }
+
+    @Test
+    void searchOrdersPageRejectsBadPagingSortAndDirection() {
+        assertThrows(ProductException.class, () -> service.searchOrdersPage(null, null, null, null, null, null, null, -1, 10));
+        assertThrows(ProductException.class, () -> service.searchOrdersPage(null, null, null, null, null, null, null, 0, 0));
+        assertThrows(ProductException.class, () -> service.searchOrdersPage(null, null, null, null, null, null, null, 0, 101));
+        assertThrows(ProductException.class, () -> service.searchOrdersPage(null, null, null, null, null, "password", null, 0, 10));
+        assertThrows(ProductException.class, () -> service.searchOrdersPage(null, null, null, null, null, null, "sideways", 0, 10));
+    }
+
     @Test
     void exportOrdersCsvQuotesCellsAndNeutralisesFormulas() {
         Cart tricky = adminOrder(7, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "Smith, \"Bob\"");

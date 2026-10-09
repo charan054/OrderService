@@ -1,6 +1,7 @@
 package com.example.orderservice.controller;
 
 import com.example.orderservice.security.CustomerAccess;
+import com.example.orderservice.dto.AdminOrderPage;
 import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.BulkTransitionResult;
 import com.example.orderservice.dto.CancellationReport;
@@ -370,6 +371,19 @@ public class OrderController {
                                             @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
                                             @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to){
         return orderService.searchOrders(status, paymentMethod, phno, from, to);
+    }
+    // Paged + sortable version of /orders/search for the admin table (see OrderService.searchOrdersPage).
+    @GetMapping("/orders/page")
+    public AdminOrderPage searchOrdersPage(@RequestParam(required = false) String status,
+                                           @RequestParam(required = false) String paymentMethod,
+                                           @RequestParam(required = false) Long phno,
+                                           @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
+                                           @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to,
+                                           @RequestParam(required = false) String sort,
+                                           @RequestParam(required = false) String dir,
+                                           @RequestParam(defaultValue = "0") int page,
+                                           @RequestParam(defaultValue = "25") int size){
+        return orderService.searchOrdersPage(status, paymentMethod, phno, from, to, sort, dir, page, size);
     }
     @GetMapping(value = "/orders/export", produces = "text/csv")
     public org.springframework.http.ResponseEntity<String> exportOrders(@RequestParam(required = false) String status,
