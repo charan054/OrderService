@@ -696,12 +696,14 @@
                     <button id="tabRecent" onclick="showTab('recent')">Recently viewed</button>
                     <button id="tabAccount" onclick="showTab('account')">My account</button>
                     <button id="tabNotifications" onclick="showTab('notifications')">My notifications</button>
+                    <button id="tabHelp" onclick="showTab('help')">Help</button>
                 </div>
                 <div id="wishlistShare" class="hidden" style="margin:0 0 12px; font-size:14px;"></div>
                 <div id="productGrid" class="product-grid"></div>
                 <div id="productPager" class="pager hidden"></div>
                 <div id="accountView" class="hidden"></div>
                 <div id="notificationsView" class="hidden"></div>
+                <div id="helpView" class="hidden"></div>
             </div>
 
             <div class="panel">
@@ -1384,23 +1386,58 @@
       document.getElementById("tabWishlist").classList.toggle("active", tab === "wishlist");
       document.getElementById("tabAccount").classList.toggle("active", tab === "account");
       document.getElementById("tabNotifications").classList.toggle("active", tab === "notifications");
+      document.getElementById("tabHelp").classList.toggle("active", tab === "help");
       document.getElementById("tabRecent").classList.toggle("active", tab === "recent");
-      document.getElementById("productGrid").classList.toggle("hidden", tab === "account" || tab === "notifications");
-      if (tab === "account" || tab === "notifications") document.getElementById("productPager").classList.add("hidden");
+      const standalone = tab === "account" || tab === "notifications" || tab === "help";
+      document.getElementById("productGrid").classList.toggle("hidden", standalone);
+      if (standalone) document.getElementById("productPager").classList.add("hidden");
       currentPage = 1;
       document.getElementById("wishlistShare").classList.toggle("hidden", tab !== "wishlist");
       if (tab === "wishlist") loadWishlistShare();
       document.getElementById("accountView").classList.toggle("hidden", tab !== "account");
       document.getElementById("notificationsView").classList.toggle("hidden", tab !== "notifications");
-      document.querySelector(".search-row").classList.toggle("hidden", tab === "account" || tab === "notifications");
-      document.querySelector(".filter-row").classList.toggle("hidden", tab === "account" || tab === "notifications");
+      document.getElementById("helpView").classList.toggle("hidden", tab !== "help");
+      document.querySelector(".search-row").classList.toggle("hidden", standalone);
+      document.querySelector(".filter-row").classList.toggle("hidden", standalone);
       if (tab === "account") {
         loadAccountView();
       } else if (tab === "notifications") {
         loadNotificationsView();
+      } else if (tab === "help") {
+        loadHelpView();
       } else {
         renderProducts();
       }
+    }
+
+    let helpEntries = null;
+
+    async function loadHelpView() {
+      const view = document.getElementById("helpView");
+      if (helpEntries === null) {
+        view.innerHTML = `<p style="color:var(--muted);">Loading help...</p>`;
+        try {
+          const response = await fetch(`${BASE_URL}/faq`);
+          helpEntries = response.ok ? await response.json() : [];
+        } catch (e) {
+          helpEntries = [];
+        }
+      }
+      view.innerHTML = `<input type="text" id="helpSearch" placeholder="Search help..." oninput="renderHelpEntries()" style="width:100%; margin-bottom:12px;" />
+        <div id="helpList"></div>
+        <p style="margin-top:14px; font-size:13px; color:var(--muted);">Still stuck? Open <strong>My account</strong>, find the order and choose <strong>Report a problem</strong>.</p>`;
+      renderHelpEntries();
+    }
+
+    // Questions and answers are admin-entered plain text, so they are escaped; the search matches either.
+    function renderHelpEntries() {
+      const term = (document.getElementById("helpSearch")?.value || "").trim().toLowerCase();
+      const matches = (helpEntries || []).filter(e => !term || e.question.toLowerCase().includes(term) || e.answer.toLowerCase().includes(term));
+      document.getElementById("helpList").innerHTML = matches.length
+        ? matches.map(e => `<details class="help-entry" style="margin-bottom:8px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface);">
+            <summary style="cursor:pointer; font-weight:600;">${escapeHtml(e.question)}</summary>
+            <p style="margin-top:8px; white-space:pre-line;">${escapeHtml(e.answer)}</p></details>`).join("")
+        : `<p style="color:var(--muted);">${(helpEntries || []).length ? "No help entries match your search." : "No help entries yet."}</p>`;
     }
 
     async function loadNotificationsView() {
@@ -1706,7 +1743,7 @@
     // "Report a problem" on an order: what kind, which item (optional), what happened, and an optional photo link.
     async function reportProblem(orderId) {
       const order = accountOrders.find(o => o.orderId === orderId);
-      const choice = prompt("What's the problem? Enter a number:\n" + SUPPORT_CATEGORIES.map((c, i) => `${i + 1}. ${c[1]}`).join("\n"));
+      const choice = prompt("What's the problem? (Many answers are in the Help tab.) Enter a number:\n" + SUPPORT_CATEGORIES.map((c, i) => `${i + 1}. ${c[1]}`).join("\n"));
       if (choice === null) return;
       const category = SUPPORT_CATEGORIES[Number(choice) - 1];
       if (!category) { alert("Please enter one of the numbers shown."); return; }
