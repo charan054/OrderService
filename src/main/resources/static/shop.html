@@ -1815,9 +1815,13 @@
             <strong>${escapeHtml(a.label || "Address")}</strong>${a.isDefault ? ' <span class="meta">(default)</span>' : ""}
             <span class="meta">${escapeHtml(a.line1)}, ${escapeHtml(a.city)}, ${escapeHtml(a.state)} ${escapeHtml(a.pincode)}</span>
           </div>
+          ${a.isDefault ? "" : `<button class="secondary" style="width:auto;" onclick="makeAddressDefault(${a.id})">Make default</button>`}
+          <button class="secondary" style="width:auto;" onclick="editAddress(${a.id})">Edit</button>
           <button class="secondary" style="width:auto;" onclick="removeAddress(${a.id})">Remove</button>
         </div>
       `).join("");
+      accountAddresses = addresses;
+      editingAddressId = null;
 
       const alertsListHtml = alertsHtml(waitlist);
 
@@ -1843,9 +1847,11 @@
         ${alertsListHtml}
         <h3 style="margin:20px 0 10px;">Saved addresses</h3>
         ${addressesHtml || `<p style="color:var(--muted);">No saved addresses yet.</p>`}
-        <div style="margin-top:12px;">
+        <div id="addressForm" style="margin-top:12px;">
+          <h4 id="addressFormTitle" style="margin:0 0 8px;">Add an address</h4>
           <input type="text" id="newAddrLabel" placeholder="Label, e.g. Home (optional)" />
           <input type="text" id="newAddrLine1" placeholder="Address line 1" />
+          <input type="text" id="newAddrLine2" placeholder="Address line 2 (optional)" />
           <input type="text" id="newAddrCity" placeholder="City" />
           <input type="text" id="newAddrState" placeholder="State" />
           <input type="text" id="newAddrPincode" placeholder="Pincode" maxlength="6" inputmode="numeric" oninput="autofillFromPincode()" />
@@ -1854,7 +1860,8 @@
             <input type="checkbox" id="newAddrDefault" style="width:auto;" /> Make default
           </label>
           <div id="addAddressError" class="error-text hidden"></div>
-          <button onclick="addAddress()">Add address</button>
+          <button id="addressSubmit" onclick="addAddress()">Add address</button>
+          <button id="addressCancel" class="secondary hidden" style="width:auto;" onclick="cancelAddressEdit()">Cancel</button>
         </div>
       `;
     }
@@ -2138,6 +2145,41 @@
       loadAccountView();
     }
 
+    // Editing reuses the add form: Edit fills it from the saved address and switches the button to "Save changes";
+    // saving sends the address id, which the server treats as an update of that (own) address.
+    let accountAddresses = [];
+    let editingAddressId = null;
+
+    function editAddress(addressId) {
+      const a = accountAddresses.find(x => x.id === addressId);
+      if (!a) return;
+      editingAddressId = addressId;
+      document.getElementById("newAddrLabel").value = a.label || "";
+      document.getElementById("newAddrLine1").value = a.line1 || "";
+      document.getElementById("newAddrLine2").value = a.line2 || "";
+      document.getElementById("newAddrCity").value = a.city || "";
+      document.getElementById("newAddrState").value = a.state || "";
+      document.getElementById("newAddrPincode").value = a.pincode || "";
+      document.getElementById("newAddrDefault").checked = !!a.isDefault;
+      document.getElementById("addressFormTitle").textContent = "Edit address";
+      document.getElementById("addressSubmit").textContent = "Save changes";
+      document.getElementById("addressCancel").classList.remove("hidden");
+      document.getElementById("addAddressError").classList.add("hidden");
+      document.getElementById("addressForm").scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    function cancelAddressEdit() {
+      editingAddressId = null;
+      loadAccountView();
+    }
+
+    async function makeAddressDefault(addressId) {
+      const response = await authFetch(`${BASE_URL}/addresses/self/default?phno=${encodeURIComponent(customerPhno)}&addressId=${encodeURIComponent(addressId)}`, { method: "PUT" });
+      if (!response.ok) { alert("Could not change the default address."); return; }
+      loadAccountView();
+      loadAddressOptions();
+    }
+
     async function addAddress() {
       const line1 = document.getElementById("newAddrLine1").value.trim();
       const city = document.getElementById("newAddrCity").value.trim();
@@ -2150,14 +2192,21 @@
         errorBox.classList.remove("hidden");
         return;
       }
+      if (!/^[1-9][0-9]{5}$/.test(pincode)) {
+        errorBox.textContent = "Pincode must be 6 digits.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
 
       const response = await authFetch(`${BASE_URL}/addresses/self/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          id: editingAddressId,
           customerPhno: Number(customerPhno),
           label: document.getElementById("newAddrLabel").value.trim() || null,
           line1, city, state, pincode,
+          line2: document.getElementById("newAddrLine2").value.trim() || null,
           isDefault: document.getElementById("newAddrDefault").checked
         })
       });

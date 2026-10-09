@@ -28,6 +28,13 @@ public class ShippingAddressController {
         return orderService.saveAddress(address);
     }
 
+    // Make one of the caller's own saved addresses the default (see OrderService.setDefaultAddress).
+    @PutMapping("/self/default")
+    public ShippingAddress makeOwnAddressDefault(@RequestParam long phno, @RequestParam long addressId) {
+        CustomerAccess.requireSelfOrService(phno);
+        return orderService.setDefaultAddress(phno, addressId);
+    }
+
     @GetMapping("/byphno")
     public List<ShippingAddress> getAddresses(@RequestParam long phno) {
         CustomerAccess.requireSelfOrService(phno);

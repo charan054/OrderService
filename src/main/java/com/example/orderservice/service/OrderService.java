@@ -2529,6 +2529,10 @@ public class OrderService {
                 || address.getPincode() == null || address.getPincode().isBlank()) {
             throw new ProductException("Address line 1, city, state and pincode are required");
         }
+        address.setPincode(address.getPincode().trim());
+        if (!address.getPincode().matches("[1-9][0-9]{5}")) {
+            throw new ProductException("Pincode must be 6 digits");
+        }
         // An id in the body makes save() update that row - only allowed for the caller's own address, otherwise
         // anyone could overwrite (and take over) another customer's saved address.
         if (address.getId() != null) {
@@ -2546,6 +2550,29 @@ public class OrderService {
             }
         }
         return shippingAddressRepository.save(address);
+    }
+
+    // Makes one of the caller's own addresses the default without re-sending its fields; whichever address held the
+    // default before loses it. Idempotent, and ownership-checked like deleteAddress().
+    @Transactional
+    public ShippingAddress setDefaultAddress(long phno, long addressId) {
+        validatePhno(phno);
+        ShippingAddress address = shippingAddressRepository.findById(addressId)
+                .orElseThrow(() -> new OrderNotFoundException("Address not found"));
+        if (address.getCustomerPhno() != phno) {
+            throw new OrderNotFoundException("Address not found");
+        }
+        for (ShippingAddress existing : shippingAddressRepository.findByCustomerPhnoAndIsDefaultTrue(phno)) {
+            if (!existing.getId().equals(address.getId())) {
+                existing.setDefault(false);
+                shippingAddressRepository.save(existing);
+            }
+        }
+        if (!address.isDefault()) {
+            address.setDefault(true);
+            address = shippingAddressRepository.save(address);
+        }
+        return address;
     }
 
     public List<ShippingAddress> getAddresses(long phno) {
