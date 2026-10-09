@@ -3884,6 +3884,34 @@ class OrderServiceTest {
     }
 
     @Test
+    void checkPincodeReturnsCityAndStateWhenKnown() {
+        com.example.orderservice.entity.ServiceablePincode sp = serviceable("411001", 2);
+        sp.setCity("Pune");
+        sp.setState("Maharashtra");
+        when(serviceablePincodeRepository.count()).thenReturn(1L);
+        when(serviceablePincodeRepository.findById("411001")).thenReturn(java.util.Optional.of(sp));
+
+        com.example.orderservice.dto.PincodeServiceability r = service.checkPincode("411001");
+
+        assertEquals("Pune", r.city());
+        assertEquals("Maharashtra", r.state());
+    }
+
+    @Test
+    void importPincodesSavesGoodRowsAndReportsBadOnes() {
+        when(serviceablePincodeRepository.save(any(com.example.orderservice.entity.ServiceablePincode.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        com.example.orderservice.dto.PincodeImportResult r = service.importPincodes(
+                "pincode,deliveryDays,city,state\r\n411001,2,Pune,Maharashtra\r\n\r\n560001,3\r\n12345,2\r\n400001,x\r\n500001\r\n");
+
+        assertEquals(2, r.imported());
+        assertEquals(3, r.errors().size());
+        assertTrue(r.errors().get(0).startsWith("Line 5:"));
+        verify(serviceablePincodeRepository, times(2)).save(any(com.example.orderservice.entity.ServiceablePincode.class));
+    }
+
+    @Test
     void removePincodeRejectsAnUnknownOne() {
         when(serviceablePincodeRepository.existsById("411001")).thenReturn(false);
 

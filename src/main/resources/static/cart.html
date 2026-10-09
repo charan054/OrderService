@@ -481,9 +481,14 @@
             <p>Pincodes we deliver to, with delivery days. While the list is empty every pincode is accepted; once it has any entry, checkout rejects addresses outside it. Requires the Service Key above.</p>
             <input type="text" id="pinCode" placeholder="6-digit pincode" maxlength="6" />
             <input type="number" id="pinDays" placeholder="Delivery days (1-30)" />
+            <input type="text" id="pinCity" placeholder="City (optional, autofills the storefront address form)" />
+            <input type="text" id="pinState" placeholder="State (optional)" />
             <button class="blue" onclick="addPincode()">Add / Update Pincode</button>
             <button onclick="listPincodes()">List Pincodes</button>
             <button onclick="removePincode()">Remove Pincode</button>
+            <p style="margin-top:14px;">Or import many at once - one <code>pincode,deliveryDays,city,state</code> per line (city and state optional, header row allowed):</p>
+            <textarea id="pinImportCsv" rows="5" placeholder="411001,2,Pune,Maharashtra"></textarea>
+            <button class="blue" onclick="importPincodes()">Import Pincodes</button>
         </div>
 
         <div class="card">
@@ -2533,10 +2538,25 @@
       const data = await apiCall(`http://localhost:8083/pincodes/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
-        body: JSON.stringify({ pincode, deliveryDays: Number(deliveryDays) })
+        body: JSON.stringify({ pincode, deliveryDays: Number(deliveryDays),
+          city: document.getElementById("pinCity").value.trim(), state: document.getElementById("pinState").value.trim() })
       });
       showStatus("Pincode saved. Result opened in new tab.", "success");
       openResultTab("Add Pincode", data);
+    }
+
+    async function importPincodes() {
+      const csv = document.getElementById("pinImportCsv").value;
+      if (!csv.trim()) return showStatus("Paste some pincode rows first.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const data = await apiCall(`http://localhost:8083/pincodes/import`, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain", "X-Service-Key": serviceKey },
+        body: csv
+      });
+      showStatus("Import finished. Result opened in new tab.", "success");
+      openResultTab("Import Pincodes", data);
     }
 
     async function listPincodes() {

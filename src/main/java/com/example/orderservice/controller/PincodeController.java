@@ -1,5 +1,6 @@
 package com.example.orderservice.controller;
 
+import com.example.orderservice.dto.PincodeImportResult;
 import com.example.orderservice.dto.PincodeServiceability;
 import com.example.orderservice.entity.ServiceablePincode;
 import com.example.orderservice.service.OrderService;
@@ -29,6 +30,12 @@ public class PincodeController {
     @PostMapping("/add")
     public ServiceablePincode add(@RequestBody ServiceablePincode pincode) {
         return orderService.savePincode(pincode);
+    }
+
+    // Admin: CSV text body, one pincode,deliveryDays[,city,state] per line.
+    @PostMapping(value = "/import", consumes = "text/plain")
+    public PincodeImportResult importCsv(@RequestBody String csv) {
+        return orderService.importPincodes(csv);
     }
 
     @DeleteMapping("/remove")
