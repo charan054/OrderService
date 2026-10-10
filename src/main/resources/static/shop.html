@@ -1833,6 +1833,8 @@
         ${recommendationsHtml(recommendations)}
         <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="downloadMyData()">Download my data</button>
           <span class="meta">Everything we store about you, as a JSON file.</span></p>
+        <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="startAccountDeletion()">Delete my account</button>
+          <span class="meta">Erases your addresses, wishlist, alerts and saved cart and unlinks your email. Needs a code we email you.</span></p>
         ${storeCreditHtml(storeCredit)}${giftCardRedeemHtml()}
         ${emailPrefs ? `<p style="margin:8px 0;"><label style="display:flex; align-items:center; gap:8px;">
           <input type="checkbox" id="marketingEmails" style="width:auto;" ${emailPrefs.marketingEmails ? "checked" : ""} onchange="setMarketingEmails(this)" />
@@ -1941,6 +1943,44 @@
       link.click();
       link.remove();
       URL.revokeObjectURL(link.href);
+    }
+
+    // Delete my account: preview what would happen (and anything that blocks it), email a code, then confirm with it.
+    // Loyalty points and store credit are lost, so the customer is told the amounts and must accept that first.
+    async function startAccountDeletion() {
+      const previewResponse = await authFetch(`${BASE_URL}/customer/account/delete/preview`);
+      if (!previewResponse.ok) { alert("Couldn't check your account right now. Please try again."); return; }
+      const preview = await previewResponse.json();
+      if (!preview.canDelete) {
+        alert("Your account can't be deleted yet:\n\n" + (preview.blockers.length ? preview.blockers.join("\n\n") : "There is no account to delete."));
+        return;
+      }
+      const forfeits = [];
+      if (preview.loyaltyPoints > 0) forfeits.push(`${preview.loyaltyPoints} loyalty point(s)`);
+      if (preview.storeCredit > 0) forfeits.push(`store credit of ₹${preview.storeCredit.toFixed(2)}`);
+      if (!confirm("Delete your account?\n\n"
+          + "This permanently erases your saved addresses, wishlist, stock alerts, saved cart"
+          + (preview.activeSubscriptions > 0 ? `, ${preview.activeSubscriptions} subscription(s)` : "") + " and support requests, and unlinks " + preview.email + ".\n"
+          + "Your past orders are kept for invoices, without your name or phone number.\n"
+          + (forfeits.length ? "\nYou will LOSE " + forfeits.join(" and ") + ".\n" : "")
+          + "\nWe will email a confirmation code to " + preview.email + ". This cannot be undone.")) return;
+      const requestResponse = await authFetch(`${BASE_URL}/customer/account/delete/request`, { method: "POST" });
+      if (!requestResponse.ok) { alert((await requestResponse.text()) || "Couldn't send the code. Please try again."); return; }
+      const code = prompt(`We emailed a 6-digit code to ${preview.email}. Enter it to permanently delete your account:`);
+      if (code === null || !code.trim()) return;
+      const confirmResponse = await authFetch(`${BASE_URL}/customer/account/delete/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: code.trim(), acknowledgeForfeit: forfeits.length > 0 })
+      });
+      if (!confirmResponse.ok) { alert((await confirmResponse.text()) || "Couldn't delete the account. Please try again."); return; }
+      // endSession keeps the saved cart in this browser for the next login; for a deleted account nothing should stay.
+      try {
+        localStorage.removeItem(cartStorageKey());
+        localStorage.removeItem("pendingCartAdds");
+        localStorage.removeItem("shopRecentlyViewed");
+      } catch (e) {}
+      endSession("Your account has been deleted.");
     }
 
     const SUPPORT_CATEGORIES = [

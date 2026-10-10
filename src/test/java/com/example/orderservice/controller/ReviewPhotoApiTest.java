@@ -188,11 +188,13 @@ class ReviewPhotoApiTest {
         mockMvc.perform(post("/cart/reviews/photo/tidy").header("X-Service-Key", VALID_KEY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.dryRun").value(true));
-        // Even a real run keeps it: nobody has attached it to a review yet, but it is minutes old.
+        // Even a real run keeps it: nobody has attached it to a review yet, but it is minutes old. (The shared test
+        // folder may also hold older photos from earlier runs, which a real run rightly removes - so only this one is checked.)
         mockMvc.perform(post("/cart/reviews/photo/tidy").param("dryRun", "false").header("X-Service-Key", VALID_KEY))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.dryRun").value(false))
-                .andExpect(jsonPath("$.orphaned").value(0));
+                .andExpect(jsonPath("$.tooRecent").value(org.hamcrest.Matchers.greaterThanOrEqualTo(1)))
+                .andExpect(jsonPath("$.files[?(@ == '%s')]".formatted(URI.create(url).getPath().substring("/review-photos/".length()))).isEmpty());
 
         mockMvc.perform(get(URI.create(url).getPath())).andExpect(status().isOk());
     }
