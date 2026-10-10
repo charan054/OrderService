@@ -64,6 +64,11 @@ public interface ProductClient {
     @GetMapping("/product/reviews/photos")
     List<String> getReviewPhotoUrls(@RequestHeader("X-Service-Key") String serviceKey);
 
+    // Account deletion: takes the customer's name, phone number and photo off the reviews they wrote (the reviews stay).
+    // X-Service-Key only on ProductService's side. Returns how many reviews changed.
+    @PutMapping("/product/reviews/anonymise")
+    int anonymiseReviews(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam long phno);
+
     // Public on ProductService's side (matches "/product/*/reviews", POST open).
 
     @PostMapping("/product/{productId}/reviews")

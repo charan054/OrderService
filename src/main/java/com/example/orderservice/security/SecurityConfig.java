@@ -86,6 +86,10 @@ public class SecurityConfig {
 
                         // ---- Customer (own data only, see CustomerAccess) or service ----
                         .requestMatchers(HttpMethod.GET, "/customer/session").hasRole("CUSTOMER")
+                        // Deleting your own account: the customer session only (never the service key), and the phone
+                        // number is taken from the session.
+                        .requestMatchers(HttpMethod.GET, "/customer/account/delete/preview").hasRole("CUSTOMER")
+                        .requestMatchers(HttpMethod.POST, "/customer/account/delete/request", "/customer/account/delete/confirm").hasRole("CUSTOMER")
                         .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/history", "/cart/recommendations", "/cart/notifications", "/cart/*/invoice", "/cart/*/invoice.pdf", "/cart/*/paymentstatus",
                                 "/wishlist/byphno", "/wishlist/pricedrops", "/wishlist/share", "/waitlist/byphno", "/addresses/byphno",
                                 "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/customer/export", "/coupons/available", "/referral/mine", "/questions/mine", "/savedcart", "/feedback/mine", "/prefs/mine", "/customer/cod", "/storecredit/byphno", "/support/tickets/mine", "/subscriptions/mine").hasAnyRole("CUSTOMER", "SERVICE")

@@ -1652,8 +1652,10 @@ public class OrderService {
                 .map(TrackingEvent::getTimestamp).findFirst().orElse(null);
         com.example.orderservice.entity.ShippingAddress shipTo = order.getShippingAddressId() == null ? null
                 : shippingAddressRepository.findById(order.getShippingAddressId()).orElse(null);
+        // Blank parts are skipped: an address erased by account deletion keeps only its state.
         String address = shipTo == null ? null
-                : String.join(", ", shipTo.getLine1(), shipTo.getCity(), shipTo.getState(), shipTo.getPincode());
+                : java.util.stream.Stream.of(shipTo.getLine1(), shipTo.getCity(), shipTo.getState(), shipTo.getPincode())
+                        .filter(part -> part != null && !part.isBlank()).collect(java.util.stream.Collectors.joining(", "));
         // Place of supply is where the goods go; without a saved address it is taken to be the store's own state.
         String placeOfSupply = shipTo != null && shipTo.getState() != null && !shipTo.getState().isBlank()
                 ? shipTo.getState().trim() : storeState;
