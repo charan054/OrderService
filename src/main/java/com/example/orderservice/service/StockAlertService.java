@@ -87,7 +87,7 @@ public class StockAlertService {
                 Pending pending = byCustomer.computeIfAbsent(entry.getCustomerPhno(), k -> new Pending());
                 pending.restocks++;
                 pending.lines.add("Back in stock: " + product.getProductName() + " - Rs. " + money(product.getProductPrice())
-                        + " (" + product.getProductStock() + " available)");
+                        + " (" + product.getProductStock() + " available)" + link(entry.getProductId()));
                 pending.onSent.add(() -> {
                     entry.setNotifiedAt(clock.instant());
                     waitlists.save(entry);
@@ -118,7 +118,7 @@ public class StockAlertService {
                 Pending pending = byCustomer.computeIfAbsent(item.getCustomerPhno(), k -> new Pending());
                 pending.priceDrops++;
                 pending.lines.add("Price drop: " + product.getProductName() + " is now Rs. " + money(price)
-                        + " (was Rs. " + money(item.getPriceWhenAdded()) + ")");
+                        + " (was Rs. " + money(item.getPriceWhenAdded()) + ")" + link(item.getProductId()));
                 pending.onSent.add(() -> {
                     item.setLastAlertedPrice(price);
                     wishlists.save(item);
@@ -171,6 +171,11 @@ public class StockAlertService {
         }
         cache.put(productId, product);
         return product;
+    }
+
+    // Deep link to the product card (shop.html#product=ID); empty when no shop URL is configured.
+    private String link(int productId) {
+        return shopUrl.isEmpty() ? "" : "\n      " + shopUrl + "#product=" + productId;
     }
 
     private static String money(double value) {

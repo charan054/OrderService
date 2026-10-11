@@ -100,6 +100,17 @@ class StockAlertServiceTest {
     }
 
     @Test
+    void alertLinesDeepLinkToTheProductCard() {
+        when(waitlists.findAll()).thenReturn(List.of(waiting(7, null)));
+        when(wishlists.findAll()).thenReturn(List.of());
+        when(productClient.getProductById(7)).thenReturn(product(7, 49.5, 12));
+        verifiedEmail();
+        when(mailService.send(anyString(), anyString(), contains("http://shop.example/shop.html#product=7"))).thenReturn(true);
+
+        assertEquals(1, service.run().emailsSent());
+    }
+
+    @Test
     void emailsAWaitlistedCustomerWhenTheProductIsBackInStockAndRecordsIt() {
         StockWaitlist entry = waiting(1, null);
         when(waitlists.findAll()).thenReturn(List.of(entry));
