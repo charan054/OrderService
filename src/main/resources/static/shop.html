@@ -262,8 +262,9 @@
         .search-row input { margin-bottom: 0; flex: 2; }
         .search-row select { margin-bottom: 0; flex: 1; }
 
-        .filter-row { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+        .filter-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
         .filter-row select { margin-bottom: 0; flex: 1; max-width: 240px; }
+        .filter-row input[type=number] { margin-bottom: 0; }
         .in-stock-toggle { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--muted); white-space: nowrap; cursor: pointer; }
         .in-stock-toggle input { width: auto; margin: 0; }
 
@@ -704,6 +705,8 @@
                         <option value="name">Name A-Z</option>
                     </select>
                     <label class="in-stock-toggle"><input type="checkbox" id="inStockOnly" onchange="resetPageAndRender()" /> In stock only</label>
+                    <input type="number" id="minPrice" min="0" step="any" inputmode="decimal" placeholder="Min ₹" aria-label="Minimum price" oninput="resetPageAndRender()" style="width:5.5rem;" />
+                    <input type="number" id="maxPrice" min="0" step="any" inputmode="decimal" placeholder="Max ₹" aria-label="Maximum price" oninput="resetPageAndRender()" style="width:5.5rem;" />
                 </div>
                 <div class="grid-tabs">
                     <button class="active" id="tabAll" onclick="showTab('all')">All products</button>
@@ -2475,6 +2478,13 @@
       // if any of its options is, and sorts by the option on show.
       let shownProducts = collapseVariants(visibleProducts);
       if (inStockOnly) shownProducts = shownProducts.filter(item => item.variants.some(v => v.productStock > 0));
+      // Price range: blank or invalid boxes mean "no limit". A grouped card passes if any of its options is in range.
+      const minPrice = parseFloat(document.getElementById("minPrice").value);
+      const maxPrice = parseFloat(document.getElementById("maxPrice").value);
+      if (!Number.isNaN(minPrice) || !Number.isNaN(maxPrice)) {
+        shownProducts = shownProducts.filter(item => item.variants.some(v =>
+          (Number.isNaN(minPrice) || v.productPrice >= minPrice) && (Number.isNaN(maxPrice) || v.productPrice <= maxPrice)));
+      }
       const ratingOf = p => { const r = ratingsByProductId.get(p.productId); return r && r.reviewCount > 0 ? r.averageRating : -1; };
       if (sortBy === "priceAsc") shownProducts.sort((a, b) => a.product.productPrice - b.product.productPrice);
       else if (sortBy === "priceDesc") shownProducts.sort((a, b) => b.product.productPrice - a.product.productPrice);
