@@ -805,6 +805,13 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void missedSearchesAreServiceKeyOnlyAndAZeroResultSearchIsRecorded() throws Exception {
+        mockMvc.perform(get("/cart/analytics/missed-searches")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/analytics/missed-searches").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(get("/cart/analytics/missed-searches").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
+    @Test
     void todaySnapshotIsServiceKeyOnly() throws Exception {
         mockMvc.perform(get("/cart/analytics/today")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/cart/analytics/today").with(customer())).andExpect(status().isForbidden());

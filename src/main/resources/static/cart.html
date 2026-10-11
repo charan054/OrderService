@@ -1142,6 +1142,20 @@
             <div id="todayWrap" class="orders-table-wrap"></div>
         </div>
         <div class="card wide">
+            <div class="card-header">
+                <div class="icon">&#128269;</div>
+                <div class="title-wrap">
+                    <h2>Missed Searches</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Words shoppers typed into the storefront search that matched no product, most frequent first. Only the word is kept - no phone number or account. Good input for what to stock next. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadMissedSearches()">Load Missed Searches</button>
+            </div>
+            <div id="missedSearchWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
             <div class="card-header" id="card-moderation">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
@@ -2170,6 +2184,18 @@
           <li>Unanswered customer questions: ${a.unansweredQuestions}</li>
         </ul>`;
       showStatus("Today's snapshot loaded.", "success");
+    }
+
+    async function loadMissedSearches() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const rows = await apiCall(`${BASE_URL}/analytics/missed-searches`, { headers: { "X-Service-Key": serviceKey } });
+      if (!Array.isArray(rows)) return;
+      document.getElementById("missedSearchWrap").innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>Search</th><th>Times</th><th>Last searched</th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>${escapeHtml(r.term)}</td><td>${r.times}</td><td>${r.lastSearchedAt ? new Date(r.lastSearchedAt).toLocaleString() : "-"}</td></tr>`).join("")}</tbody></table>`
+        : "<p>No missed searches yet - every search so far found something.</p>";
+      showStatus(`${rows.length} missed search term(s) loaded.`, "success");
     }
 
     // ---------- review moderation ----------
