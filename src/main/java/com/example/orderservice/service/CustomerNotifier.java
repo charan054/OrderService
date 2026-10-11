@@ -8,9 +8,12 @@ import com.example.orderservice.repository.CustomerAccountRepository;
 import com.example.orderservice.repository.NotificationLogRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Clock;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.Locale;
 
 /**
@@ -30,13 +33,26 @@ public class CustomerNotifier {
     private final NotificationLogRepository notifications;
     private final MailService mailService;
     private final Clock clock;
+    private final Executor mailExecutor;
 
+    @Autowired
     public CustomerNotifier(CustomerAccountRepository accounts, NotificationLogRepository notifications,
                             MailService mailService, Clock clock) {
+        // SMTP can take seconds (or time out); one background thread keeps that off the order request.
+        this(accounts, notifications, mailService, clock, Executors.newSingleThreadExecutor(r -> {
+            Thread t = new Thread(r, "customer-mail");
+            t.setDaemon(true);
+            return t;
+        }));
+    }
+
+    CustomerNotifier(CustomerAccountRepository accounts, NotificationLogRepository notifications,
+                     MailService mailService, Clock clock, Executor mailExecutor) {
         this.accounts = accounts;
         this.notifications = notifications;
         this.mailService = mailService;
         this.clock = clock;
+        this.mailExecutor = mailExecutor;
     }
 
     public NotificationLog notifyStatusChange(Cart order, OrderStatus status) {
@@ -63,20 +79,34 @@ public class CustomerNotifier {
 
     private NotificationLog deliver(Cart order, OrderStatus status, String subject, String body) {
         String email = accounts.findById(order.getCustomerPhno()).map(CustomerAccount::getEmail).orElse(null);
-        boolean emailed = false;
-        if (email != null && !email.isBlank()) {
-            emailed = mailService.send(email, subject, body);
-        }
+        boolean hasEmail = email != null && !email.isBlank();
 
+        // Recorded first (emailed=false); the background send flips the flag once the mail actually goes out.
         NotificationLog notification = new NotificationLog();
         notification.setOrderId(order.getOrderId());
         notification.setEventType(status);
         notification.setMessage(subject);
         notification.setSentAt(clock.instant());
-        notification.setEmailed(emailed);
-        log.info("Customer notification for order {} ({}): {}", order.getOrderId(), status,
-                emailed ? "emailed" : email == null ? "recorded only, no verified email on file" : "recorded only, email failed");
-        return notifications.save(notification);
+        notification.setEmailed(false);
+        NotificationLog saved = notifications.save(notification);
+        if (!hasEmail) {
+            log.info("Customer notification for order {} ({}): recorded only, no verified email on file", order.getOrderId(), status);
+            return saved;
+        }
+        mailExecutor.execute(() -> {
+            try {
+                boolean emailed = mailService.send(email, subject, body);
+                if (emailed) {
+                    saved.setEmailed(true);
+                    notifications.save(saved);
+                }
+                log.info("Customer notification for order {} ({}): {}", order.getOrderId(), status,
+                        emailed ? "emailed" : "recorded only, email failed");
+            } catch (RuntimeException e) {
+                log.warn("Customer notification for order {} ({}) failed: {}", order.getOrderId(), status, e.getMessage());
+            }
+        });
+        return saved;
     }
 
     static String subjectFor(Cart order, OrderStatus status) {

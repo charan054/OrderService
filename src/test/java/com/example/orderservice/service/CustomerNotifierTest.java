@@ -47,7 +47,7 @@ class CustomerNotifierTest {
 
     @BeforeEach
     void setUp() {
-        notifier = new CustomerNotifier(accounts, notifications, mailService, Clock.fixed(NOW, ZoneOffset.UTC));
+        notifier = new CustomerNotifier(accounts, notifications, mailService, Clock.fixed(NOW, ZoneOffset.UTC), Runnable::run);
         org.mockito.Mockito.lenient().when(notifications.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
