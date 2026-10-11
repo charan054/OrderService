@@ -1262,6 +1262,7 @@
       loadWishlist();
       loadWaitlist();
       loadSearchWatches();
+      loadSlotAvailability();
       loadLoyaltyBalance();
       loadCouponSuggestions();
       loadCodEligibility();
@@ -3350,6 +3351,25 @@
       else if (codEligibility && codEligibility.maxAmount) text = `Cash on delivery is available for orders up to ₹${codEligibility.maxAmount.toFixed(0)} until your first order is delivered.`;
       hint.textContent = text;
       hint.classList.toggle("hidden", !text);
+    }
+
+    // Greys out delivery windows that have reached their open-order cap (delivery.slot-capacity); with no cap set
+    // nothing is ever full. Checkout enforces the cap server-side regardless - this only saves a failed attempt.
+    async function loadSlotAvailability() {
+      try {
+        const response = await fetch(`${BASE_URL}/pincodes/slots/availability`);
+        if (!response.ok) return;
+        const slots = await response.json();
+        const select = document.getElementById("deliverySlot");
+        slots.forEach(slot => {
+          const option = [...select.options].find(o => o.value === slot.slot);
+          if (!option) return;
+          const base = option.textContent.replace(/ - full$/, "");
+          option.disabled = slot.full;
+          option.textContent = slot.full ? base + " - full" : base;
+          if (slot.full && select.value === slot.slot) select.value = "";
+        });
+      } catch (e) { /* leave the options as they are; checkout re-checks */ }
     }
 
     function onPaymentMethodChange() {

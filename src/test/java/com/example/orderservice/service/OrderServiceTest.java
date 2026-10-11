@@ -4062,6 +4062,44 @@ class OrderServiceTest {
         verifyNoInteractions(phonepeClient);
     }
 
+    @Test
+    void orderIntoAFullDeliveryWindowIsRejectedBeforeAnyPayment() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "slotCapacity", 2);
+        when(orderRepository.countByDeliverySlotAndStatusIn(eq("MORNING"), any())).thenReturn(2L);
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setDeliverySlot("morning");
+
+        ProductException e = assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+
+        assertTrue(e.getMessage().contains("full"));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void aWindowWithRoomAndAnUnlimitedStoreBothAcceptOrders() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "slotCapacity", 2);
+        when(orderRepository.countByDeliverySlotAndStatusIn(eq("EVENING"), any())).thenReturn(1L);
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setDeliverySlot("evening");
+
+        assertEquals("EVENING", service.order(cart, AUTH, null).getDeliverySlot());
+    }
+
+    @Test
+    void slotAvailabilityMarksOnlyTheFullWindowsAndEverythingIsOpenWhenUncapped() {
+        assertTrue(service.getSlotAvailability().stream().noneMatch(a -> a.full()));
+
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "slotCapacity", 1);
+        when(orderRepository.countByDeliverySlotAndStatusIn(eq("MORNING"), any())).thenReturn(1L);
+        when(orderRepository.countByDeliverySlotAndStatusIn(eq("AFTERNOON"), any())).thenReturn(0L);
+        when(orderRepository.countByDeliverySlotAndStatusIn(eq("EVENING"), any())).thenReturn(0L);
+
+        assertEquals(java.util.List.of(true, false, false), service.getSlotAvailability().stream().map(a -> a.full()).toList());
+    }
+
     // ---------- bulkTransition ----------
 
     @Test
