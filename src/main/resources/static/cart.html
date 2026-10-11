@@ -1156,6 +1156,20 @@
             <div id="missedSearchWrap" class="orders-table-wrap"></div>
         </div>
         <div class="card wide">
+            <div class="card-header">
+                <div class="icon">&#128230;</div>
+                <div class="title-wrap">
+                    <h2>Inventory Value</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>What the stock on the shelves is worth at today's selling prices (GST included), in total and per category. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadInventoryValue()">Load Inventory Value</button>
+            </div>
+            <div id="inventoryValueWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
             <div class="card-header" id="card-moderation">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
@@ -2197,6 +2211,21 @@
               <td><button onclick="dismissMissedSearch(${JSON.stringify(r.term).replace(/"/g, "&quot;")})">Done</button></td></tr>`).join("")}</tbody></table>`
         : "<p>No missed searches yet - every search so far found something.</p>";
       showStatus(`${rows.length} missed search term(s) loaded.`, "success");
+    }
+
+    async function loadInventoryValue() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const v = await apiCall(`${BASE_URL}/analytics/inventory-value`, { headers: { "X-Service-Key": serviceKey } });
+      if (!v || !v.categories) return;
+      document.getElementById("inventoryValueWrap").innerHTML = `
+        <p><strong>₹${v.totalValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+           across ${v.units} unit(s) in ${v.products} product(s)</p>
+        <table class="orders-table"><thead><tr><th>Category</th><th>Products</th><th>Units</th><th>Value</th></tr></thead><tbody>
+        ${v.categories.map(c => `<tr><td>${escapeHtml(c.category)}</td><td>${c.products}</td><td>${c.units}</td>
+          <td>₹${c.value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>`).join("")}
+        </tbody></table>`;
+      showStatus("Inventory value loaded.", "success");
     }
 
     async function dismissMissedSearch(term) {
