@@ -73,6 +73,19 @@ class MissedSearchServiceTest {
     }
 
     @Test
+    void dismissingATermDeletesItsRowAndReportsWhetherItExisted() {
+        MissedSearch row = new MissedSearch();
+        row.setTerm("oats");
+        when(repository.findByTerm("oats")).thenReturn(Optional.of(row));
+        when(repository.findByTerm("nothing here")).thenReturn(Optional.empty());
+
+        assertEquals(true, service.dismiss(" OATS "));
+        verify(repository).delete(row);
+        assertEquals(false, service.dismiss("nothing here"));
+        assertEquals(false, service.dismiss("ab"));
+    }
+
+    @Test
     void aStorageFailureNeverReachesTheCaller() {
         when(repository.findByTerm("oats")).thenThrow(new IllegalStateException("db down"));
 
