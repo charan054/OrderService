@@ -816,6 +816,12 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void slowMoversAreServiceKeyOnly() throws Exception {
+        mockMvc.perform(get("/cart/analytics/slow-movers")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/analytics/slow-movers").with(customer())).andExpect(status().isForbidden());
+    }
+
+    @Test
     void inventoryValueIsServiceKeyOnly() throws Exception {
         mockMvc.perform(get("/cart/analytics/inventory-value")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/cart/analytics/inventory-value").with(customer())).andExpect(status().isForbidden());
