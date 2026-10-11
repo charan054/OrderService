@@ -11,6 +11,7 @@ import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.CustomerAccountRepository;
 import com.example.orderservice.repository.ShippingAddressRepository;
+import com.example.orderservice.repository.TrackingEventRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -35,13 +36,16 @@ public class AdminCustomerService {
     private final CustomerAccountRepository accounts;
     private final ShippingAddressRepository addresses;
     private final OrderService orderService;
+    private final TrackingEventRepository tracking;
 
     public AdminCustomerService(CartRepository orders, CustomerAccountRepository accounts,
-                                ShippingAddressRepository addresses, OrderService orderService) {
+                                ShippingAddressRepository addresses, OrderService orderService,
+                                TrackingEventRepository tracking) {
         this.orders = orders;
         this.accounts = accounts;
         this.addresses = addresses;
         this.orderService = orderService;
+        this.tracking = tracking;
     }
 
     // Exactly one of phno / email. An email that no account has bound is a 404, not a guess.
@@ -70,10 +74,29 @@ public class AdminCustomerService {
         List<Cart> all = orders.findBycustomerPhno(phone);
         Map<String, Integer> byStatus = new TreeMap<>();
         double netSpend = 0;
+        int standing = 0;
+        java.time.Instant firstOrderAt = null;
+        java.time.Instant lastOrderAt = null;
         for (Cart order : all) {
             byStatus.merge(String.valueOf(order.getStatus()), 1, Integer::sum);
             netSpend += netPaid(order);
+            if (counts(order)) {
+                standing++;
+                if (order.getOrderId() != null) {
+                    java.time.Instant placed = tracking.findByOrderIdOrderByTimestampAsc(order.getOrderId()).stream()
+                            .map(e -> e.getTimestamp()).filter(java.util.Objects::nonNull).findFirst().orElse(null);
+                    if (placed != null) {
+                        if (firstOrderAt == null || placed.isBefore(firstOrderAt)) {
+                            firstOrderAt = placed;
+                        }
+                        if (lastOrderAt == null || placed.isAfter(lastOrderAt)) {
+                            lastOrderAt = placed;
+                        }
+                    }
+                }
+            }
         }
+        double averageOrderValue = standing == 0 ? 0 : Math.round(netSpend / standing * 100) / 100.0;
         List<AdminCustomerLookup.RecentOrder> recent = all.stream()
                 .sorted(Comparator.comparing(Cart::getOrderId).reversed())
                 .limit(RECENT_ORDER_LIMIT)
@@ -89,7 +112,14 @@ public class AdminCustomerService {
                 account == null ? null : account.getVerifiedAt(),
                 all.size(), byStatus, Math.round(netSpend * 100) / 100.0,
                 profile.wishlistCount(), profile.reviewCount(), profile.loyaltyTier(),
-                profile.loyaltyPointsBalance(), profile.lifetimePointsEarned(), recent, addressLines);
+                profile.loyaltyPointsBalance(), profile.lifetimePointsEarned(), recent, addressLines,
+                averageOrderValue, firstOrderAt, lastOrderAt);
+    }
+
+    // An order still stands unless it was cancelled, returned, or is waiting for payment (null status = pre-status row).
+    private static boolean counts(Cart order) {
+        OrderStatus status = order.getStatus();
+        return status != OrderStatus.CANCELLED && status != OrderStatus.RETURNED && status != OrderStatus.PENDING_PAYMENT;
     }
 
     private static double netPaid(Cart order) {

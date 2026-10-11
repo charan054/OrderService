@@ -106,7 +106,7 @@ public class CustomerExportService {
         }
 
         StringBuilder csv = new StringBuilder("customerPhno,customerName,email,marketingEmails,segment,dormant,orders,"
-                + "netSpend,firstOrderAt,lastOrderAt,daysSinceLastOrder\r\n");
+                + "netSpend,firstOrderAt,lastOrderAt,daysSinceLastOrder,avgOrderValue\r\n");
         for (Map.Entry<Long, Tally> entry : byCustomer.entrySet()) {
             Tally t = entry.getValue();
             boolean repeat = t.orders >= 2;
@@ -134,7 +134,8 @@ public class CustomerExportService {
                     .append(String.format(Locale.ROOT, "%.2f", t.net)).append(',')
                     .append(t.first == null ? "" : t.first).append(',')
                     .append(t.last == null ? "" : t.last).append(',')
-                    .append(t.last == null ? "" : Duration.between(t.last, now).toDays()).append("\r\n");
+                    .append(t.last == null ? "" : Duration.between(t.last, now).toDays()).append(',')
+                    .append(String.format(Locale.ROOT, "%.2f", t.orders == 0 ? 0 : t.net / t.orders)).append("\r\n");
         }
         return csv.toString();
     }

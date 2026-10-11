@@ -42,12 +42,14 @@ class AdminCustomerServiceTest {
     private ShippingAddressRepository addresses;
     @Mock
     private OrderService orderService;
+    @Mock
+    private com.example.orderservice.repository.TrackingEventRepository tracking;
 
     private AdminCustomerService service;
 
     @BeforeEach
     void setUp() {
-        service = new AdminCustomerService(orders, accounts, addresses, orderService);
+        service = new AdminCustomerService(orders, accounts, addresses, orderService, tracking);
     }
 
     private Cart order(long id, OrderStatus status, double total, double refunded) {
@@ -131,6 +133,45 @@ class AdminCustomerServiceTest {
         assertNull(r.email());
         assertNull(r.emailVerifiedAt());
         assertEquals(0.0, r.netSpend());
+    }
+
+    @Test
+    void lookupReportsAverageOrderValueAndFirstAndLastOrderDatesFromStandingOrdersOnly() {
+        stubProfile();
+        when(accounts.findById(PHNO)).thenReturn(Optional.of(account("a@example.com")));
+        when(orders.findBycustomerPhno(PHNO)).thenReturn(List.of(
+                order(1, OrderStatus.DELIVERED, 500, 100),   // standing, net 400
+                order(2, OrderStatus.CANCELLED, 300, 300),   // not standing
+                order(3, OrderStatus.PLACED, 200, 0)));      // standing, net 200
+        when(addresses.findByCustomerPhno(PHNO)).thenReturn(List.of());
+        when(tracking.findByOrderIdOrderByTimestampAsc(1L)).thenReturn(List.of(event("2026-07-01T00:00:00Z"), event("2026-07-05T00:00:00Z")));
+        when(tracking.findByOrderIdOrderByTimestampAsc(3L)).thenReturn(List.of(event("2026-10-01T00:00:00Z")));
+
+        AdminCustomerLookup r = service.lookup(PHNO, null);
+
+        assertEquals(300.0, r.averageOrderValue());
+        assertEquals(Instant.parse("2026-07-01T00:00:00Z"), r.firstOrderAt());
+        assertEquals(Instant.parse("2026-10-01T00:00:00Z"), r.lastOrderAt());
+    }
+
+    @Test
+    void aCustomerWithNoStandingOrdersHasZeroAverageAndNoDates() {
+        stubProfile();
+        when(accounts.findById(PHNO)).thenReturn(Optional.empty());
+        when(orders.findBycustomerPhno(PHNO)).thenReturn(List.of(order(1, OrderStatus.CANCELLED, 300, 300)));
+        when(addresses.findByCustomerPhno(PHNO)).thenReturn(List.of());
+
+        AdminCustomerLookup r = service.lookup(PHNO, null);
+
+        assertEquals(0.0, r.averageOrderValue());
+        assertEquals(null, r.firstOrderAt());
+        assertEquals(null, r.lastOrderAt());
+    }
+
+    private static com.example.orderservice.entity.TrackingEvent event(String when) {
+        com.example.orderservice.entity.TrackingEvent e = new com.example.orderservice.entity.TrackingEvent();
+        e.setTimestamp(Instant.parse(when));
+        return e;
     }
 
     @Test
