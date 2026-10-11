@@ -1830,7 +1830,7 @@
         <p>${c.totalOrders} orders (${statuses}) &middot; net spend ${money(c.netSpend)}</p>
         <p>Loyalty: ${escapeHtml(c.loyaltyTier)}, ${c.loyaltyPointsBalance} points (${c.lifetimePointsEarned} earned in total) &middot; ${c.wishlistCount} wishlisted &middot; ${c.reviewCount} reviews</p>
         ${c.recentOrders.length ? `<table class="orders-table"><thead><tr><th>Order</th><th>Status</th><th>Payment</th><th>Total</th><th>Refunded</th></tr></thead><tbody>${c.recentOrders.map(o => `
-          <tr><td>#${o.orderId}</td><td>${escapeHtml(o.status)}</td><td>${escapeHtml(o.paymentMethod)}${o.paymentMethod === "CASH" ? (o.paid ? " (paid)" : " (unpaid)") : ""}</td><td>${money(o.totalPrice)}</td><td>${money(o.refundedAmount)}</td></tr>`).join("")}</tbody></table>` : "<p>No orders.</p>"}
+          <tr><td>#${o.orderId}</td><td>${escapeHtml(o.status)}</td><td>${escapeHtml(o.paymentMethod)}${o.paymentMethod === "CASH" ? (o.paid ? " (paid)" : o.status === "CANCELLED" ? "" : " (unpaid)") : ""}</td><td>${money(o.totalPrice)}</td><td>${money(o.refundedAmount)}</td></tr>`).join("")}</tbody></table>` : "<p>No orders.</p>"}
         ${c.addresses.length ? "<p>Addresses:</p><ul>" + c.addresses.map(a => `<li>${escapeHtml(a.label || "Address")}${a.isDefault ? " (default)" : ""}: ${escapeHtml(a.address)}</li>`).join("") + "</ul>" : "<p>No saved addresses.</p>"}
         <div id="codPanel"></div>`;
       showStatus("Customer found.", "success");
