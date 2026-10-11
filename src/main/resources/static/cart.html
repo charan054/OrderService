@@ -2259,12 +2259,24 @@
       const rows = await apiCall(`${BASE_URL}/analytics/slow-movers?days=${days}`, { headers: { "X-Service-Key": serviceKey } });
       if (!Array.isArray(rows)) return;
       document.getElementById("slowMoversWrap").innerHTML = rows.length
-        ? `<table class="orders-table"><thead><tr><th>Product</th><th>Category</th><th>In stock</th><th>Value tied up</th><th>Last sold</th></tr></thead><tbody>${rows.map(r => `
+        ? `<table class="orders-table"><thead><tr><th>Product</th><th>Category</th><th>In stock</th><th>Value tied up</th><th>Last sold</th><th>Action</th></tr></thead><tbody>${rows.map(r => `
             <tr><td>${escapeHtml(r.productName)} (#${r.productId})</td><td>${escapeHtml(r.productCategory || "")}</td><td>${r.productStock}</td>
               <td>₹${r.stockValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td>${r.lastSoldAt ? `${r.daysSinceLastSale} day(s) ago` : "never"}</td></tr>`).join("")}</tbody></table>`
+              <td>${r.lastSoldAt ? `${r.daysSinceLastSale} day(s) ago` : "never"}</td>
+              <td><button onclick="markDownSlowMover(${r.productId})">Mark down...</button></td></tr>`).join("")}</tbody></table>`
         : `<p>Nothing is stuck - every stocked product sold within the last ${days} day(s).</p>`;
       showStatus(`${rows.length} slow mover(s) loaded.`, "success");
+    }
+
+    async function markDownSlowMover(productId) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const answer = prompt("Mark this product down by what percent of its current price? (1-70)\nCustomers who wishlisted it get a price-drop alert.", "10");
+      if (answer === null) return;
+      const percent = parseInt(answer, 10);
+      if (!Number.isInteger(percent) || percent < 1 || percent > 70) { showStatus("Enter a whole percent from 1 to 70.", "error"); return; }
+      const r = await apiCall(`${BASE_URL}/analytics/slow-movers/markdown?productId=${productId}&percent=${percent}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      if (r) showStatus(`${r.productName}: \u20b9${r.oldPrice.toFixed(2)} \u2192 \u20b9${r.newPrice.toFixed(2)} (${r.percent}% off).`, "success");
     }
 
     // ---------- review moderation ----------
