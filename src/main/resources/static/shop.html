@@ -465,6 +465,9 @@
           padding: 0 4px;
         }
 
+        .cart-line button.later-btn { color: var(--muted); font-weight: 600; font-size: 12px; }
+        .later-title { font-size: 13px; font-weight: 700; margin: 14px 0 4px; color: var(--muted); }
+
         .coupon-chips {
           display: flex;
           flex-wrap: wrap;
@@ -729,6 +732,7 @@
                 <h2>Your cart</h2>
                 <p id="cartNote" class="hidden" style="font-size:12px; color:var(--muted); margin:-6px 0 10px;"></p>
                 <div id="cartLines"><p style="color:var(--muted); font-size:14px;">Your cart is empty.</p></div>
+                <div id="laterBox"></div>
                 <div class="total-row"><span>Total</span><span id="cartTotal">₹0</span></div>
 
                 <select id="shippingAddressId" onchange="checkAddressPincode()">
@@ -1102,6 +1106,8 @@
       cartPersistReady = false;
       customerPhno = null;
       cart = [];
+      savedForLater = [];
+      renderLater();
       storeCreditBalance = 0;
       walletPoints = null;
       compareIds.clear();
@@ -1246,6 +1252,7 @@
     }
 
     function enterShop() {
+      loadSavedForLater();
       restoreSavedCart();
       document.getElementById("loginSection").classList.add("hidden");
       document.getElementById("shopSection").classList.remove("hidden");
@@ -3217,6 +3224,81 @@
       renderCart();
     }
 
+    // ---- Save for later ----
+    // Lines parked out of the cart (not in the total, not checked out). Kept per phone number in localStorage only -
+    // it is a convenience list, so a browser that loses it just loses the parking spot, never an order.
+    let savedForLater = []; // {productId, name, price, quantity}
+    const laterStorageKey = () => `shopLater_${customerPhno}`;
+
+    function loadSavedForLater() {
+      try { savedForLater = JSON.parse(localStorage.getItem(laterStorageKey()) || "[]"); } catch (e) { savedForLater = []; }
+      if (!Array.isArray(savedForLater)) savedForLater = [];
+      renderLater();
+    }
+
+    function persistLater() {
+      if (!customerPhno) return;
+      try {
+        if (savedForLater.length) localStorage.setItem(laterStorageKey(), JSON.stringify(savedForLater));
+        else localStorage.removeItem(laterStorageKey());
+      } catch (e) { /* storage full/blocked - the list just won't persist */ }
+    }
+
+    function saveForLater(productId) {
+      const item = cart.find(i => i.productId === productId);
+      if (!item) return;
+      cart = cart.filter(i => i.productId !== productId);
+      const parked = savedForLater.find(i => i.productId === productId);
+      if (parked) parked.quantity += item.quantity;
+      else savedForLater.push({ productId: item.productId, name: item.name, price: item.price, quantity: item.quantity });
+      persistLater();
+      renderCart();
+    }
+
+    function removeLater(productId) {
+      savedForLater = savedForLater.filter(i => i.productId !== productId);
+      persistLater();
+      renderLater();
+    }
+
+    // Moving back re-checks the live catalog: the price may have changed and the stock may be gone.
+    async function moveLaterToCart(productId) {
+      const parked = savedForLater.find(i => i.productId === productId);
+      if (!parked) return;
+      const response = await authFetch(`${BASE_URL}/cart/search`);
+      if (!response.ok) { alert("Couldn't check stock - please try again."); return; }
+      const product = (await response.json()).find(p => p.productId === productId);
+      if (!product) { alert(`${parked.name} is no longer available.`); removeLater(productId); return; }
+      const existing = cart.find(i => i.productId === productId);
+      const room = product.productStock - (existing ? existing.quantity : 0);
+      if (room <= 0) { alert(`${product.productName} is out of stock right now. It stays saved.`); return; }
+      const quantity = Math.min(parked.quantity, room);
+      if (existing) existing.quantity += quantity;
+      else cart.push({ productId, name: product.productName, price: product.productPrice, quantity });
+      if (quantity < parked.quantity) {
+        parked.quantity -= quantity;
+        alert(`Only ${quantity} of ${product.productName} available - the rest stays saved.`);
+        persistLater();
+      } else {
+        savedForLater = savedForLater.filter(i => i.productId !== productId);
+        persistLater();
+      }
+      renderCart();
+    }
+
+    function renderLater() {
+      const box = document.getElementById("laterBox");
+      if (!box) return;
+      box.innerHTML = savedForLater.length
+        ? `<div class="later-title">Saved for later (${savedForLater.length})</div>` + savedForLater.map(item => `
+          <div class="cart-line">
+            <span>${escapeHtml(item.name)} <span class="meta">&times; ${item.quantity}</span></span>
+            <span><button class="later-btn" onclick="moveLaterToCart(${item.productId})">Move to cart</button>
+              <button onclick="removeLater(${item.productId})">&times;</button></span>
+          </div>`).join("")
+        : "";
+    }
+
     function renderCart() {
       const linesBox = document.getElementById("cartLines");
       if (!cart.length) {
@@ -3230,10 +3312,11 @@
               <span>${item.quantity}</span>
               <button onclick="changeCartQuantity(${item.productId}, 1)">&plus;</button>
             </span>
-            <span>₹${(item.price * item.quantity).toFixed(2)} <button onclick="removeFromCart(${item.productId})">&times;</button></span>
+            <span>₹${(item.price * item.quantity).toFixed(2)} <button class="later-btn" onclick="saveForLater(${item.productId})">Save for later</button> <button onclick="removeFromCart(${item.productId})">&times;</button></span>
           </div>
         `).join("");
       }
+      renderLater();
       const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
       document.getElementById("cartTotal").textContent = `₹${total.toFixed(2)}`;
       renderCouponSuggestions();
