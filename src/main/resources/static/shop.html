@@ -690,7 +690,7 @@
         <div class="layout">
             <div>
                 <div class="search-row">
-                    <input type="text" id="searchName" placeholder="Search products" oninput="onSearchChange()" list="searchSuggestions" autocomplete="off" />
+                    <input type="text" id="searchName" placeholder="Search products (press / )" oninput="onSearchChange()" list="searchSuggestions" autocomplete="off" />
                     <datalist id="searchSuggestions"></datalist>
                     <select id="searchCategory" onchange="onSearchChange()" disabled>
                         <option value="">Loading categories...</option>
@@ -2814,6 +2814,30 @@
       modalProductId = null;
       if (productIdFromHash() !== null) setProductHash(null);
     }
+
+    // Keyboard shortcuts: "/" jumps to the search box (unless you are already typing somewhere), Esc closes the
+    // top-most open dialog - the compare dialog sits above the product dialog, so it goes first.
+    document.addEventListener("keydown", event => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === "Escape") {
+        const compare = document.getElementById("compareModal");
+        const product = document.getElementById("productModal");
+        if (!compare.classList.contains("hidden")) { closeCompare(); event.preventDefault(); }
+        else if (!product.classList.contains("hidden")) { closeProductModal(); event.preventDefault(); }
+        return;
+      }
+      if (event.key !== "/") return;
+      const target = event.target;
+      if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
+      const search = document.getElementById("searchName");
+      const shop = document.getElementById("shopSection");
+      if (!search || !shop || shop.classList.contains("hidden")) return;
+      if (!document.getElementById("productModal").classList.contains("hidden")
+          || !document.getElementById("compareModal").classList.contains("hidden")) return;
+      event.preventDefault();
+      search.focus();
+      search.select();
+    });
 
     async function loadModalQuestions(productId) {
       const box = document.getElementById("modalQuestions");
