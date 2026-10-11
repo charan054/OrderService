@@ -1170,6 +1170,23 @@
             <div id="inventoryValueWrap" class="orders-table-wrap"></div>
         </div>
         <div class="card wide">
+            <div class="card-header">
+                <div class="icon">&#128012;</div>
+                <div class="title-wrap">
+                    <h2>Slow Movers</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Products with stock on the shelf that have not sold in the last N days, biggest tied-up value first. Cancelled and returned units do not count as sales. Requires the Service Key above.</p>
+            <div class="form-row">
+                <input type="number" id="slowDays" value="30" min="1" max="730" aria-label="Days without a sale" />
+            </div>
+            <div class="orders-actions">
+                <button onclick="loadSlowMovers()">Load Slow Movers</button>
+            </div>
+            <div id="slowMoversWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
             <div class="card-header" id="card-moderation">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
@@ -2233,6 +2250,21 @@
       if (!serviceKey) return;
       await apiCall(`${BASE_URL}/analytics/missed-searches?term=${encodeURIComponent(term)}`, { method: "DELETE", headers: { "X-Service-Key": serviceKey } });
       await loadMissedSearches();
+    }
+
+    async function loadSlowMovers() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const days = parseInt(document.getElementById("slowDays").value, 10) || 30;
+      const rows = await apiCall(`${BASE_URL}/analytics/slow-movers?days=${days}`, { headers: { "X-Service-Key": serviceKey } });
+      if (!Array.isArray(rows)) return;
+      document.getElementById("slowMoversWrap").innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>Product</th><th>Category</th><th>In stock</th><th>Value tied up</th><th>Last sold</th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>${escapeHtml(r.productName)} (#${r.productId})</td><td>${escapeHtml(r.productCategory || "")}</td><td>${r.productStock}</td>
+              <td>₹${r.stockValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+              <td>${r.lastSoldAt ? `${r.daysSinceLastSale} day(s) ago` : "never"}</td></tr>`).join("")}</tbody></table>`
+        : `<p>Nothing is stuck - every stocked product sold within the last ${days} day(s).</p>`;
+      showStatus(`${rows.length} slow mover(s) loaded.`, "success");
     }
 
     // ---------- review moderation ----------

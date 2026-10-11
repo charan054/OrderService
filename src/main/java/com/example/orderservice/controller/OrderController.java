@@ -25,6 +25,8 @@ import com.example.orderservice.dto.ModerationReview;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.entity.Cart;
+import com.example.orderservice.dto.SlowMover;
+import com.example.orderservice.service.SlowMoverService;
 import com.example.orderservice.dto.InventoryValue;
 import com.example.orderservice.service.InventoryValueService;
 import com.example.orderservice.entity.MissedSearch;
@@ -56,6 +58,9 @@ import java.util.List;
 @RestController
 @RequestMapping("/cart")
 public class OrderController {
+    @Autowired
+    private SlowMoverService slowMoverService;
+
     @Autowired
     private InventoryValueService inventoryValueService;
 
@@ -464,6 +469,11 @@ public class OrderController {
     @PostMapping("/alerts/run")
     public StockAlertRunResult runStockAlerts(){
         return stockAlertService.run();
+    }
+    // Admin-only (service key by default): products with stock that have not sold in the last `days` days (default 30).
+    @GetMapping("/analytics/slow-movers")
+    public List<SlowMover> slowMovers(@RequestParam(required = false) Integer days){
+        return slowMoverService.report(days);
     }
     // Admin-only (service key by default): what the current stock is worth at selling price, per category.
     @GetMapping("/analytics/inventory-value")
