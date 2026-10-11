@@ -25,6 +25,8 @@ import com.example.orderservice.dto.ModerationReview;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.entity.Cart;
+import com.example.orderservice.entity.MissedSearch;
+import com.example.orderservice.service.MissedSearchService;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.exception.OrderNotFoundException;
@@ -52,6 +54,9 @@ import java.util.List;
 @RestController
 @RequestMapping("/cart")
 public class OrderController {
+    @Autowired
+    private MissedSearchService missedSearchService;
+
     @Autowired
     private OrderService orderService;
     @Autowired
@@ -273,7 +278,18 @@ public class OrderController {
     @GetMapping("/search")
     public List<Product> search(@RequestParam(required = false) String name,
                                  @RequestParam(required = false) String category){
-        return orderService.searchProducts(name, category);
+        List<Product> found = orderService.searchProducts(name, category);
+        // Only a name search with no category filter says "the catalog lacks this"; a category pick can be empty for other reasons.
+        if (found.isEmpty() && (category == null || category.isBlank())) {
+            missedSearchService.record(name);
+        }
+        return found;
+    }
+
+    // Admin-only (service key by default): searches that found nothing, most frequent first.
+    @GetMapping("/analytics/missed-searches")
+    public List<MissedSearch> missedSearches(){
+        return missedSearchService.top();
     }
     // Same public catalog-browsing trust level as /cart/display above - star ratings for the storefront's
     // product cards, proxied to ProductService's own public per-product rating-summary endpoint.
