@@ -49,6 +49,8 @@ class StockAlertServiceTest {
     @Mock
     private StockWaitlistRepository waitlists;
     @Mock
+    private com.example.orderservice.repository.SearchWatchRepository searchWatches;
+    @Mock
     private CustomerAccountRepository accounts;
     @Mock
     private ProductClient productClient;
@@ -62,7 +64,7 @@ class StockAlertServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new StockAlertService(wishlists, waitlists, accounts, productClient, mailService, preferences,
+        service = new StockAlertService(wishlists, waitlists, searchWatches, accounts, productClient, mailService, preferences,
                 Clock.fixed(NOW, ZoneOffset.UTC), "http://shop.example/shop.html");
     }
 
@@ -97,6 +99,43 @@ class StockAlertServiceTest {
         account.setPhno(PHNO);
         account.setEmail("asha@example.com");
         when(accounts.findById(PHNO)).thenReturn(Optional.of(account));
+    }
+
+    @Test
+    void aSavedSearchEmailsOnceWhenAMatchingProductIsInStock() {
+        com.example.orderservice.entity.SearchWatch watch = new com.example.orderservice.entity.SearchWatch();
+        watch.setCustomerPhno(PHNO);
+        watch.setTerm("green tea");
+        when(waitlists.findAll()).thenReturn(List.of());
+        when(wishlists.findAll()).thenReturn(List.of());
+        when(searchWatches.findByNotifiedAtIsNull()).thenReturn(List.of(watch));
+        when(productClient.search("green tea", null, 0, 20)).thenReturn(new com.example.orderservice.dto.ProductSearchResult(
+                List.of(product(8, 99, 0), product(9, 120, 5)), true));
+        verifiedEmail();
+        when(mailService.send(anyString(), anyString(), contains("Now in stock for your search \"green tea\": Widget 9")))
+                .thenReturn(true);
+
+        StockAlertRunResult result = service.run();
+
+        assertEquals(1, result.emailsSent());
+        assertEquals(NOW, watch.getNotifiedAt());
+        verify(searchWatches).save(watch);
+    }
+
+    @Test
+    void aSavedSearchWithNothingInStockStaysQuiet() {
+        com.example.orderservice.entity.SearchWatch watch = new com.example.orderservice.entity.SearchWatch();
+        watch.setCustomerPhno(PHNO);
+        watch.setTerm("green tea");
+        when(waitlists.findAll()).thenReturn(List.of());
+        when(wishlists.findAll()).thenReturn(List.of());
+        when(searchWatches.findByNotifiedAtIsNull()).thenReturn(List.of(watch));
+        when(productClient.search("green tea", null, 0, 20)).thenReturn(new com.example.orderservice.dto.ProductSearchResult(
+                List.of(product(8, 99, 0)), true));
+
+        assertEquals(0, service.run().emailsSent());
+        assertEquals(null, watch.getNotifiedAt());
+        verifyNoInteractions(mailService);
     }
 
     @Test

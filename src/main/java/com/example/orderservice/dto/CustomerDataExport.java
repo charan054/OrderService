@@ -8,6 +8,7 @@ import com.example.orderservice.entity.OrderFeedback;
 import com.example.orderservice.entity.ProductQuestion;
 import com.example.orderservice.entity.SavedCart;
 import com.example.orderservice.entity.ShippingAddress;
+import com.example.orderservice.entity.SearchWatch;
 import com.example.orderservice.entity.StockWaitlist;
 import com.example.orderservice.entity.Wishlist;
 
@@ -22,7 +23,8 @@ public record CustomerDataExport(Instant exportedAt, long phno, Account account,
                                  List<StockWaitlist> restockWaitlist, LoyaltyAccount loyalty,
                                  List<LoyaltyTransaction> loyaltyHistory, List<ProductQuestion> questions,
                                  List<OrderFeedback> orderFeedback, SavedCart savedCart,
-                                 List<NotificationLog> notifications, Referrals referrals) {
+                                 List<NotificationLog> notifications, Referrals referrals,
+                                 List<SearchWatch> searchWatches) {
     public record Account(String email, Instant emailVerifiedAt, String referralCode) {
     }
 
