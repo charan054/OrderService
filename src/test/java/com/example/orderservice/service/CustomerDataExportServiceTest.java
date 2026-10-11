@@ -54,6 +54,8 @@ class CustomerDataExportServiceTest {
     @Mock
     private StockWaitlistRepository waitlist;
     @Mock
+    private com.example.orderservice.repository.SearchWatchRepository searchWatches;
+    @Mock
     private LoyaltyAccountRepository loyalty;
     @Mock
     private LoyaltyTransactionRepository loyaltyTransactions;
@@ -73,7 +75,7 @@ class CustomerDataExportServiceTest {
     @BeforeEach
     void setUp() {
         service = new CustomerDataExportService(accounts, orders, addresses, wishlist, waitlist, loyalty,
-                loyaltyTransactions, questions, feedback, savedCarts, notifications, referrals,
+                loyaltyTransactions, questions, feedback, savedCarts, notifications, referrals, searchWatches,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 

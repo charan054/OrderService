@@ -816,6 +816,19 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void searchWatchNeedsTheCustomersOwnSessionOrTheServiceKey() throws Exception {
+        mockMvc.perform(get("/searchwatch/byphno").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/searchwatch/byphno").param("phno", "9876543210").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/searchwatch/self/add").param("phno", "9876543210").param("term", "green tea"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/searchwatch/self/add").param("phno", "9876543210").param("term", "green tea")
+                .header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+        mockMvc.perform(delete("/searchwatch/self/remove").param("phno", "9876543210").param("term", "green tea")
+                .header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
+    @Test
     void slowMoversAreServiceKeyOnly() throws Exception {
         mockMvc.perform(get("/cart/analytics/slow-movers")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/cart/analytics/slow-movers").with(customer())).andExpect(status().isForbidden());

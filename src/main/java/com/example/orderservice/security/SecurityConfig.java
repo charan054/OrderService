@@ -91,15 +91,15 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/customer/account/delete/preview").hasRole("CUSTOMER")
                         .requestMatchers(HttpMethod.POST, "/customer/account/delete/request", "/customer/account/delete/confirm").hasRole("CUSTOMER")
                         .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/history", "/cart/recommendations", "/cart/notifications", "/cart/*/invoice", "/cart/*/invoice.pdf", "/cart/*/paymentstatus",
-                                "/wishlist/byphno", "/wishlist/pricedrops", "/wishlist/share", "/waitlist/byphno", "/addresses/byphno",
+                                "/wishlist/byphno", "/wishlist/pricedrops", "/wishlist/share", "/waitlist/byphno", "/searchwatch/byphno", "/addresses/byphno",
                                 "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/customer/export", "/coupons/available", "/referral/mine", "/questions/mine", "/savedcart", "/feedback/mine", "/prefs/mine", "/customer/cod", "/storecredit/byphno", "/support/tickets/mine", "/subscriptions/mine").hasAnyRole("CUSTOMER", "SERVICE")
                         // checkout/cancel/return still also need the buyer's own PhonePe credentials for anything
                         // that moves money (see OrderController) - the session only proves who the customer is.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/reviews", "/cart/reviews/photo", "/cart/reviews/flag", "/cart/*/cancel", "/cart/*/return",
                                 "/cart/*/items/*/cancel", "/cart/*/items/*/return", "/cart/*/invoice/email",
-                                "/wishlist/self/add", "/wishlist/share", "/waitlist/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask", "/feedback/submit", "/support/tickets", "/support/tickets/*/reply", "/giftcards/redeem", "/subscriptions").hasAnyRole("CUSTOMER", "SERVICE")
+                                "/wishlist/self/add", "/wishlist/share", "/waitlist/self/add", "/searchwatch/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask", "/feedback/submit", "/support/tickets", "/support/tickets/*/reply", "/giftcards/redeem", "/subscriptions").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.PUT, "/savedcart", "/addresses/self/default", "/cart/*/delivery", "/prefs/mine", "/subscriptions/*/pause", "/subscriptions/*/resume", "/subscriptions/*/skip").hasAnyRole("CUSTOMER", "SERVICE")
-                        .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove", "/wishlist/share", "/waitlist/self/remove", "/addresses/self/remove", "/subscriptions/*").hasAnyRole("CUSTOMER", "SERVICE")
+                        .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove", "/wishlist/share", "/waitlist/self/remove", "/searchwatch/self/remove", "/addresses/self/remove", "/subscriptions/*").hasAnyRole("CUSTOMER", "SERVICE")
 
                         // ---- Service only ----
                         .anyRequest().hasRole("SERVICE"))
