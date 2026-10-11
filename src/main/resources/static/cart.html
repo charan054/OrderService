@@ -883,12 +883,12 @@
             </div>
             <p>Browse, filter and export all orders. Requires the Service Key above.</p>
             <div class="orders-filters">
-                <select id="ordersStatus">
+                <select id="ordersStatus" aria-label="Filter orders by status">
                     <option value="">Any status</option>
                     <option>PENDING_PAYMENT</option><option>PLACED</option><option>SHIPPED</option>
                     <option>DELIVERED</option><option>CANCELLED</option><option>RETURNED</option>
                 </select>
-                <select id="ordersMethod">
+                <select id="ordersMethod" aria-label="Filter orders by payment method">
                     <option value="">Any payment</option>
                     <option>PHONEPE</option><option>CASH</option>
                 </select>
@@ -919,7 +919,7 @@
             <div class="rev-controls">
                 <label class="orders-date">From <input type="date" id="revFrom" /></label>
                 <label class="orders-date">To <input type="date" id="revTo" /></label>
-                <select id="revBucket">
+                <select id="revBucket" aria-label="Revenue chart bucket size">
                     <option value="day">Daily</option>
                     <option value="week">Weekly</option>
                 </select>
@@ -942,7 +942,7 @@
             <div class="rev-controls">
                 <label class="orders-date">From <input type="date" id="sbFrom" /></label>
                 <label class="orders-date">To <input type="date" id="sbTo" /></label>
-                <select id="sbGroup">
+                <select id="sbGroup" aria-label="Group sales by">
                     <option value="product">By product</option>
                     <option value="category">By category</option>
                 </select>
@@ -981,14 +981,14 @@
             </div>
             <p>Mint one-time codes worth a fixed amount. A customer enters one under My account to add its value to their store credit. The codes are shown <strong>once</strong>, right after minting - copy them then (only a hash is kept). Owners only (or the Service Key above).</p>
             <div class="orders-filters">
-                <input type="number" id="gcCount" min="1" max="100" value="1" title="How many cards" />
+                <input type="number" id="gcCount" aria-label="Number of gift cards to create" min="1" max="100" value="1" title="How many cards" />
                 <input type="number" id="gcAmount" min="1" step="1" placeholder="Value of each, ₹" />
                 <input type="number" id="gcDays" min="0" placeholder="Valid for days (blank = default, 0 = never)" />
                 <input type="text" id="gcNote" maxlength="100" placeholder="Note, e.g. who it is for (optional)" />
             </div>
             <div class="orders-actions">
                 <button onclick="mintGiftCards()">Mint Cards</button>
-                <select id="gcStatus">
+                <select id="gcStatus" aria-label="Filter gift cards by status">
                     <option value="">All cards</option>
                     <option value="ACTIVE">Active</option>
                     <option value="REDEEMED">Redeemed</option>
@@ -1029,7 +1029,7 @@
             <div class="orders-filters">
                 <input type="text" id="newAdminUsername" placeholder="New username (letters, digits, . _ -)" autocomplete="off" />
                 <input type="password" id="newAdminPassword" placeholder="Password (at least 10 characters)" autocomplete="new-password" />
-                <select id="newAdminRole">
+                <select id="newAdminRole" aria-label="Role for the new admin account">
                     <option value="SUPPORT">SUPPORT</option>
                     <option value="MANAGER">MANAGER</option>
                     <option value="OWNER">OWNER</option>
@@ -1101,14 +1101,14 @@
             <p>New vs repeat customers, average order value and your top customers by net spend (orders that still stand, minus refunds). Requires the Service Key above.</p>
             <div class="orders-actions">
                 <button onclick="loadCustomerInsights()">Load Insights</button>
-                <select id="customerSegment" title="Which customers go in the CSV">
+                <select id="customerSegment" aria-label="Customer segment" title="Which customers go in the CSV">
                     <option value="all">All customers</option>
                     <option value="new">New (one order)</option>
                     <option value="repeat">Repeat (2+ orders)</option>
                     <option value="dormant">Dormant</option>
                     <option value="active">Active (not dormant)</option>
                 </select>
-                <input type="number" id="dormantDays" value="90" min="1" max="3650" style="width:90px;" title="Dormant = no order for this many days" />
+                <input type="number" id="dormantDays" aria-label="Days without an order to count as dormant" value="90" min="1" max="3650" style="width:90px;" title="Dormant = no order for this many days" />
                 <button class="blue" onclick="downloadCustomersCsv()">Download Customers CSV</button>
             </div>
             <div id="insightsWrap" class="orders-table-wrap"></div>
@@ -1194,7 +1194,7 @@
             </div>
             <p>"Problem with this order" requests from customers - waiting longest first. Each reply is emailed to the customer. Use the cancel / return / per-item refund tools for the money side, then resolve the request. Requires the Service Key above.</p>
             <div class="orders-actions">
-                <select id="supportStatus">
+                <select id="supportStatus" aria-label="Filter support requests by status">
                     <option value="UNRESOLVED">Open + answered</option>
                     <option value="OPEN">Waiting on us</option>
                     <option value="ANSWERED">Waiting on customer</option>
