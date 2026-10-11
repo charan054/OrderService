@@ -18,4 +18,9 @@ public interface CartRepository extends JpaRepository<Cart, Long> {
     long countByCustomerPhnoAndStatusIn(long phno, java.util.Collection<com.example.orderservice.entity.OrderStatus> statuses);
     long countByCustomerPhnoAndStatusAndPaymentMethodAndPaidFalse(long phno, com.example.orderservice.entity.OrderStatus status,
                                                                   com.example.orderservice.entity.PaymentMethod method);
+
+    // UPI orders still awaiting payment past their deadline - the sweeper (or the buyer's next status check) should have
+    // settled them. Oldest deadline first.
+    List<Cart> findByStatusAndPaymentDeadlineBeforeOrderByPaymentDeadlineAsc(com.example.orderservice.entity.OrderStatus status,
+                                                                             java.time.Instant before);
 }

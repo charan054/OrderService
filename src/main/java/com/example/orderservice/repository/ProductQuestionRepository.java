@@ -12,4 +12,5 @@ public interface ProductQuestionRepository extends JpaRepository<ProductQuestion
     List<ProductQuestion> findByAskerPhnoOrderByIdDesc(long phno);
     List<ProductQuestion> findByAnswerIsNullOrderByIdAsc();
     long countByAskerPhnoAndAnswerIsNull(long phno);
+    long countByAnswerIsNull();
 }

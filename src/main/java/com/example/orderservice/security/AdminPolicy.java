@@ -87,7 +87,9 @@ public final class AdminPolicy {
             rule(GET, "/support/admin/tickets/{id}", AdminRole.SUPPORT),
             rule(POST, "/support/admin/tickets/{id}/reply", AdminRole.SUPPORT),
             rule(POST, "/support/admin/tickets/{id}/resolve", AdminRole.SUPPORT),
-            rule(GET, "/cart/reviews/flagged", AdminRole.SUPPORT));
+            rule(GET, "/cart/reviews/flagged", AdminRole.SUPPORT),
+            // Only counts (and a few order ids) of what is waiting: every part of it is already visible to SUPPORT elsewhere.
+            rule(GET, "/cart/attention", AdminRole.SUPPORT));
 
     private static Rule rule(Set<String> methods, String path, AdminRole minimum) {
         return new Rule(methods, path, PathPatternParser.defaultInstance.parse(path), minimum);
