@@ -13,4 +13,8 @@ public interface NotificationLogRepository extends JpaRepository<NotificationLog
     // Backs the "My notifications" storefront panel (see OrderService.getNotificationsForCustomer) - every
     // notification across all of a customer's own orders, newest first.
     List<NotificationLog> findByOrderIdInOrderBySentAtDesc(List<Long> orderIds);
+
+    // Notifications that did not reach the customer's inbox (no verified email on file, or the mail server was down),
+    // newest first.
+    List<NotificationLog> findByEmailedFalseAndSentAtAfterOrderBySentAtDesc(java.time.Instant after);
 }

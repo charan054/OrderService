@@ -367,6 +367,23 @@
         </div>
     </section>
 
+    <section class="grid">
+        <div class="card wide" id="card-inbox">
+            <div class="card-header">
+                <div class="icon">&#128229;</div>
+                <div class="title-wrap">
+                    <h2>Needs Attention</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Everything waiting on someone: support requests, unanswered questions, reported reviews, low stock, UPI orders stuck past their payment deadline and notification emails that never went out. "Open" takes you to that card and loads it. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadAttention()">Refresh</button>
+            </div>
+            <div id="attentionWrap"></div>
+        </div>
+    </section>
+
     <section class="products-section">
         <div class="section-header">
             <div>
@@ -612,7 +629,7 @@
         </div>
 
         <div class="card">
-            <div class="card-header">
+            <div class="card-header" id="card-lowstock">
                 <div class="icon">📉</div>
                 <div class="title-wrap">
                     <h2>Low Stock Report</h2>
@@ -693,7 +710,7 @@
         </div>
 
         <div class="card">
-            <div class="card-header">
+            <div class="card-header" id="card-notifications">
                 <div class="icon">🔔</div>
                 <div class="title-wrap">
                     <h2>View Notifications</h2>
@@ -857,7 +874,7 @@
 
     <section class="grid">
         <div class="card wide">
-            <div class="card-header">
+            <div class="card-header" id="card-orders">
                 <div class="icon">🧾</div>
                 <div class="title-wrap">
                     <h2>Orders Table</h2>
@@ -1125,7 +1142,7 @@
             <div id="todayWrap" class="orders-table-wrap"></div>
         </div>
         <div class="card wide">
-            <div class="card-header">
+            <div class="card-header" id="card-moderation">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
                     <h2>Review Moderation</h2>
@@ -1154,7 +1171,7 @@
             <div id="photoTidyOut"></div>
         </div>
         <div class="card wide">
-            <div class="card-header">
+            <div class="card-header" id="card-questions">
                 <div class="icon">&#10067;</div>
                 <div class="title-wrap">
                     <h2>Customer Questions</h2>
@@ -1168,7 +1185,7 @@
             <div id="qaTableWrap" class="orders-table-wrap"></div>
         </div>
         <div class="card wide">
-            <div class="card-header">
+            <div class="card-header" id="card-support">
                 <div class="icon">&#128172;</div>
                 <div class="title-wrap">
                     <h2>Support Requests</h2>
@@ -2086,6 +2103,55 @@
     }
 
     // ---------- today ----------
+    // One row per kind of thing waiting on someone. "Open" scrolls to that row's card and loads it (pre-filtered where the
+    // card has a filter). A row that could not be worked out says so instead of showing 0.
+    const ATTENTION_TARGETS = {
+      supportTickets: { card: "card-support", open: () => { document.getElementById("supportStatus").value = "OPEN"; return loadSupportQueue(); } },
+      unansweredQuestions: { card: "card-questions", open: () => loadPendingQuestions() },
+      flaggedReviews: { card: "card-moderation", open: () => loadFlaggedReviews() },
+      lowStock: { card: "card-lowstock", open: () => getLowStockReport() },
+      stuckPayments: { card: "card-orders", open: () => { document.getElementById("ordersStatus").value = "PENDING_PAYMENT"; return loadOrdersTable(); } },
+      failedNotifications: { card: "card-notifications", open: (item) => {
+        if (item.orderIds && item.orderIds.length) { document.getElementById("notificationsOrderId").value = item.orderIds[0]; return viewNotifications(); }
+      } }
+    };
+    let attentionItems = [];
+
+    function renderAttention(data) {
+      attentionItems = data.items;
+      const escape = v => String(v ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+      document.getElementById("attentionWrap").innerHTML =
+        `<p><strong>${data.total === 0 ? "All clear" : data.total + " item(s) waiting"}</strong> <span style="opacity:.7;">as of ${new Date(data.generatedAt).toLocaleTimeString()}</span></p>`
+        + `<table style="width:100%; border-collapse:collapse; font-size:14px;">`
+        + data.items.map((item, i) => {
+          const shown = item.unavailable ? "?" : (item.count + (item.more ? "+" : ""));
+          const waiting = item.unavailable || item.count > 0;
+          const ids = item.orderIds && item.orderIds.length ? ` <span style="opacity:.7;">(orders ${item.orderIds.map(escape).join(", ")})</span>` : "";
+          return `<tr style="border-top:1px solid rgba(128,128,128,.25);">`
+            + `<td style="padding:8px; width:56px; font-size:20px; font-weight:700; ${item.unavailable ? "color:#b45309;" : waiting ? "color:#b45309;" : "opacity:.45;"}">${shown}</td>`
+            + `<td style="padding:8px;">${escape(item.title)}<br><span style="opacity:.7; font-size:12px;">${escape(item.detail)}${ids}</span></td>`
+            + `<td style="padding:8px; text-align:right;"><button style="width:auto;" onclick="openAttention(${i})">Open</button></td></tr>`;
+        }).join("")
+        + `</table>`;
+    }
+
+    async function loadAttention() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const data = await apiCall(`${BASE_URL}/attention`, { headers: { "X-Service-Key": serviceKey } });
+      if (!data || !data.items) return;
+      renderAttention(data);
+      showStatus(data.total === 0 ? "Nothing needs attention." : `${data.total} item(s) need attention.`, "success");
+    }
+
+    async function openAttention(index) {
+      const item = attentionItems[index];
+      const target = item && ATTENTION_TARGETS[item.key];
+      if (!target) return;
+      document.getElementById(target.card).scrollIntoView({ behavior: "smooth", block: "start" });
+      await target.open(item);
+    }
+
     async function loadToday() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;

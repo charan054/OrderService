@@ -44,6 +44,7 @@ class AdminPolicyTest {
         assertThat(required("PUT", "/questions/3/answer")).isEqualTo(AdminRole.SUPPORT);
         assertThat(required("POST", "/ordernotes")).isEqualTo(AdminRole.SUPPORT);
         assertThat(required("GET", "/cart/display")).isEqualTo(AdminRole.SUPPORT);
+        assertThat(required("GET", "/cart/attention")).isEqualTo(AdminRole.SUPPORT);
     }
 
     @Test

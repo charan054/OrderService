@@ -16,4 +16,5 @@ public interface SupportTicketRepository extends JpaRepository<SupportTicket, Lo
     List<SupportTicket> findByOrderIdAndStatusIn(long orderId, Collection<SupportTicket.Status> statuses);
 
     List<SupportTicket> findByStatusInOrderByUpdatedAtAsc(Collection<SupportTicket.Status> statuses);
+    long countByStatus(SupportTicket.Status status);
 }
