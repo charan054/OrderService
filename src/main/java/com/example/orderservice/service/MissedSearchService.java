@@ -46,6 +46,18 @@ public class MissedSearchService {
         }
     }
 
+    /** Removes a term from the report (the admin dealt with it); false when it was not there. */
+    public boolean dismiss(String rawTerm) {
+        String term = normalise(rawTerm);
+        if (term == null) {
+            return false;
+        }
+        return repository.findByTerm(term).map(row -> {
+            repository.delete(row);
+            return true;
+        }).orElse(false);
+    }
+
     public List<MissedSearch> top() {
         return repository.findTop50ByOrderByTimesDescLastSearchedAtDesc();
     }
