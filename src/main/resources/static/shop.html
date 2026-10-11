@@ -823,6 +823,7 @@
             <div id="modalRatingSummary" class="rating-row"></div>
             <div id="modalSubscribe" class="subscribe-box"></div>
             <div id="modalAlert" class="subscribe-box"></div>
+            <div id="modalAlternatives" class="hidden"></div>
 
             <div id="modalGallery" class="fbt-strip hidden"></div>
 
@@ -2716,7 +2717,53 @@
 
       renderSubscribeBox(product);
       renderModalAlert(productId);
+      loadModalAlternatives(productId);
       await Promise.all([loadModalReviews(productId), loadModalQuestions(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
+    }
+
+    // ---- in-stock alternatives for a sold-out product ----
+    // Same category, in stock, closest price first (up to 4), from the full catalog rather than the possibly
+    // search-narrowed grid. Options of the same variant group are skipped - the option picker already covers those.
+    let catalogCache = { at: 0, items: [] };
+    async function fullCatalog() {
+      if (Date.now() - catalogCache.at < 60000 && catalogCache.items.length) return catalogCache.items;
+      const response = await authFetch(`${BASE_URL}/cart/search`);
+      if (response.ok) catalogCache = { at: Date.now(), items: await response.json() };
+      return catalogCache.items;
+    }
+
+    async function loadModalAlternatives(productId) {
+      const box = document.getElementById("modalAlternatives");
+      box.classList.add("hidden");
+      box.innerHTML = "";
+      const product = products.find(p => p.productId === productId);
+      if (!product || product.productStock > 0 || !product.productCategory) return;
+      const catalog = await fullCatalog();
+      if (modalProductId !== productId) return; // the modal moved on while the catalog loaded
+      const category = product.productCategory.trim().toLowerCase();
+      const alternatives = catalog
+        .filter(p => p.productId !== productId && p.productStock > 0
+          && (p.productCategory || "").trim().toLowerCase() === category
+          && !(product.variantGroup && p.variantGroup === product.variantGroup))
+        .sort((a, b) => Math.abs(a.productPrice - product.productPrice) - Math.abs(b.productPrice - product.productPrice))
+        .slice(0, 4);
+      if (!alternatives.length) return;
+      box.innerHTML = `<h3>Available instead</h3><div class="fbt-strip">${alternatives.map(p => `
+        <button class="fbt-chip" style="cursor:pointer; text-align:left;" onclick="openAlternative(${p.productId})">
+          ${escapeHtml(p.productName)}
+          <div class="fbt-count">&#8377;${Number(p.productPrice).toFixed(2)} &middot; ${p.productStock} in stock</div>
+        </button>`).join("")}</div>`;
+      box.classList.remove("hidden");
+    }
+
+    // The grid may be narrowed by a search, so clear the filters first when the alternative is not in it.
+    async function openAlternative(productId) {
+      if (!products.some(p => p.productId === productId)) {
+        document.getElementById("searchName").value = "";
+        document.getElementById("searchCategory").value = "";
+        await loadProducts();
+      }
+      if (products.some(p => p.productId === productId)) openProductModal(productId);
     }
 
     // ---- one "Alert me" for restock and price drops ----
