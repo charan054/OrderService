@@ -657,6 +657,7 @@
 <main>
     <section id="loginSection" class="center-card">
         <h2>Welcome</h2>
+        <p id="deepLinkNote" class="hidden" style="font-size:13px; color:var(--muted); margin:0 0 10px;">Sign in to see the product you were sent.</p>
         <div id="loginStepRequest">
             <p>Enter your phone number and email. We'll email you a 6-digit sign-in code.</p>
             <input type="tel" id="loginPhno" placeholder="10-digit phone number" />
@@ -811,6 +812,7 @@
         <div class="modal-box">
             <button class="modal-close" onclick="closeProductModal()">Close</button>
             <h2 id="modalProductName"></h2>
+            <p style="margin:4px 0 8px;"><button class="secondary" style="width:auto;" onclick="copyProductLink()">Copy link</button> <span id="productLinkMsg" style="font-size:12px; color:var(--muted);"></span></p>
             <div id="modalRatingSummary" class="rating-row"></div>
             <div id="modalSubscribe" class="subscribe-box"></div>
             <div id="modalAlert" class="subscribe-box"></div>
@@ -867,6 +869,73 @@
     let allCategories = [];
     let searchDebounceTimer = null;
     let modalProductId = null;
+
+    // ---- product links: shop.html#product=12 ----
+    // Entirely client-side. The id in the address bar follows whichever product's details are open, so the URL can be
+    // copied or shared. Someone who arrives on a link before signing in keeps it until the catalog has loaded after
+    // sign-in, then the product opens (or they are told it is gone). Only the product id is ever in the link.
+    function productIdFromHash() {
+      const m = /^#product=(\d{1,9})$/.exec(location.hash);
+      return m ? Number(m[1]) : null;
+    }
+    let deepLinkProductId = productIdFromHash();
+    if (deepLinkProductId !== null) document.getElementById("deepLinkNote").classList.remove("hidden");
+
+    function setProductHash(productId) {
+      try {
+        history.replaceState(null, "", productId === null ? location.pathname + location.search : "#product=" + productId);
+      } catch (e) { /* a sandboxed page may refuse; the link just will not follow the modal */ }
+    }
+
+    function productLink(productId) {
+      return location.origin + location.pathname + "#product=" + productId;
+    }
+
+    function copyProductLink() {
+      if (modalProductId === null) return;
+      const link = productLink(modalProductId);
+      const message = document.getElementById("productLinkMsg");
+      const done = ok => { message.textContent = ok ? "Link copied" : "Couldn't copy - copy the address from your browser's address bar"; };
+      const fallback = () => {
+        const box = document.createElement("input");
+        box.value = link;
+        document.body.appendChild(box);
+        box.select();
+        let ok = false;
+        try { ok = document.execCommand("copy"); } catch (e) { /* falls through to the failure message */ }
+        box.remove();
+        done(ok);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(() => done(true), fallback);
+      else fallback();
+    }
+
+    // Opens the linked product once the catalog is in. A link to something that is not on sale any more is dropped with a note.
+    function applyProductDeepLink() {
+      if (deepLinkProductId === null) return;
+      const id = deepLinkProductId;
+      deepLinkProductId = null;
+      if (products.some(p => p.productId === id)) {
+        openProductModal(id);
+        return;
+      }
+      setProductHash(null);
+      const note = document.getElementById("cartNote");
+      const message = "The product in that link isn't available any more";
+      note.textContent = note.classList.contains("hidden") || !note.textContent ? message : note.textContent + " · " + message;
+      note.classList.remove("hidden");
+    }
+
+    window.addEventListener("hashchange", () => {
+      const id = productIdFromHash();
+      if (id === null) {
+        if (modalProductId !== null) closeProductModal();
+      } else if (!customerToken || !products.length) {
+        deepLinkProductId = id;
+      } else if (id !== modalProductId && products.some(p => p.productId === id)) {
+        openProductModal(id);
+      }
+    });
     let ratingsByProductId = new Map();
 
     // Verified storefront session (see CustomerAuthService): sent as X-Customer-Token on every call. Every
@@ -1362,7 +1431,8 @@
       if (!name && !category) {
         refreshCategoryOptions();
       }
-      loadRatings();
+      const ratingsLoaded = loadRatings();
+      if (response.ok) ratingsLoaded.catch(() => {}).then(applyProductDeepLink);
     }
 
     async function loadRatings() {
@@ -2562,6 +2632,8 @@
     async function openProductModal(productId) {
       recordRecentlyViewed(productId);
       modalProductId = productId;
+      setProductHash(productId);
+      document.getElementById("productLinkMsg").textContent = "";
       const product = products.find(p => p.productId === productId);
       document.getElementById("modalProductName").textContent = product ? product.productName : "";
       document.getElementById("reviewFormError").classList.add("hidden");
@@ -2730,6 +2802,7 @@
     function closeProductModal() {
       document.getElementById("productModal").classList.add("hidden");
       modalProductId = null;
+      if (productIdFromHash() !== null) setProductHash(null);
     }
 
     async function loadModalQuestions(productId) {
