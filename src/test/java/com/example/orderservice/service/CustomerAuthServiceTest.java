@@ -161,6 +161,43 @@ class CustomerAuthServiceTest {
     }
 
     @Test
+    void ordinaryAddressesAreAcceptedAndMalformedOnesAreNot() {
+        for (String ok : new String[]{"a@b.co", "first.last+tag@mail.example.com", "x_y@sub.domain.example.org", "o'brien@example.ie"}) {
+            assertThat(CustomerAuthService.isValidEmail(ok)).as(ok).isTrue();
+        }
+        for (String bad : new String[]{"", "plain", "@example.com", "a@", "a@b", "a@b.", "a@.b.c", "a@b..c", "a b@example.com",
+                "a@exa mple.com", "a@@example.com", "a@example.com.", "a@b@c.com"}) {
+            assertThat(CustomerAuthService.isValidEmail(bad)).as(bad).isFalse();
+        }
+    }
+
+    @Test
+    void anOverlongAddressIsRefusedOutright() {
+        String local = "a".repeat(CustomerAuthService.MAX_EMAIL_LENGTH - "@example.com".length());
+        assertThat(CustomerAuthService.isValidEmail(local + "@example.com")).isTrue();
+        assertThat(CustomerAuthService.isValidEmail("a" + local + "@example.com")).isFalse();
+        assertThatThrownBy(() -> service.requestCode(PHNO, "a" + local + "@example.com"))
+                .isInstanceOf(CustomerAuthException.class);
+    }
+
+    // The shape CodeQL reported: "!@!." then many "!." - with the old pattern the time grew with the square of the length.
+    @Test
+    void aCraftedStringFullOfDotsIsRejectedQuickly() {
+        String crafted = "!@!." + "!.".repeat(100_000);
+        long start = System.nanoTime();
+        boolean valid = CustomerAuthService.isValidEmail(crafted);
+        long millis = (System.nanoTime() - start) / 1_000_000;
+
+        assertThat(valid).isFalse();
+        assertThat(millis).isLessThan(500);
+        // And the same string within the length limit is judged on its shape alone, also instantly.
+        String shortCrafted = "!@!." + "!.".repeat(100) + "!";
+        long start2 = System.nanoTime();
+        CustomerAuthService.isValidEmail(shortCrafted);
+        assertThat((System.nanoTime() - start2) / 1_000_000).isLessThan(100);
+    }
+
+    @Test
     void logoutInvalidatesTheToken() {
         String token = service.issueSession(PHNO).token();
         service.logout(token);

@@ -38,7 +38,11 @@ import java.util.regex.Pattern;
 public class CustomerAuthService {
     private static final Logger log = LoggerFactory.getLogger(CustomerAuthService.class);
     static final int MAX_VERIFY_ATTEMPTS = 5;
-    private static final Pattern EMAIL = Pattern.compile("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$");
+    // The longest an email address can be (RFC 5321). Checked BEFORE the pattern so a huge input is refused outright.
+    static final int MAX_EMAIL_LENGTH = 254;
+    // local@domain where the domain is one or more dot-separated labels with no dot inside a label. The earlier form let a
+    // dot match on either side of the final "\\." and so backtracked polynomially on a crafted string full of dots.
+    private static final Pattern EMAIL = Pattern.compile("^[^\\s@]+@[^\\s@.]+(?:\\.[^\\s@.]+)+$");
 
     private final CustomerAccountRepository accounts;
     private final CustomerLoginCodeRepository codes;
@@ -77,7 +81,7 @@ public class CustomerAuthService {
     public void requestCode(long phno, String email) {
         validatePhno(phno);
         String typedEmail = email == null ? "" : email.trim().toLowerCase();
-        if (!EMAIL.matcher(typedEmail).matches()) {
+        if (!isValidEmail(typedEmail)) {
             throw new CustomerAuthException(HttpStatus.BAD_REQUEST, "Enter a valid email address.");
         }
 
@@ -199,7 +203,7 @@ public class CustomerAuthService {
     public void adminSetEmail(long phno, String email) {
         validatePhno(phno);
         String normalized = email == null ? "" : email.trim().toLowerCase();
-        if (!EMAIL.matcher(normalized).matches()) {
+        if (!isValidEmail(normalized)) {
             throw new CustomerAuthException(HttpStatus.BAD_REQUEST, "Enter a valid email address.");
         }
         CustomerAccount account = accounts.findById(phno).orElseGet(CustomerAccount::new);
@@ -209,6 +213,10 @@ public class CustomerAuthService {
         accounts.save(account);
         sessions.deleteByPhno(phno);
         codes.deleteByPhno(phno);
+    }
+
+    static boolean isValidEmail(String email) {
+        return email.length() <= MAX_EMAIL_LENGTH && EMAIL.matcher(email).matches();
     }
 
     private void validatePhno(long phno) {
