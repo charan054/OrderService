@@ -16,6 +16,7 @@ import com.example.orderservice.repository.ProductQuestionRepository;
 import com.example.orderservice.repository.ReferralRepository;
 import com.example.orderservice.repository.SavedCartRepository;
 import com.example.orderservice.repository.ShippingAddressRepository;
+import com.example.orderservice.repository.SearchWatchRepository;
 import com.example.orderservice.repository.StockWaitlistRepository;
 import com.example.orderservice.repository.WishlistRepository;
 import org.springframework.stereotype.Service;
@@ -43,6 +44,7 @@ public class CustomerDataExportService {
     private final SavedCartRepository savedCarts;
     private final NotificationLogRepository notifications;
     private final ReferralRepository referrals;
+    private final SearchWatchRepository searchWatches;
     private final Clock clock;
 
     public CustomerDataExportService(CustomerAccountRepository accounts, CartRepository orders,
@@ -51,7 +53,7 @@ public class CustomerDataExportService {
                                      LoyaltyTransactionRepository loyaltyTransactions,
                                      ProductQuestionRepository questions, OrderFeedbackRepository feedback,
                                      SavedCartRepository savedCarts, NotificationLogRepository notifications,
-                                     ReferralRepository referrals, Clock clock) {
+                                     ReferralRepository referrals, SearchWatchRepository searchWatches, Clock clock) {
         this.accounts = accounts;
         this.orders = orders;
         this.addresses = addresses;
@@ -64,6 +66,7 @@ public class CustomerDataExportService {
         this.savedCarts = savedCarts;
         this.notifications = notifications;
         this.referrals = referrals;
+        this.searchWatches = searchWatches;
         this.clock = clock;
     }
 
@@ -90,6 +93,7 @@ public class CustomerDataExportService {
                 loyaltyTransactions.findByCustomerPhnoOrderByTimestampDesc(phno),
                 questions.findByAskerPhnoOrderByIdDesc(phno), myFeedback, savedCart, myNotifications,
                 new CustomerDataExport.Referrals(referrals.findByReferrerPhno(phno).size(),
-                        referrals.findByRefereePhno(phno).isPresent()));
+                        referrals.findByRefereePhno(phno).isPresent()),
+                searchWatches.findByCustomerPhnoOrderByIdDesc(phno));
     }
 }

@@ -3,7 +3,10 @@ package com.example.orderservice.service;
 import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.dto.StockAlertRunResult;
+import com.example.orderservice.dto.ProductSearchResult;
 import com.example.orderservice.entity.CustomerAccount;
+import com.example.orderservice.entity.SearchWatch;
+import com.example.orderservice.repository.SearchWatchRepository;
 import com.example.orderservice.entity.StockWaitlist;
 import com.example.orderservice.entity.Wishlist;
 import com.example.orderservice.repository.CustomerAccountRepository;
@@ -38,6 +41,7 @@ public class StockAlertService {
 
     private final WishlistRepository wishlists;
     private final StockWaitlistRepository waitlists;
+    private final SearchWatchRepository searchWatches;
     private final CustomerAccountRepository accounts;
     private final ProductClient productClient;
     private final MailService mailService;
@@ -45,11 +49,12 @@ public class StockAlertService {
     private final Clock clock;
     private final String shopUrl;
 
-    public StockAlertService(WishlistRepository wishlists, StockWaitlistRepository waitlists,
+    public StockAlertService(WishlistRepository wishlists, StockWaitlistRepository waitlists, SearchWatchRepository searchWatches,
                              CustomerAccountRepository accounts, ProductClient productClient, MailService mailService,
                              EmailPreferenceService preferences, Clock clock, @Value("${alerts.shop-url:}") String shopUrl) {
         this.wishlists = wishlists;
         this.waitlists = waitlists;
+        this.searchWatches = searchWatches;
         this.accounts = accounts;
         this.productClient = productClient;
         this.mailService = mailService;
@@ -126,6 +131,23 @@ public class StockAlertService {
             }
         }
 
+        // "Tell me when you stock this": a saved search that now matches a product with stock. Counted as a restock.
+        for (SearchWatch watch : searchWatches.findByNotifiedAtIsNull()) {
+            Product match = firstInStock(watch.getTerm());
+            if (match == null) {
+                continue;
+            }
+            Pending pending = byCustomer.computeIfAbsent(watch.getCustomerPhno(), k -> new Pending());
+            pending.restocks++;
+            pending.lines.add("Now in stock for your search \"" + watch.getTerm() + "\": " + match.getProductName()
+                    + " - Rs. " + money(match.getProductPrice()) + " (" + match.getProductStock() + " available)"
+                    + link(match.getProductId()));
+            pending.onSent.add(() -> {
+                watch.setNotifiedAt(clock.instant());
+                searchWatches.save(watch);
+            });
+        }
+
         int emails = 0;
         int restocks = 0;
         int priceDrops = 0;
@@ -156,6 +178,19 @@ public class StockAlertService {
         log.info("Stock alerts: {} email(s) sent ({} restock, {} price drop), {} customer(s) without an email, {} unsubscribed, {} send failure(s)",
                 emails, restocks, priceDrops, skippedNoEmail, optedOut, failed);
         return new StockAlertRunResult(emails, restocks, priceDrops, skippedNoEmail, optedOut, failed);
+    }
+
+    // First product matching a saved search that has stock; null when none (or the catalog cannot be reached).
+    private Product firstInStock(String term) {
+        try {
+            ProductSearchResult result = productClient.search(term, null, 0, 20);
+            if (result == null || result.content() == null) {
+                return null;
+            }
+            return result.content().stream().filter(p -> p.getProductStock() > 0).findFirst().orElse(null);
+        } catch (FeignException e) {
+            return null;
+        }
     }
 
     // One catalog lookup per product per run; null (cached too) when the product no longer exists.

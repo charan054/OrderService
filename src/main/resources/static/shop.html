@@ -1261,6 +1261,7 @@
       loadProducts();
       loadWishlist();
       loadWaitlist();
+      loadSearchWatches();
       loadLoyaltyBalance();
       loadCouponSuggestions();
       loadCodEligibility();
@@ -1577,7 +1578,54 @@
       const similar = didYouMean(term);
       return `<p style="color:var(--muted);">No results for &ldquo;${escapeHtml(term)}&rdquo;.${similar.length
         ? ` Did you mean ${similar.map(s => `<button class="secondary" style="width:auto; padding:2px 10px; margin:0 4px;" data-s="${escapeHtml(s)}" onclick="applySuggestion(this.dataset.s)">${escapeHtml(s)}</button>`).join("")}?`
-        : " Try a shorter word, or pick a category."}</p>`;
+        : " Try a shorter word, or pick a category."}</p>${searchWatchPromptHtml(term)}`;
+    }
+
+    // ---------- "tell me when you stock this" ----------
+    // A search that found nothing can be saved; we email once when a matching product is in stock.
+    let searchWatches = [];
+
+    function normaliseSearchTerm(term) {
+      return term.trim().replace(/\s+/g, " ").toLowerCase();
+    }
+
+    async function loadSearchWatches() {
+      if (!customerPhno) { searchWatches = []; return; }
+      const response = await authFetch(`${BASE_URL}/searchwatch/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      searchWatches = response.ok ? await response.json() : [];
+    }
+
+    function searchWatchPromptHtml(term) {
+      const normalised = normaliseSearchTerm(term);
+      if (!customerPhno || normalised.length < 3 || normalised.length > 60 || document.getElementById("searchCategory").value) return "";
+      const watching = searchWatches.find(w => w.term === normalised);
+      return watching
+        ? `<p style="margin:6px 0;">&#10003; We'll email you when &ldquo;${escapeHtml(normalised)}&rdquo; is in stock.
+             <button class="secondary" style="width:auto; padding:2px 10px;" data-t="${escapeHtml(normalised)}" onclick="removeSearchWatch(this.dataset.t)">Stop watching</button></p>`
+        : `<p style="margin:6px 0;"><button style="width:auto;" data-t="${escapeHtml(normalised)}" onclick="addSearchWatch(this.dataset.t)">Tell me when you stock this</button>
+             <span class="meta">One email when something matching &ldquo;${escapeHtml(normalised)}&rdquo; is in stock.</span></p>`;
+    }
+
+    async function addSearchWatch(term) {
+      const response = await authFetch(`${BASE_URL}/searchwatch/self/add?phno=${encodeURIComponent(customerPhno)}&term=${encodeURIComponent(term)}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't save that search."); return; }
+      await loadSearchWatches();
+      renderProducts();
+    }
+
+    async function removeSearchWatch(term) {
+      await authFetch(`${BASE_URL}/searchwatch/self/remove?phno=${encodeURIComponent(customerPhno)}&term=${encodeURIComponent(term)}`, { method: "DELETE" });
+      await loadSearchWatches();
+      renderProducts();
+      if (document.getElementById("accountView") && !document.getElementById("accountView").classList.contains("hidden")) loadAccountView();
+    }
+
+    function searchWatchRowsHtml() {
+      return searchWatches.map(w => `<div class="order-row">
+          <div><strong>Search: &ldquo;${escapeHtml(w.term)}&rdquo;</strong>
+            <span class="meta">${w.notifiedAt ? "We emailed you when it arrived - remove it, or search it again to re-arm" : "Waiting for a matching product to be in stock"}</span></div>
+          <button class="secondary" style="width:auto;" data-t="${escapeHtml(w.term)}" onclick="removeSearchWatch(this.dataset.t)">Remove</button>
+        </div>`).join("");
     }
 
     function onSearchChange() {
@@ -1906,6 +1954,7 @@
       accountAddresses = addresses;
       editingAddressId = null;
 
+      await loadSearchWatches();
       const alertsListHtml = alertsHtml(waitlist);
 
       view.innerHTML = `
@@ -2710,10 +2759,10 @@
     // "My alerts" in My account: every product being watched for a restock and/or a price drop, in one list.
     function alertsHtml(waitlist) {
       const ids = [...new Set([...wishlistItems.map(w => w.productId), ...waitlist.map(w => w.productId)])];
-      if (!ids.length) {
+      if (!ids.length && !searchWatches.length) {
         return `<p style="color:var(--muted);">No alerts yet - open a product and tap "Alert me" to hear about restocks and price drops.</p>`;
       }
-      return ids.map(id => {
+      return searchWatchRowsHtml() + ids.map(id => {
         const waiting = waitlist.find(w => w.productId === id);
         const saved = wishlistItems.find(w => w.productId === id);
         const catalogProduct = products.find(p => p.productId === id);
