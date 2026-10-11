@@ -809,6 +809,10 @@ class OrderControllerSecurityTest {
         mockMvc.perform(get("/cart/analytics/missed-searches")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/cart/analytics/missed-searches").with(customer())).andExpect(status().isForbidden());
         mockMvc.perform(get("/cart/analytics/missed-searches").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+        mockMvc.perform(delete("/cart/analytics/missed-searches").param("term", "oats")).andExpect(status().isUnauthorized());
+        mockMvc.perform(delete("/cart/analytics/missed-searches").param("term", "oats").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(delete("/cart/analytics/missed-searches").param("term", "oats").header("X-Service-Key", VALID_KEY))
+                .andExpect(status().isNotFound());
     }
 
     @Test

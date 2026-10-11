@@ -2206,8 +2206,9 @@
       const rows = await apiCall(`${BASE_URL}/analytics/missed-searches`, { headers: { "X-Service-Key": serviceKey } });
       if (!Array.isArray(rows)) return;
       document.getElementById("missedSearchWrap").innerHTML = rows.length
-        ? `<table class="orders-table"><thead><tr><th>Search</th><th>Times</th><th>Last searched</th></tr></thead><tbody>${rows.map(r => `
-            <tr><td>${escapeHtml(r.term)}</td><td>${r.times}</td><td>${r.lastSearchedAt ? new Date(r.lastSearchedAt).toLocaleString() : "-"}</td></tr>`).join("")}</tbody></table>`
+        ? `<table class="orders-table"><thead><tr><th>Search</th><th>Times</th><th>Last searched</th><th>Action</th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>${escapeHtml(r.term)}</td><td>${r.times}</td><td>${r.lastSearchedAt ? new Date(r.lastSearchedAt).toLocaleString() : "-"}</td>
+              <td><button onclick="dismissMissedSearch(${JSON.stringify(r.term).replace(/"/g, "&quot;")})">Done</button></td></tr>`).join("")}</tbody></table>`
         : "<p>No missed searches yet - every search so far found something.</p>";
       showStatus(`${rows.length} missed search term(s) loaded.`, "success");
     }
@@ -2225,6 +2226,13 @@
           <td>₹${c.value.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>`).join("")}
         </tbody></table>`;
       showStatus("Inventory value loaded.", "success");
+    }
+
+    async function dismissMissedSearch(term) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      await apiCall(`${BASE_URL}/analytics/missed-searches?term=${encodeURIComponent(term)}`, { method: "DELETE", headers: { "X-Service-Key": serviceKey } });
+      await loadMissedSearches();
     }
 
     // ---------- review moderation ----------

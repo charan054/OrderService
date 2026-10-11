@@ -296,6 +296,12 @@ public class OrderController {
     public List<MissedSearch> missedSearches(){
         return missedSearchService.top();
     }
+
+    // Admin-only: drop one term from the report once it has been dealt with (it comes back if shoppers search it again).
+    @DeleteMapping("/analytics/missed-searches")
+    public ResponseEntity<Void> dismissMissedSearch(@RequestParam String term){
+        return missedSearchService.dismiss(term) ? ResponseEntity.noContent().build() : ResponseEntity.notFound().build();
+    }
     // Same public catalog-browsing trust level as /cart/display above - star ratings for the storefront's
     // product cards, proxied to ProductService's own public per-product rating-summary endpoint.
     @GetMapping("/ratings")
