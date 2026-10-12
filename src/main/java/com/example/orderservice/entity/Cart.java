@@ -48,6 +48,8 @@ public class Cart {
     // Kept on the saved order as a record of how many points were applied, same role couponCode plays.
     private Integer pointsRedeemed;
     private double totalPrice;
+    // When staff marked a cash-on-delivery order as collected (see OrderService.markPaid); null for older rows and online orders.
+    private java.time.Instant paidAt;
     // Delivery fee charged at checkout (0 = none), already inside totalPrice. For tax it is spread over the items like a
     // negative discount (a composite supply takes the goods' own GST rates), and refunds share it out with the items.
     private double deliveryFee;

@@ -1198,6 +1198,20 @@
         </div>
         <div class="card wide">
             <div class="card-header">
+                <div class="icon">&#128181;</div>
+                <div class="title-wrap">
+                    <h2>Cash Collection</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Cash-on-delivery money: collected per day (from when you pressed Mark Paid), still owed, and delivered orders whose cash is overdue. Uses your browser's time zone. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadCodReport()">Refresh Cash Collection</button>
+            </div>
+            <div id="codReportWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
+            <div class="card-header">
                 <div class="icon">&#128197;</div>
                 <div class="title-wrap">
                     <h2>Today</h2>
@@ -2416,6 +2430,23 @@
           <li>Unanswered customer questions: ${a.unansweredQuestions}</li>
         </ul>`;
       showStatus("Today's snapshot loaded.", "success");
+    }
+
+    async function loadCodReport() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const r = await apiCall(`${BASE_URL}/analytics/cod?zone=${encodeURIComponent(zone)}`, { headers: { "X-Service-Key": serviceKey } });
+      if (!r || !r.collectedByDay) return;
+      const money = n => "&#8377;" + Number(n).toFixed(2);
+      document.getElementById("codReportWrap").innerHTML = `
+        <p>Collected today <strong>${money(r.collectedToday)}</strong> &middot; still owed <strong>${money(r.outstandingTotal)}</strong> on ${r.outstandingOrders} order(s)
+           &middot; overdue (delivered over ${r.overdueAfterDays} day(s) ago) <strong>${money(r.overdueTotal)}</strong></p>
+        <table class="orders-table"><thead><tr><th>Day</th><th>Collected</th><th>Orders</th></tr></thead><tbody>${
+          r.collectedByDay.slice().reverse().map(d => `<tr><td>${d.date}</td><td>${money(d.collected)}</td><td>${d.orders}</td></tr>`).join("")}</tbody></table>
+        ${r.overdue.length ? `<p><strong>Overdue cash</strong></p><table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Due</th><th>Delivered</th><th>Days</th></tr></thead><tbody>${
+          r.overdue.map(o => `<tr><td>#${o.orderId}</td><td>${o.customerPhno}</td><td>${money(o.amountDue)}</td><td>${new Date(o.deliveredAt).toLocaleString()}</td><td>${o.daysSinceDelivery}</td></tr>`).join("")}</tbody></table>` : `<p>No overdue cash.</p>`}`;
+      showStatus("Cash collection loaded.", "success");
     }
 
     async function loadMissedSearches() {
