@@ -692,6 +692,7 @@
     <section id="shopSection" class="hidden">
         <div class="layout">
             <div>
+                <div id="ratePrompt" class="hidden" style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:12px;"></div>
                 <div class="search-row">
                     <input type="text" id="searchName" placeholder="Search products (press / )" oninput="onSearchChange()" list="searchSuggestions" autocomplete="off" />
                     <datalist id="searchSuggestions"></datalist>
@@ -733,6 +734,7 @@
                 <p id="cartNote" class="hidden" style="font-size:12px; color:var(--muted); margin:-6px 0 10px;"></p>
                 <div id="cartLines"><p style="color:var(--muted); font-size:14px;">Your cart is empty.</p></div>
                 <div id="laterBox"></div>
+                <div id="cartShare" class="hidden" style="margin-top:8px;"><button class="secondary" style="width:auto;" onclick="shareCart()">Share cart</button> <span id="cartShareMsg" style="font-size:12px; color:var(--muted);"></span></div>
                 <div class="total-row"><span>Total</span><span id="cartTotal">₹0</span></div>
 
                 <select id="shippingAddressId" onchange="checkAddressPincode()">
@@ -819,10 +821,11 @@
         <div class="modal-box">
             <button class="modal-close" onclick="closeProductModal()">Close</button>
             <h2 id="modalProductName"></h2>
-            <p style="margin:4px 0 8px;"><button class="secondary" style="width:auto;" onclick="copyProductLink()">Copy link</button> <span id="productLinkMsg" style="font-size:12px; color:var(--muted);"></span></p>
+            <p style="margin:4px 0 8px;"><button class="secondary" style="width:auto;" onclick="copyProductLink()">Copy link</button> <button class="secondary" id="shareProductBtn" style="width:auto; display:none;" onclick="shareProduct()">Share</button> <span id="productLinkMsg" style="font-size:12px; color:var(--muted);"></span></p>
             <div id="modalRatingSummary" class="rating-row"></div>
             <div id="modalSubscribe" class="subscribe-box"></div>
             <div id="modalAlert" class="subscribe-box"></div>
+            <div id="modalAlternatives" class="hidden"></div>
 
             <div id="modalGallery" class="fbt-strip hidden"></div>
 
@@ -916,6 +919,69 @@
       if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(() => done(true), fallback);
       else fallback();
     }
+
+    // ---- sharing ----
+    // Uses the phone's own share sheet (WhatsApp, messages...) when the browser has one, otherwise copies the link.
+    // Only ids and the page address are ever shared - never a phone number or any account detail.
+    if (navigator.share) document.getElementById("shareProductBtn").style.display = "";
+
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; }
+      } catch (e) { /* fall through to the old way */ }
+      const box = document.createElement("input");
+      box.value = text;
+      document.body.appendChild(box);
+      box.select();
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { /* reported as a failure below */ }
+      box.remove();
+      return ok;
+    }
+
+    async function shareOrCopy(data, messageEl) {
+      const say = text => { if (messageEl) messageEl.textContent = text; };
+      if (navigator.share) {
+        try { await navigator.share(data); return; }
+        catch (e) { if (e && e.name === "AbortError") return; /* anything else: copy instead */ }
+      }
+      say(await copyText(data.url) ? "Link copied" : "Couldn't copy - copy the address from your browser's address bar");
+    }
+
+    function shareProduct() {
+      const product = products.find(p => p.productId === modalProductId);
+      if (!product) return;
+      shareOrCopy({ title: product.productName, text: `${product.productName} - ₹${Number(product.productPrice).toFixed(2)} at Charan Mart`,
+                    url: productLink(product.productId) }, document.getElementById("productLinkMsg"));
+    }
+
+    function shareWishlistLink() {
+      const input = document.getElementById("wishlistShareLink");
+      if (input) shareOrCopy({ title: "My wishlist", text: "Have a look at my wishlist on Charan Mart", url: input.value },
+                              document.getElementById("wishlistShareMsg"));
+    }
+
+    // A cart is shared as a link carrying only product ids (shop.html#cart=1,2,3). Opening it adds the in-stock
+    // ones, quantity 1 each, once the opener is signed in - the same path "Add all to my cart" on a shared wishlist uses.
+    function shareCart() {
+      if (!cart.length) return;
+      const ids = [...new Set(cart.map(item => item.productId))].slice(0, 30);
+      shareOrCopy({ title: "My cart", text: `${ids.length} item${ids.length === 1 ? "" : "s"} from Charan Mart`,
+                    url: location.origin + location.pathname + "#cart=" + ids.join(",") }, document.getElementById("cartShareMsg"));
+    }
+
+    function takeSharedCartFromHash() {
+      const m = /^#cart=(\d{1,9}(?:,\d{1,9}){0,29})$/.exec(location.hash);
+      if (!m) return false;
+      const ids = [...new Set(m[1].split(",").map(Number))];
+      try { localStorage.setItem("pendingCartAdds", JSON.stringify(ids)); } catch (e) { return false; }
+      try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* harmless if refused */ }
+      return true;
+    }
+    takeSharedCartFromHash();
+    window.addEventListener("hashchange", () => {
+      if (takeSharedCartFromHash() && customerToken) applyPendingSharedItems();
+    });
 
     // Opens the linked product once the catalog is in. A link to something that is not on sale any more is dropped with a note.
     function applyProductDeepLink() {
@@ -1081,7 +1147,7 @@
         if (!added) return;
         renderCart();
         const note = document.getElementById("cartNote");
-        const message = `${added} item${added === 1 ? "" : "s"} from the shared wishlist added to your cart`;
+        const message = `${added} item${added === 1 ? "" : "s"} from the shared link added to your cart`;
         note.textContent = note.classList.contains("hidden") || !note.textContent ? message : note.textContent + " · " + message;
         note.classList.remove("hidden");
       } catch (e) { /* the shared list is still on its own page; nothing is lost */ }
@@ -1251,7 +1317,57 @@
       return `<div class="cart-line"><span>Estimated delivery</span><span>${eta.toLocaleDateString()}</span></div>`;
     }
 
+    // ---- one-tap rating after delivery ----
+    // The newest delivered order that has no feedback yet (and was not dismissed on this browser) gets a banner with
+    // thumbs up / down. Thumbs up is saved as 5 stars and thumbs down as 1; a thumbs down then offers "Report a
+    // problem". The full star form stays under My account > Rate this order.
+    const rateDismissKey = () => `shopRateDismissed_${customerPhno}`;
+    function dismissedRateIds() {
+      try { return JSON.parse(localStorage.getItem(rateDismissKey()) || "[]"); } catch (e) { return []; }
+    }
+
+    async function loadRatePrompt() {
+      const box = document.getElementById("ratePrompt");
+      box.classList.add("hidden");
+      if (!customerPhno) return;
+      try {
+        const [ordersResponse, feedbackResponse] = await Promise.all([
+          authFetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(customerPhno)}`),
+          authFetch(`${BASE_URL}/feedback/mine?phno=${encodeURIComponent(customerPhno)}`)
+        ]);
+        if (!ordersResponse.ok || !feedbackResponse.ok) return;
+        const rated = new Set((await feedbackResponse.json()).map(f => f.orderId));
+        const skipped = new Set(dismissedRateIds());
+        const order = (await ordersResponse.json())
+          .filter(o => o.status === "DELIVERED" && !rated.has(o.orderId) && !skipped.has(o.orderId))
+          .sort((a, b) => b.orderId - a.orderId)[0];
+        if (!order) return;
+        box.innerHTML = `<strong>How was order #${order.orderId}?</strong>
+          <button class="secondary" style="width:auto; margin:0 6px;" onclick="thumbRate(${order.orderId}, true)" aria-label="Good">&#128077;</button>
+          <button class="secondary" style="width:auto;" onclick="thumbRate(${order.orderId}, false)" aria-label="Not good">&#128078;</button>
+          <button class="secondary" style="width:auto; float:right;" onclick="dismissRatePrompt(${order.orderId})">Not now</button>`;
+        box.classList.remove("hidden");
+      } catch (e) { /* the prompt is optional; My account still has Rate this order */ }
+    }
+
+    function dismissRatePrompt(orderId) {
+      try { localStorage.setItem(rateDismissKey(), JSON.stringify([...dismissedRateIds(), orderId].slice(-50))); } catch (e) {}
+      document.getElementById("ratePrompt").classList.add("hidden");
+    }
+
+    async function thumbRate(orderId, up) {
+      const box = document.getElementById("ratePrompt");
+      const response = await authFetch(`${BASE_URL}/feedback/submit?phno=${encodeURIComponent(customerPhno)}&orderId=${orderId}&rating=${up ? 5 : 1}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't save your feedback. Please try again."); return; }
+      ratedOrderIds.add(orderId);
+      box.innerHTML = up
+        ? `Thanks for the feedback! &#128154;`
+        : `Sorry to hear that. <button class="secondary" style="width:auto; margin-left:6px;" onclick="reportProblem(${orderId})">Tell us what went wrong</button>`;
+      if (up) setTimeout(() => box.classList.add("hidden"), 3000);
+    }
+
     function enterShop() {
+      loadRatePrompt();
       loadSavedForLater();
       restoreSavedCart();
       document.getElementById("loginSection").classList.add("hidden");
@@ -1262,6 +1378,7 @@
       loadWishlist();
       loadWaitlist();
       loadSearchWatches();
+      loadSlotAvailability();
       loadLoyaltyBalance();
       loadCouponSuggestions();
       loadCodEligibility();
@@ -1657,7 +1774,7 @@
         const link = `${BASE_URL}/wishlist.html?t=${status.token}`;
         const views = Number(status.views) || 0;
         box.innerHTML = `Anyone with this link can view your wishlist (opened ${views} time${views === 1 ? "" : "s"}): <input id="wishlistShareLink" readonly value="${escapeHtml(link)}" style="width:min(100%,420px);" onclick="this.select()" />
-          <button onclick="copyWishlistLink()">Copy</button> <button onclick="stopSharingWishlist()">Stop sharing</button> <span id="wishlistShareMsg"></span>`;
+          <button onclick="copyWishlistLink()">Copy</button> ${navigator.share ? '<button onclick="shareWishlistLink()">Share&hellip;</button> ' : ""}<button onclick="stopSharingWishlist()">Stop sharing</button> <span id="wishlistShareMsg"></span>`;
       } else {
         box.innerHTML = `<button onclick="startSharingWishlist()">Share my wishlist</button> <span id="wishlistShareMsg"></span>`;
       }
@@ -2716,7 +2833,53 @@
 
       renderSubscribeBox(product);
       renderModalAlert(productId);
+      loadModalAlternatives(productId);
       await Promise.all([loadModalReviews(productId), loadModalQuestions(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
+    }
+
+    // ---- in-stock alternatives for a sold-out product ----
+    // Same category, in stock, closest price first (up to 4), from the full catalog rather than the possibly
+    // search-narrowed grid. Options of the same variant group are skipped - the option picker already covers those.
+    let catalogCache = { at: 0, items: [] };
+    async function fullCatalog() {
+      if (Date.now() - catalogCache.at < 60000 && catalogCache.items.length) return catalogCache.items;
+      const response = await authFetch(`${BASE_URL}/cart/search`);
+      if (response.ok) catalogCache = { at: Date.now(), items: await response.json() };
+      return catalogCache.items;
+    }
+
+    async function loadModalAlternatives(productId) {
+      const box = document.getElementById("modalAlternatives");
+      box.classList.add("hidden");
+      box.innerHTML = "";
+      const product = products.find(p => p.productId === productId);
+      if (!product || product.productStock > 0 || !product.productCategory) return;
+      const catalog = await fullCatalog();
+      if (modalProductId !== productId) return; // the modal moved on while the catalog loaded
+      const category = product.productCategory.trim().toLowerCase();
+      const alternatives = catalog
+        .filter(p => p.productId !== productId && p.productStock > 0
+          && (p.productCategory || "").trim().toLowerCase() === category
+          && !(product.variantGroup && p.variantGroup === product.variantGroup))
+        .sort((a, b) => Math.abs(a.productPrice - product.productPrice) - Math.abs(b.productPrice - product.productPrice))
+        .slice(0, 4);
+      if (!alternatives.length) return;
+      box.innerHTML = `<h3>Available instead</h3><div class="fbt-strip">${alternatives.map(p => `
+        <button class="fbt-chip" style="cursor:pointer; text-align:left;" onclick="openAlternative(${p.productId})">
+          ${escapeHtml(p.productName)}
+          <div class="fbt-count">&#8377;${Number(p.productPrice).toFixed(2)} &middot; ${p.productStock} in stock</div>
+        </button>`).join("")}</div>`;
+      box.classList.remove("hidden");
+    }
+
+    // The grid may be narrowed by a search, so clear the filters first when the alternative is not in it.
+    async function openAlternative(productId) {
+      if (!products.some(p => p.productId === productId)) {
+        document.getElementById("searchName").value = "";
+        document.getElementById("searchCategory").value = "";
+        await loadProducts();
+      }
+      if (products.some(p => p.productId === productId)) openProductModal(productId);
     }
 
     // ---- one "Alert me" for restock and price drops ----
@@ -3317,6 +3480,7 @@
         `).join("");
       }
       renderLater();
+      document.getElementById("cartShare").classList.toggle("hidden", !cart.length);
       const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
       document.getElementById("cartTotal").textContent = `₹${total.toFixed(2)}`;
       renderCouponSuggestions();
@@ -3350,6 +3514,25 @@
       else if (codEligibility && codEligibility.maxAmount) text = `Cash on delivery is available for orders up to ₹${codEligibility.maxAmount.toFixed(0)} until your first order is delivered.`;
       hint.textContent = text;
       hint.classList.toggle("hidden", !text);
+    }
+
+    // Greys out delivery windows that have reached their open-order cap (delivery.slot-capacity); with no cap set
+    // nothing is ever full. Checkout enforces the cap server-side regardless - this only saves a failed attempt.
+    async function loadSlotAvailability() {
+      try {
+        const response = await fetch(`${BASE_URL}/pincodes/slots/availability`);
+        if (!response.ok) return;
+        const slots = await response.json();
+        const select = document.getElementById("deliverySlot");
+        slots.forEach(slot => {
+          const option = [...select.options].find(o => o.value === slot.slot);
+          if (!option) return;
+          const base = option.textContent.replace(/ - full$/, "");
+          option.disabled = slot.full;
+          option.textContent = slot.full ? base + " - full" : base;
+          if (slot.full && select.value === slot.slot) select.value = "";
+        });
+      } catch (e) { /* leave the options as they are; checkout re-checks */ }
     }
 
     function onPaymentMethodChange() {

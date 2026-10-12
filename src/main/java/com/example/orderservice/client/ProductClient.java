@@ -37,6 +37,8 @@ public interface ProductClient {
                                 @RequestParam int page,
                                 @RequestParam int size);
     // ProductService requires X-Service-Key on every catalog-changing call (see its SecurityConfig).
+    @PutMapping("/product/updatePrice")
+    public Product updateProductPrice(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam Integer id, @RequestParam Double price);
     @PutMapping("/product/updateStock")
     public Product updateProductStock(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam Integer id, @RequestParam Integer stock);
 
