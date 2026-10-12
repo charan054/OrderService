@@ -1498,7 +1498,7 @@ public class OrderService {
         }
         ShippingAddress address = shippingAddressRepository.findById(addressId)
                 .orElseThrow(() -> new OrderNotFoundException("Address not found"));
-        if (address.getCustomerPhno() != cart.getCustomerPhno()) {
+        if (address.getCustomerPhno() != cart.getCustomerPhno() || address.isArchived()) {
             throw new OrderNotFoundException("Address not found");
         }
         // Same fail-before-payment rule: don't take money for an order we've said we don't deliver to. Skipped
@@ -2828,12 +2828,21 @@ public class OrderService {
         if (!address.getPincode().matches("[1-9][0-9]{5}")) {
             throw new ProductException("Pincode must be 6 digits");
         }
+        address.setArchived(false);
         // An id in the body makes save() update that row - only allowed for the caller's own address, otherwise
         // anyone could overwrite (and take over) another customer's saved address.
         if (address.getId() != null) {
             ShippingAddress current = shippingAddressRepository.findById(address.getId()).orElse(null);
-            if (current == null || current.getCustomerPhno() != address.getCustomerPhno()) {
+            if (current == null || current.getCustomerPhno() != address.getCustomerPhno() || current.isArchived()) {
                 throw new OrderNotFoundException("Address not found");
+            }
+            // An address an order already points to is history (invoice ship-to, credit notes, GST place of supply):
+            // the edit becomes a new row and the old one is retired, so those documents keep saying what was true.
+            if (orderRepository.existsByShippingAddressId(current.getId())) {
+                current.setArchived(true);
+                current.setDefault(false);
+                shippingAddressRepository.save(current);
+                address.setId(null);
             }
         }
         if (address.isDefault()) {
@@ -2854,7 +2863,7 @@ public class OrderService {
         validatePhno(phno);
         ShippingAddress address = shippingAddressRepository.findById(addressId)
                 .orElseThrow(() -> new OrderNotFoundException("Address not found"));
-        if (address.getCustomerPhno() != phno) {
+        if (address.getCustomerPhno() != phno || address.isArchived()) {
             throw new OrderNotFoundException("Address not found");
         }
         for (ShippingAddress existing : shippingAddressRepository.findByCustomerPhnoAndIsDefaultTrue(phno)) {
@@ -2872,7 +2881,7 @@ public class OrderService {
 
     public List<ShippingAddress> getAddresses(long phno) {
         validatePhno(phno);
-        return shippingAddressRepository.findByCustomerPhno(phno);
+        return shippingAddressRepository.findByCustomerPhnoAndArchivedFalse(phno);
     }
 
     // Ownership-checked the same way validateShippingAddress() checks it at checkout: a phone number can only
@@ -2881,10 +2890,34 @@ public class OrderService {
         validatePhno(phno);
         ShippingAddress address = shippingAddressRepository.findById(addressId)
                 .orElseThrow(() -> new OrderNotFoundException("Address not found"));
-        if (address.getCustomerPhno() != phno) {
+        if (address.getCustomerPhno() != phno || address.isArchived()) {
             throw new OrderNotFoundException("Address not found");
         }
+        // One an order shipped to is kept (hidden) so that order's invoice still has its ship-to and place of supply.
+        if (orderRepository.existsByShippingAddressId(addressId)) {
+            address.setArchived(true);
+            address.setDefault(false);
+            shippingAddressRepository.save(address);
+            return;
+        }
         shippingAddressRepository.deleteById(addressId);
+    }
+
+    // Points a not-yet-shipped order at another of the customer's saved addresses. The new one goes through the same
+    // checks as checkout (it is theirs, current, and in a pincode we deliver to).
+    public Cart changeOrderAddress(long orderId, long addressId) {
+        synchronized (orderLock(orderId)) {
+            Cart cart = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+            if (cart.getStatus() != OrderStatus.PLACED) {
+                throw new ProductException("The delivery address can only be changed before the order ships");
+            }
+            cart.setShippingAddressId(addressId);
+            validateShippingAddress(cart);
+            Cart saved = orderRepository.save(cart);
+            sendNotification("Delivery address changed. OrderId: " + orderId + " Customer: " + mask(saved.getCustomerPhno()));
+            return saved;
+        }
     }
 
     // A read-only rollup, not a new source of truth - each figure is fetched from wherever it's already owned

@@ -3137,7 +3137,7 @@ class OrderServiceTest {
 
     @Test
     void getAddressesDelegatesToTheRepository() {
-        when(shippingAddressRepository.findByCustomerPhno(CUSTOMER)).thenReturn(List.of(address(CUSTOMER, false)));
+        when(shippingAddressRepository.findByCustomerPhnoAndArchivedFalse(CUSTOMER)).thenReturn(List.of(address(CUSTOMER, false)));
         assertEquals(1, service.getAddresses(CUSTOMER).size());
     }
 
@@ -3156,6 +3156,95 @@ class OrderServiceTest {
 
         assertThrows(OrderNotFoundException.class, () -> service.deleteAddress(CUSTOMER, 99L));
         verify(shippingAddressRepository, never()).deleteById(any());
+    }
+
+    // An address an order shipped to is history (old invoice ship-to, GST place of supply): editing it makes a new row.
+    @Test
+    void editingAnAddressAnOrderUsesArchivesItAndSavesTheEditAsANewRow() {
+        ShippingAddress current = address(CUSTOMER, true);
+        current.setId(7L);
+        when(shippingAddressRepository.findById(7L)).thenReturn(Optional.of(current));
+        when(orderRepository.existsByShippingAddressId(7L)).thenReturn(true);
+        when(shippingAddressRepository.save(any(ShippingAddress.class))).thenAnswer(i -> i.getArgument(0));
+        ShippingAddress edit = address(CUSTOMER, true);
+        edit.setId(7L);
+        edit.setLine1("New street 5");
+
+        ShippingAddress saved = service.saveAddress(edit);
+
+        assertTrue(current.isArchived());
+        assertFalse(current.isDefault());
+        assertNull(saved.getId());
+        assertEquals("New street 5", saved.getLine1());
+    }
+
+    @Test
+    void editingAnAddressNoOrderUsesUpdatesItInPlace() {
+        ShippingAddress current = address(CUSTOMER, false);
+        current.setId(7L);
+        when(shippingAddressRepository.findById(7L)).thenReturn(Optional.of(current));
+        when(orderRepository.existsByShippingAddressId(7L)).thenReturn(false);
+        when(shippingAddressRepository.save(any(ShippingAddress.class))).thenAnswer(i -> i.getArgument(0));
+        ShippingAddress edit = address(CUSTOMER, false);
+        edit.setId(7L);
+
+        ShippingAddress saved = service.saveAddress(edit);
+
+        assertEquals(7L, saved.getId());
+        assertFalse(current.isArchived());
+    }
+
+    @Test
+    void deletingAnAddressAnOrderUsesArchivesItInsteadOfDeleting() {
+        ShippingAddress a = address(CUSTOMER, true);
+        a.setId(99L);
+        when(shippingAddressRepository.findById(99L)).thenReturn(Optional.of(a));
+        when(orderRepository.existsByShippingAddressId(99L)).thenReturn(true);
+
+        service.deleteAddress(CUSTOMER, 99L);
+
+        assertTrue(a.isArchived());
+        verify(shippingAddressRepository).save(a);
+        verify(shippingAddressRepository, never()).deleteById(any());
+    }
+
+    @Test
+    void changeOrderAddressMovesAPlacedOrderToTheCustomersOwnAddress() {
+        Cart order = cart(CUSTOMER, item(1, 1));
+        order.setOrderId(42L);
+        order.setStatus(OrderStatus.PLACED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(order));
+        ShippingAddress target = address(CUSTOMER, false);
+        target.setId(8L);
+        when(shippingAddressRepository.findById(8L)).thenReturn(Optional.of(target));
+        when(orderRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        Cart result = service.changeOrderAddress(42L, 8L);
+
+        assertEquals(8L, result.getShippingAddressId());
+    }
+
+    @Test
+    void changeOrderAddressRefusesShippedOrdersAndOtherPeoplesOrArchivedAddresses() {
+        Cart shipped = cart(CUSTOMER, item(1, 1));
+        shipped.setOrderId(42L);
+        shipped.setStatus(OrderStatus.SHIPPED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(shipped));
+        assertThrows(ProductException.class, () -> service.changeOrderAddress(42L, 8L));
+
+        Cart placed = cart(CUSTOMER, item(1, 1));
+        placed.setOrderId(43L);
+        placed.setStatus(OrderStatus.PLACED);
+        when(orderRepository.findById(43L)).thenReturn(Optional.of(placed));
+        ShippingAddress strangers = address(1111111111L, false);
+        strangers.setId(9L);
+        when(shippingAddressRepository.findById(9L)).thenReturn(Optional.of(strangers));
+        assertThrows(OrderNotFoundException.class, () -> service.changeOrderAddress(43L, 9L));
+        ShippingAddress archived = address(CUSTOMER, false);
+        archived.setId(10L);
+        archived.setArchived(true);
+        when(shippingAddressRepository.findById(10L)).thenReturn(Optional.of(archived));
+        assertThrows(OrderNotFoundException.class, () -> service.changeOrderAddress(43L, 10L));
     }
 
     @Test

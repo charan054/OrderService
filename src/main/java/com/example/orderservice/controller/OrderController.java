@@ -181,6 +181,12 @@ public class OrderController {
         requireOrderAccess(orderId);
         return orderService.returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin, refundTo);
     }
+    // Moves a not-yet-shipped order to another of the customer's saved addresses; same access as cancel.
+    @PutMapping("/{orderId}/address")
+    public Cart changeAddress(@PathVariable long orderId, @RequestParam long addressId){
+        requireOrderAccess(orderId);
+        return orderService.changeOrderAddress(orderId, addressId);
+    }
     // Adds units of a product to a not-yet-shipped cash order (see OrderService.addItem for the limits). Same access as
     // cancel: the order's signed-in owner, or the service key. No money moves, so no payment credentials are needed.
     @PostMapping("/{orderId}/items/add")
