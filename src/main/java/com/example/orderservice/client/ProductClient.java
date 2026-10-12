@@ -49,6 +49,10 @@ public interface ProductClient {
 
     // Public on ProductService's side (see its SecurityConfig - matches "/product/*/rating-summary"). Used by
     // OrderService.getRatingSummaries() to surface star ratings on the storefront's product cards.
+    // Cost prices live only behind this X-Service-Key call - they are never part of a public catalog response.
+    @GetMapping("/product/costs")
+    List<com.example.orderservice.dto.ProductCost> getCosts(@RequestHeader("X-Service-Key") String serviceKey);
+
     @GetMapping("/product/{productId}/rating-summary")
     ProductRatingSummary getRatingSummary(@PathVariable long productId);
 
