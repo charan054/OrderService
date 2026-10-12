@@ -1553,10 +1553,12 @@
 
     // For an online order: refund to store credit (instant, no PIN) or back to PhonePe (needs the PIN). Returns
     // the extra query params to send, or null if the customer backed out.
-    function refundChoiceParams() {
+    // noPin: the refund is paid by the shop when the goods are received, so only the destination is asked.
+    function refundChoiceParams(noPin) {
       const toCredit = confirm("Refund to your Charan Mart store credit instead of PhonePe?\n\n"
         + "OK = store credit (instant, no PIN needed)\nCancel = back to your PhonePe account");
       if (toCredit) return { refundTo: "STORE_CREDIT" };
+      if (noPin) return {};
       const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
       if (!pin) return null;
       return { payerPhno: customerPhno, payerPin: pin };
@@ -2554,7 +2556,7 @@
     }
 
     // With return approval on (GET /cart/returnpolicy) the customer asks first, staff decide, then the customer completes it.
-    let returnPolicy = { approvalRequired: false };
+    let returnPolicy = { approvalRequired: false, pickup: false };
     async function loadReturnPolicy() {
       try {
         const response = await fetch(`${BASE_URL}/cart/returnpolicy`);
@@ -2564,6 +2566,8 @@
 
     function returnControls(order) {
       const id = order.orderId, pm = order.paymentMethod, st = order.returnRequestStatus;
+      if (order.returnPickupStatus === "AWAITING_PICKUP") return `<span class="meta">Return booked - waiting for pickup</span>`;
+      if (order.returnPickupStatus === "PICKED_UP") return `<span class="meta">Return picked up - refund follows when it reaches us</span>`;
       if (!returnPolicy.approvalRequired) {
         return `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${id}, '${pm}')">Request return</button>`;
       }
@@ -2591,7 +2595,7 @@
 
       let query = `?reason=${encodeURIComponent(reason)}`;
       if (paymentMethod !== "CASH") {
-        const choice = refundChoiceParams();
+        const choice = refundChoiceParams(returnPolicy.pickup);
         if (!choice) return;
         query += "&" + new URLSearchParams(choice);
       }

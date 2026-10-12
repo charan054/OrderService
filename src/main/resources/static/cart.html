@@ -419,6 +419,23 @@
     </section>
 
     <section class="grid">
+        <div class="card wide" id="card-returnpickups">
+            <div class="card-header">
+                <div class="icon">&#128666;</div>
+                <div class="title-wrap">
+                    <h2>Return Pickups</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Returns booked by customers while RETURNS_PICKUP is on. Mark them picked up, then received - the refund is paid on "received". Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadReturnPickups()">Refresh</button>
+            </div>
+            <div id="returnPickupsWrap"></div>
+        </div>
+    </section>
+
+    <section class="grid">
         <div class="card wide" id="card-couponreport">
             <div class="card-header">
                 <div class="icon">&#127903;</div>
@@ -2197,6 +2214,30 @@
             <td><button onclick="decideReturn(${r.orderId}, true)">Approve</button> <button onclick="decideReturn(${r.orderId}, false)">Reject</button></td></tr>`).join("")}</tbody></table>`
         : `<p>No return requests waiting.</p>`;
       showStatus(`${rows.length} return request(s) waiting.`, "success");
+    }
+
+    async function loadReturnPickups() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const rows = await apiCall("http://localhost:8083/cart/returns/pickups", { headers: { "X-Service-Key": serviceKey } });
+      if (!Array.isArray(rows)) return;
+      document.getElementById("returnPickupsWrap").innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>#${r.orderId}</td><td>${r.customerPhno}</td><td>&#8377;${Number(r.totalPrice).toFixed(2)}</td>
+            <td style="white-space:normal;">${escapeHtml(r.returnReason || "")}</td><td>${escapeHtml(r.returnPickupStatus)}</td>
+            <td>${r.returnPickupStatus === "AWAITING_PICKUP"
+              ? `<button onclick="stepReturnPickup(${r.orderId}, 'pickedup')">Mark picked up</button>`
+              : `<button onclick="stepReturnPickup(${r.orderId}, 'received')">Mark received &amp; refund</button>`}</td></tr>`).join("")}</tbody></table>`
+        : `<p>No returns on their way back.</p>`;
+      showStatus(`${rows.length} return(s) on their way back.`, "success");
+    }
+
+    async function stepReturnPickup(orderId, step) {
+      if (step === "received" && !confirm("Goods are back? This returns the order and pays the refund now.")) return;
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      await apiCall(`http://localhost:8083/cart/${orderId}/return/${step}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      await loadReturnPickups();
     }
 
     async function decideReturn(orderId, approve) {

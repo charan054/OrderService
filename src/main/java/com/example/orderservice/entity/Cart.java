@@ -110,6 +110,12 @@ public class Cart {
     private String returnRequestReason;
     @Column(length = 300)
     private String returnRequestNote;
+    // Only with returns.pickup: AWAITING_PICKUP -> PICKED_UP, then staff mark the goods received and the order is
+    // actually returned and refunded (see ReturnPickupService). returnRefundTo remembers where the customer wanted the refund.
+    @Column(length = 20)
+    private String returnPickupStatus;
+    @Column(length = 20)
+    private String returnRefundTo;
     // Why the buyer (or admin) cancelled the whole order: one of OrderService.CANCEL_REASONS, optional, plus an
     // optional free-text note. Null for an order that wasn't cancelled, or was cancelled without giving one.
     @Column(length = 40)
