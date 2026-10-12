@@ -162,6 +162,8 @@ public class OrderService {
     PhonepeClient phonepeClient;
     @Autowired
     private OrderKafkaProducer orderKafkaProducer;
+    @Autowired
+    private RefundFailureService refundFailureService;
     @Value("${internal.service.api-key}")
     private String serviceApiKey;
     public Cart order(Cart cart, String authorization, String idempotencyKey) {
@@ -368,6 +370,8 @@ public class OrderService {
             } catch (RuntimeException ex) {
                 log.error("Rollback of order {}: buyer was charged {} (payment {}) and the refund FAILED - refund by hand: {}",
                         orderId, charged, payment.transactionId(), ex.getMessage());
+                refundFailureService.record(orderId, order.getCustomerPhno(), "PHONEPE_REFUND", charged,
+                        payment.transactionId(), "Checkout failed after the charge; automatic refund failed: " + ex.getMessage());
             }
         }
         if (creditUsed > 0) {
@@ -376,6 +380,8 @@ public class OrderService {
                         orderId, "Order could not be completed - store credit returned");
             } catch (RuntimeException ex) {
                 log.error("Rollback of order {}: store credit {} was NOT returned: {}", orderId, creditUsed, ex.getMessage());
+                refundFailureService.record(orderId, order.getCustomerPhno(), "STORE_CREDIT", creditUsed, null,
+                        "Checkout failed; returning the store credit used failed: " + ex.getMessage());
             }
         }
         try {

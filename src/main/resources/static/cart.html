@@ -384,6 +384,23 @@
         </div>
     </section>
 
+    <section class="grid">
+        <div class="card wide" id="card-refundfailures">
+            <div class="card-header">
+                <div class="icon">&#128176;</div>
+                <div class="title-wrap">
+                    <h2>Refunds To Settle</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Refunds the system could not make by itself (a checkout failed after the buyer was charged and the automatic refund did not go through). Refund the buyer by hand, then mark it resolved with a note. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadRefundFailures()">Refresh</button>
+            </div>
+            <div id="refundFailuresWrap"></div>
+        </div>
+    </section>
+
     <section class="products-section">
         <div class="section-header">
             <div>
@@ -2075,6 +2092,34 @@
       showStatus(`${s.totalFeedback} feedback entr${s.totalFeedback === 1 ? "y" : "ies"}.`, "success");
     }
 
+    // ---------- refunds to settle ----------
+    async function loadRefundFailures() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const rows = await apiCall("http://localhost:8083/refundfailures", { headers: { "X-Service-Key": serviceKey } });
+      if (!Array.isArray(rows)) return;
+      document.getElementById("refundFailuresWrap").innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>When</th><th>Order</th><th>Customer</th><th>What</th><th>Amount</th><th>Why</th><th></th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>${new Date(r.createdAt).toLocaleString()}</td><td>#${r.orderId}</td><td>${r.customerPhno}</td>
+            <td>${escapeHtml(r.kind === "STORE_CREDIT" ? "Store credit" : "PhonePe refund")}${r.paymentTransactionId ? " (payment " + r.paymentTransactionId + ")" : ""}</td>
+            <td>&#8377;${Number(r.amount).toFixed(2)}</td><td style="white-space:normal;">${escapeHtml(r.reason || "")}</td>
+            <td><button onclick="resolveRefundFailure(${r.id})">Resolve</button></td></tr>`).join("")}</tbody></table>`
+        : `<p>Nothing to settle.</p>`;
+      showStatus(`${rows.length} refund(s) to settle.`, "success");
+    }
+
+    async function resolveRefundFailure(id) {
+      const note = prompt("How was it settled? (for example: refunded by hand from the PhonePe dashboard)");
+      if (!note || !note.trim()) return;
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      await apiCall(`http://localhost:8083/refundfailures/${id}/resolve?note=${encodeURIComponent(note.trim())}`, {
+        method: "POST",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      await loadRefundFailures();
+    }
+
     // ---------- internal order notes ----------
     const NOTES_URL = "http://localhost:8083/ordernotes";
 
@@ -2175,6 +2220,7 @@
       flaggedReviews: { card: "card-moderation", open: () => loadFlaggedReviews() },
       lowStock: { card: "card-lowstock", open: () => getLowStockReport() },
       stuckPayments: { card: "card-orders", open: () => { document.getElementById("ordersStatus").value = "PENDING_PAYMENT"; return loadOrdersTable(); } },
+      failedRefunds: { card: "card-refundfailures", open: () => loadRefundFailures() },
       failedNotifications: { card: "card-notifications", open: (item) => {
         if (item.orderIds && item.orderIds.length) { document.getElementById("notificationsOrderId").value = item.orderIds[0]; return viewNotifications(); }
       } }

@@ -40,6 +40,7 @@ class NeedsAttentionServiceTest {
     private NotificationLogRepository notifications;
     private OrderService orderService;
     private NeedsAttentionService service;
+    private com.example.orderservice.repository.RefundFailureRepository refundFailures;
 
     @BeforeEach
     void setUp() {
@@ -48,8 +49,10 @@ class NeedsAttentionServiceTest {
         carts = mock(CartRepository.class);
         notifications = mock(NotificationLogRepository.class);
         orderService = mock(OrderService.class);
-        service = new NeedsAttentionService(tickets, questions, carts, notifications, orderService,
+        refundFailures = mock(com.example.orderservice.repository.RefundFailureRepository.class);
+        service = new NeedsAttentionService(tickets, questions, carts, notifications, refundFailures, orderService,
                 Clock.fixed(NOW, ZoneOffset.UTC));
+        when(refundFailures.findByResolvedAtIsNullOrderByIdAsc()).thenReturn(List.of());
         when(carts.findByStatusAndPaymentDeadlineBeforeOrderByPaymentDeadlineAsc(any(), any())).thenReturn(List.of());
         when(notifications.findByEmailedFalseAndSentAtAfterOrderBySentAtDesc(any())).thenReturn(List.of());
         when(orderService.getFlaggedReviews(anyInt(), anyInt())).thenReturn(List.of());
@@ -79,7 +82,7 @@ class NeedsAttentionServiceTest {
         assertEquals(0, result.total());
         assertEquals(NOW, result.generatedAt());
         assertEquals(List.of("supportTickets", "unansweredQuestions", "flaggedReviews", "lowStock", "stuckPayments",
-                "failedNotifications"), result.items().stream().map(NeedsAttention.Item::key).toList());
+                "failedNotifications", "failedRefunds"), result.items().stream().map(NeedsAttention.Item::key).toList());
         assertTrue(result.items().stream().allMatch(i -> i.count() == 0 && !i.unavailable()));
     }
 
