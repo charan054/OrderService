@@ -19,6 +19,8 @@ public class CouponController {
     private OrderService orderService;
     @Autowired
     private com.example.orderservice.service.CouponBatchService batchService;
+    @Autowired
+    private com.example.orderservice.service.CouponReportService reportService;
 
     // Mints a batch of single-use codes (see CouponBatchService); the response is where the codes are handed over.
     @PostMapping("/bulk")
@@ -36,6 +38,12 @@ public class CouponController {
     public List<CouponSuggestion> getAvailable(@RequestParam long phno) {
         CustomerAccess.requireSelfOrService(phno);
         return orderService.getAvailableCoupons(phno);
+    }
+
+    // Per-coupon results (orders, discount given, revenue) - service only like the rest of this controller.
+    @GetMapping("/report")
+    public com.example.orderservice.dto.CouponReport report() {
+        return reportService.report();
     }
 
     @GetMapping("/all")
