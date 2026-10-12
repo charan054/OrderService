@@ -722,6 +722,79 @@ public class OrderService {
         return saved;
     }
 
+    // Adds units to an order that has not shipped yet. Only for a cash-on-delivery order with no coupon, points, store
+    // credit or subscription on it: nothing has been charged, so no money moves, and without a discount the
+    // per-item cancel/return arithmetic stays exact. The new units are sold at today's price and a line that already
+    // exists must have been bought at that same price.
+    public Cart addItem(long orderId, int productId, int quantity) {
+        synchronized (orderLock(orderId)) {
+            return addItemLocked(orderId, productId, quantity);
+        }
+    }
+
+    private Cart addItemLocked(long orderId, int productId, int quantity) {
+        if (quantity < 1) {
+            throw new ProductException("Quantity must be at least 1");
+        }
+        Cart cart = orderRepository.findById(orderId)
+                .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+        if (cart.getStatus() != OrderStatus.PLACED) {
+            throw new ProductException("Items can only be added before the order ships");
+        }
+        if (cart.getPaymentMethod() != PaymentMethod.CASH) {
+            throw new ProductException("Items can only be added to a cash-on-delivery order - place a new order instead");
+        }
+        if (cart.getSubscriptionId() != null || cart.getDiscountAmount() > 0
+                || (cart.getPointsRedeemed() != null && cart.getPointsRedeemed() > 0)
+                || (cart.getStoreCreditUsed() != null && cart.getStoreCreditUsed() > 0)) {
+            throw new ProductException("Items can't be added to an order that used a coupon, loyalty points, store credit or a subscription - place a new order instead");
+        }
+        Product product = productClient.getProductById(productId);
+        if (product == null) {
+            throw new ProductException("Product not found");
+        }
+        long heldForOthers = stockWaitlistRepository.countByProductIdAndHeldUntilAfterAndCustomerPhnoNot(
+                productId, Instant.now(), cart.getCustomerPhno());
+        if (quantity > product.getProductStock() - heldForOthers) {
+            throw new ProductException("Product quantity exceeded");
+        }
+        double price = product.getProductPrice();
+        OrderItem existing = cart.getOrderItems().stream().filter(i -> i.getProductId() == productId).findFirst().orElse(null);
+        if (existing != null && (existing.getUnitPrice() == null || Math.abs(existing.getUnitPrice() - price) > 0.001)) {
+            throw new ProductException("The price of this product has changed since you ordered it, so more units can't be added to the same line - place a new order for them");
+        }
+        double newTotal = roundMoney(cart.getTotalPrice() + quantity * price);
+        codRiskService.assertCashAllowed(cart.getCustomerPhno(), newTotal);
+
+        moveStock(productId, -quantity, StockMovementContext.SALE, orderId, "Item added to order");
+        try {
+            if (existing != null) {
+                existing.setProductQuantity(existing.getProductQuantity() + quantity);
+            } else {
+                OrderItem item = new OrderItem();
+                item.setOrderId(orderId);
+                item.setProductId(productId);
+                item.setProductQuantity(quantity);
+                item.setUnitPrice(price);
+                item.setGstRate(product.getGstRate() != null ? product.getGstRate() : defaultGstRate);
+                cart.getOrderItems().add(item);
+            }
+            cart.setTotalPrice(newTotal);
+            Cart saved = orderRepository.save(cart);
+            releaseWaitlistHolds(saved);
+            sendNotification("Item added to order. OrderId: " + orderId + " Product: " + productId + " Quantity: " + quantity
+                    + " Customer: " + mask(saved.getCustomerPhno()));
+            return saved;
+        } catch (RuntimeException e) {
+            try {
+                moveStock(productId, quantity, StockMovementContext.CANCEL, orderId, "Adding the item failed");
+            } catch (RuntimeException ex) {
+                log.error("Order {}: could not put back {} x product {} after a failed add: {}", orderId, quantity, productId, ex.getMessage());
+            }
+            throw e;
+        }
+    }
+
     public CancellationReport getCancellationReport() {
         java.util.Map<String, Integer> byReason = new java.util.LinkedHashMap<>();
         CANCEL_REASONS.forEach(r -> byReason.put(r, 0));
