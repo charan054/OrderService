@@ -77,6 +77,32 @@ public class CustomerNotifier {
         return deliver(order, order.getStatus(), subject, body);
     }
 
+    /**
+     * A refund staff settled for a checkout that could not be completed (see RefundFailureService): the order no longer
+     * exists, so this is only an email to the verified address - no notification row to hang off a deleted order. Sent
+     * in the background; a customer with no verified email simply gets nothing (the shop owner has the record).
+     */
+    public void notifyRefundSettled(long phno, long orderId, double amount, boolean toStoreCredit) {
+        String email = accounts.findById(phno).map(CustomerAccount::getEmail).orElse(null);
+        if (email == null || email.isBlank()) {
+            log.info("Refund settled for failed checkout {}: no verified email on file, nobody emailed", orderId);
+            return;
+        }
+        String formatted = String.format(Locale.ROOT, "%.2f", amount);
+        String subject = "Your refund for order #" + orderId + " has been sent";
+        String body = "Hi,\n\nYour order #" + orderId + " could not be completed, so Rs. " + formatted + " "
+                + (toStoreCredit ? "has been added to your Charan Mart store credit." : "has been refunded to your PhonePe account.")
+                + "\n\nSorry for the trouble.\n";
+        mailExecutor.execute(() -> {
+            try {
+                log.info("Refund-settled email for failed checkout {}: {}", orderId,
+                        mailService.send(email, subject, body) ? "emailed" : "email failed");
+            } catch (RuntimeException e) {
+                log.warn("Refund-settled email for failed checkout {} failed: {}", orderId, e.getMessage());
+            }
+        });
+    }
+
     private NotificationLog deliver(Cart order, OrderStatus status, String subject, String body) {
         String email = accounts.findById(order.getCustomerPhno()).map(CustomerAccount::getEmail).orElse(null);
         boolean hasEmail = email != null && !email.isBlank();

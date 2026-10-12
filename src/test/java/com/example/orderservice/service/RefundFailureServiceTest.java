@@ -29,7 +29,8 @@ class RefundFailureServiceTest {
     private final RefundFailureRepository repo = mock(RefundFailureRepository.class);
     private final PhonepeClient phonepe = mock(PhonepeClient.class);
     private final StoreCreditService credit = mock(StoreCreditService.class);
-    private final RefundFailureService service = new RefundFailureService(repo, phonepe, credit, Clock.fixed(NOW, ZoneOffset.UTC), "key");
+    private final CustomerNotifier notifier = mock(CustomerNotifier.class);
+    private final RefundFailureService service = new RefundFailureService(repo, phonepe, credit, notifier, Clock.fixed(NOW, ZoneOffset.UTC), "key");
 
     private RefundFailure open(String kind, Long txId) {
         RefundFailure f = new RefundFailure();
@@ -59,6 +60,7 @@ class RefundFailureServiceTest {
 
         assertNotNull(done.getResolvedAt());
         verify(phonepe).merchantRefund("key", 55L, new RefundRequest("settle-refund-failure-3", null));
+        verify(notifier).notifyRefundSettled(9876543210L, 7L, 120.5, false);
         assertEquals(f, done);
     }
 
@@ -69,6 +71,7 @@ class RefundFailureServiceTest {
 
         assertThrows(PaymentException.class, () -> service.retry(3));
         assertEquals(null, f.getResolvedAt());
+        org.mockito.Mockito.verifyNoInteractions(notifier);
     }
 
     @Test
@@ -80,6 +83,19 @@ class RefundFailureServiceTest {
         assertNotNull(done.getResolvedAt());
         verify(credit).credit(9876543210L, 120.5, StoreCreditTransaction.Type.REVERSED, 7L,
                 "Order could not be completed - store credit returned (settled by staff)");
+        verify(notifier).notifyRefundSettled(9876543210L, 7L, 120.5, true);
+    }
+
+    @Test
+    void aNotifierFailureNeverUndoesASettledRefund() {
+        open("STORE_CREDIT", null);
+        org.mockito.Mockito.doThrow(new RuntimeException("mail down")).when(notifier)
+                .notifyRefundSettled(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyLong(),
+                        org.mockito.ArgumentMatchers.anyDouble(), org.mockito.ArgumentMatchers.anyBoolean());
+
+        RefundFailure done = service.retry(3);
+
+        assertNotNull(done.getResolvedAt());
     }
 
     @Test
