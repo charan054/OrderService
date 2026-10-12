@@ -98,7 +98,7 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/reviews", "/cart/reviews/photo", "/cart/reviews/flag", "/cart/*/cancel", "/cart/*/return",
                                 "/cart/*/items/*/cancel", "/cart/*/items/*/return", "/cart/*/items/add", "/cart/*/invoice/email",
                                 "/wishlist/self/add", "/wishlist/share", "/waitlist/self/add", "/searchwatch/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask", "/feedback/submit", "/support/tickets", "/support/tickets/*/reply", "/giftcards/redeem", "/subscriptions").hasAnyRole("CUSTOMER", "SERVICE")
-                        .requestMatchers(HttpMethod.PUT, "/savedcart", "/addresses/self/default", "/cart/*/delivery", "/prefs/mine", "/subscriptions/*/pause", "/subscriptions/*/resume", "/subscriptions/*/skip").hasAnyRole("CUSTOMER", "SERVICE")
+                        .requestMatchers(HttpMethod.PUT, "/savedcart", "/addresses/self/default", "/cart/*/delivery", "/cart/*/address", "/prefs/mine", "/subscriptions/*/pause", "/subscriptions/*/resume", "/subscriptions/*/skip").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove", "/wishlist/share", "/waitlist/self/remove", "/searchwatch/self/remove", "/addresses/self/remove", "/subscriptions/*").hasAnyRole("CUSTOMER", "SERVICE")
 
                         // ---- Service only ----

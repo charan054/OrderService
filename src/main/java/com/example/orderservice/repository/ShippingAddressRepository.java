@@ -9,5 +9,6 @@ import java.util.List;
 @Repository
 public interface ShippingAddressRepository extends JpaRepository<ShippingAddress, Long> {
     List<ShippingAddress> findByCustomerPhno(long phno);
+    List<ShippingAddress> findByCustomerPhnoAndArchivedFalse(long phno);
     List<ShippingAddress> findByCustomerPhnoAndIsDefaultTrue(long phno);
 }

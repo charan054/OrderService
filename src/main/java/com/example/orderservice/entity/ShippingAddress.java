@@ -28,6 +28,9 @@ public class ShippingAddress {
     // The JSON name is "isDefault" - what both dashboards send and read. Lombok would otherwise derive "default" from
     // the isDefault()/setDefault() accessors, so a checkbox sent as isDefault was silently ignored and the default
     // never showed. The old "default" name is still accepted on input.
+    // True once an order has shipped to this row and the customer edited or removed it: the row stays (old invoices, credit
+    // notes and the GST place of supply read it) but is hidden and never offered again. System-managed.
+    private boolean archived;
     @Getter(onMethod_ = @JsonProperty("isDefault"))
     @Setter(onMethod_ = {@JsonProperty("isDefault"), @JsonAlias("default")})
     private boolean isDefault;

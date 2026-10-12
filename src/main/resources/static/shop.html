@@ -2074,6 +2074,7 @@
           <button class="secondary" style="width:auto;" onclick="emailInvoice(${order.orderId})">Email invoice</button>
           <button class="secondary" style="width:auto;" onclick="reorderMyOrder(${order.orderId})">Buy again</button>
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeDelivery(${order.orderId})">Change delivery</button>` : ""}
+          ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeOrderAddressTo(${order.orderId})">Change address</button>` : ""}
           ${order.status === "PLACED" && order.paymentMethod === "CASH" && !order.discountAmount && !order.pointsRedeemed && !order.storeCreditUsed && !order.subscriptionId ? `<button class="secondary" style="width:auto;" onclick="addItemToMyOrder(${order.orderId})">Add item</button>` : ""}
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
           ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
@@ -2409,6 +2410,19 @@
       if (!params.length) return;
       const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/delivery?${params.join("&")}`, { method: "PUT" });
       if (!response.ok) { alert((await response.text()) || "Couldn't change the delivery details."); return; }
+      loadAccountView();
+    }
+
+    // Moves an order that has not shipped to another saved address (picked by number from the customer's own list).
+    async function changeOrderAddressTo(orderId) {
+      const response = await authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const list = response.ok ? await response.json() : [];
+      if (!list.length) { alert("You have no saved addresses yet - add one under My account first."); return; }
+      const n = Number(prompt("Deliver this order to which address?\n" + list.map((a, i) =>
+        `${i + 1}. ${a.label ? a.label + ": " : ""}${a.line1}, ${a.city} ${a.pincode}`).join("\n")));
+      if (!Number.isInteger(n) || n < 1 || n > list.length) return;
+      const result = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/address?addressId=${list[n - 1].id}`, { method: "PUT" });
+      if (!result.ok) { alert((await result.text()) || "Couldn't change the address."); return; }
       loadAccountView();
     }
 
