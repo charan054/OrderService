@@ -2243,7 +2243,8 @@
       document.getElementById("missedSearchWrap").innerHTML = rows.length
         ? `<table class="orders-table"><thead><tr><th>Search</th><th>Times</th><th>Last searched</th><th>Action</th></tr></thead><tbody>${rows.map(r => `
             <tr><td>${escapeHtml(r.term)}</td><td>${r.times}</td><td>${r.lastSearchedAt ? new Date(r.lastSearchedAt).toLocaleString() : "-"}</td>
-              <td><button onclick="dismissMissedSearch(${JSON.stringify(r.term).replace(/"/g, "&quot;")})">Done</button></td></tr>`).join("")}</tbody></table>`
+              <td><a href="${location.protocol}//${location.hostname}:8082/product.html?newProduct=${encodeURIComponent(r.term)}" target="_blank" rel="noopener noreferrer">Add product</a>
+                <button onclick="dismissMissedSearch(${JSON.stringify(r.term).replace(/"/g, "&quot;")})">Done</button></td></tr>`).join("")}</tbody></table>`
         : "<p>No missed searches yet - every search so far found something.</p>";
       showStatus(`${rows.length} missed search term(s) loaded.`, "success");
     }
