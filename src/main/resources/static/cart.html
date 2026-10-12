@@ -3049,6 +3049,22 @@
 
       showStatus("Coupon saved successfully. Result opened in new tab.", "success");
       openResultTab("Add Coupon", data);
+      await warnIfCouponSellsBelowCost(Number(discountPercent), serviceKey);
+    }
+
+    // After a coupon is saved: products that would sell below cost at this percent off (only those with a cost price set).
+    async function warnIfCouponSellsBelowCost(percent, serviceKey) {
+      const check = await apiCall(`http://localhost:8083/coupons/margincheck?discountPercent=${encodeURIComponent(percent)}`,
+        { headers: { "X-Service-Key": serviceKey } });
+      if (!check) return;
+      if (!check.atLoss.length) {
+        showStatus(check.productsWithCost === 0
+          ? "Coupon saved. No product has a cost price set, so its margin could not be checked."
+          : `Coupon saved. None of the ${check.productsWithCost} products with a cost price would sell below cost.`, "success");
+        return;
+      }
+      const names = check.atLoss.slice(0, 5).map(p => `${p.productName} (-\u20b9${p.lossPerUnit.toFixed(2)} each)`).join(", ");
+      showStatus(`Coupon saved, but ${percent}% off sells ${check.atLoss.length} product(s) below cost: ${names}${check.atLoss.length > 5 ? ", ..." : ""}.`, "error");
     }
 
     async function viewStoreCredit() {

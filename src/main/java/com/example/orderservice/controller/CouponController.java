@@ -21,6 +21,8 @@ public class CouponController {
     private com.example.orderservice.service.CouponBatchService batchService;
     @Autowired
     private com.example.orderservice.service.CouponReportService reportService;
+    @Autowired
+    private com.example.orderservice.service.CouponMarginService marginService;
 
     // Mints a batch of single-use codes (see CouponBatchService); the response is where the codes are handed over.
     @PostMapping("/bulk")
@@ -44,6 +46,12 @@ public class CouponController {
     @GetMapping("/report")
     public com.example.orderservice.dto.CouponReport report() {
         return reportService.report();
+    }
+
+    // Which products would sell below cost at this percent off (needs cost prices set in ProductService); service only.
+    @GetMapping("/margincheck")
+    public com.example.orderservice.dto.MarginCheck marginCheck(@RequestParam double discountPercent) {
+        return marginService.check(discountPercent);
     }
 
     @GetMapping("/all")
