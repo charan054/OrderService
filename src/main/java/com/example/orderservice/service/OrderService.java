@@ -137,6 +137,10 @@ public class OrderService {
     private InvoiceNumberService invoiceNumberService;
     @Autowired
     private CreditNoteService creditNoteService;
+    // Most orders that may be waiting for delivery (PLACED or SHIPPED) in one delivery window at a time; 0 = no limit.
+    // A soft cap: two checkouts at the very same moment can both take the last place.
+    @Value("${delivery.slot-capacity:0}")
+    private int slotCapacity;
     // GST (see GstCalculator): the rate for products with none of their own, and the seller details printed on invoices.
     @Value("${gst.default-rate:18}")
     private double defaultGstRate;
@@ -208,6 +212,7 @@ public class OrderService {
         cart.setSubscriptionId(subscription == null ? null : subscription.subscriptionId());
         normalizeDeliveryNote(cart);
         normalizeDeliverySlot(cart);
+        requireSlotRoom(cart.getDeliverySlot());
         if (cart.getPaymentMethod() == null) {
             cart.setPaymentMethod(PaymentMethod.PHONEPE);
         }
@@ -605,6 +610,9 @@ public class OrderService {
         scratch.setDeliveryNote(deliveryNote != null ? deliveryNote : cart.getDeliveryNote());
         normalizeDeliverySlot(scratch);
         normalizeDeliveryNote(scratch);
+        if (scratch.getDeliverySlot() != null && !scratch.getDeliverySlot().equals(cart.getDeliverySlot())) {
+            requireSlotRoom(scratch.getDeliverySlot());
+        }
         cart.setDeliverySlot(scratch.getDeliverySlot());
         cart.setDeliveryNote(scratch.getDeliveryNote());
         Cart saved = orderRepository.save(cart);
@@ -1289,6 +1297,26 @@ public class OrderService {
             throw new ProductException("Unknown delivery slot. Choose one of: " + String.join(", ", DELIVERY_SLOTS.keySet()));
         }
         cart.setDeliverySlot(slot);
+    }
+
+    private static final List<OrderStatus> OPEN_STATUSES = List.of(OrderStatus.PLACED, OrderStatus.SHIPPED);
+
+    private boolean slotIsFull(String slot) {
+        return slotCapacity > 0 && slot != null
+                && orderRepository.countByDeliverySlotAndStatusIn(slot, OPEN_STATUSES) >= slotCapacity;
+    }
+
+    private void requireSlotRoom(String slot) {
+        if (slotIsFull(slot)) {
+            throw new ProductException("The " + DELIVERY_SLOTS.get(slot) + " delivery window is full right now. "
+                    + "Pick another window, or leave it on 'any'.");
+        }
+    }
+
+    public List<com.example.orderservice.dto.SlotAvailability> getSlotAvailability() {
+        return DELIVERY_SLOTS.entrySet().stream()
+                .map(e -> new com.example.orderservice.dto.SlotAvailability(e.getKey(), e.getValue(), slotIsFull(e.getKey())))
+                .toList();
     }
 
     public List<String> getDeliverySlots() {
