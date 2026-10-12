@@ -835,6 +835,26 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void slotAvailabilityIsPublic() throws Exception {
+        mockMvc.perform(get("/pincodes/slots/availability")).andExpect(status().isOk());
+    }
+
+    @Test
+    void reorderRemindersRunIsServiceKeyOnly() throws Exception {
+        mockMvc.perform(post("/cart/reorder-reminders/run")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/cart/reorder-reminders/run").with(customer())).andExpect(status().isForbidden());
+        mockMvc.perform(post("/cart/reorder-reminders/run").header("X-Service-Key", VALID_KEY)).andExpect(status().isOk());
+    }
+
+    @Test
+    void slowMoverMarkdownIsServiceKeyOnly() throws Exception {
+        mockMvc.perform(post("/cart/analytics/slow-movers/markdown").param("productId", "1").param("percent", "10"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/cart/analytics/slow-movers/markdown").param("productId", "1").param("percent", "10").with(customer()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void slowMoversAreServiceKeyOnly() throws Exception {
         mockMvc.perform(get("/cart/analytics/slow-movers")).andExpect(status().isUnauthorized());
         mockMvc.perform(get("/cart/analytics/slow-movers").with(customer())).andExpect(status().isForbidden());
