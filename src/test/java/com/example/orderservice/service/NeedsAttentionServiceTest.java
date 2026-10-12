@@ -42,6 +42,8 @@ class NeedsAttentionServiceTest {
     private NeedsAttentionService service;
     private com.example.orderservice.repository.RefundFailureRepository refundFailures;
 
+    private CodCollectionService codCollection;
+
     @BeforeEach
     void setUp() {
         tickets = mock(SupportTicketRepository.class);
@@ -50,8 +52,10 @@ class NeedsAttentionServiceTest {
         notifications = mock(NotificationLogRepository.class);
         orderService = mock(OrderService.class);
         refundFailures = mock(com.example.orderservice.repository.RefundFailureRepository.class);
+        codCollection = mock(CodCollectionService.class);
+        when(codCollection.overdueOrderIds()).thenReturn(List.of());
         service = new NeedsAttentionService(tickets, questions, carts, notifications, refundFailures, orderService,
-                Clock.fixed(NOW, ZoneOffset.UTC));
+                Clock.fixed(NOW, ZoneOffset.UTC), codCollection);
         when(refundFailures.findByResolvedAtIsNullOrderByIdAsc()).thenReturn(List.of());
         when(carts.findByStatusAndPaymentDeadlineBeforeOrderByPaymentDeadlineAsc(any(), any())).thenReturn(List.of());
         when(notifications.findByEmailedFalseAndSentAtAfterOrderBySentAtDesc(any())).thenReturn(List.of());
@@ -76,13 +80,13 @@ class NeedsAttentionServiceTest {
     }
 
     @Test
-    void everythingQuietIsAllClearWithSixRowsInOrder() {
+    void everythingQuietIsAllClearWithAllRowsInOrder() {
         NeedsAttention result = service.get();
 
         assertEquals(0, result.total());
         assertEquals(NOW, result.generatedAt());
         assertEquals(List.of("supportTickets", "unansweredQuestions", "flaggedReviews", "lowStock", "stuckPayments",
-                "failedNotifications", "failedRefunds"), result.items().stream().map(NeedsAttention.Item::key).toList());
+                "failedNotifications", "failedRefunds", "codOverdue"), result.items().stream().map(NeedsAttention.Item::key).toList());
         assertTrue(result.items().stream().allMatch(i -> i.count() == 0 && !i.unavailable()));
     }
 

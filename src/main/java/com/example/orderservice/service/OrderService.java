@@ -1934,6 +1934,7 @@ public class OrderService {
             throw new ProductException("This order is already marked paid");
         }
         cart.setPaid(true);
+        cart.setPaidAt(Instant.now());
         Cart result = orderRepository.save(cart);
         sendNotification("Order marked paid (cash collected). OrderId: " + result.getOrderId());
         notifyOrderUpdate(result, "Payment received for order #" + result.getOrderId(),

@@ -44,10 +44,12 @@ public class NeedsAttentionService {
     private final RefundFailureRepository refundFailures;
     private final OrderService orderService;
     private final Clock clock;
+    private final CodCollectionService codCollection;
 
     public NeedsAttentionService(SupportTicketRepository tickets, ProductQuestionRepository questions,
                                  CartRepository carts, NotificationLogRepository notifications,
-                                 RefundFailureRepository refundFailures, OrderService orderService, Clock clock) {
+                                 RefundFailureRepository refundFailures, OrderService orderService, Clock clock,
+                                 CodCollectionService codCollection) {
         this.tickets = tickets;
         this.questions = questions;
         this.carts = carts;
@@ -55,6 +57,7 @@ public class NeedsAttentionService {
         this.refundFailures = refundFailures;
         this.orderService = orderService;
         this.clock = clock;
+        this.codCollection = codCollection;
     }
 
     public NeedsAttention get() {
@@ -92,6 +95,11 @@ public class NeedsAttentionService {
         items.add(new Item("failedRefunds", "Refunds the system could not make", unsettled.size(), false, false,
                 "A checkout failed after the buyer was charged and the automatic refund did not go through - refund by hand, then resolve it.",
                 unsettled.stream().map(com.example.orderservice.entity.RefundFailure::getOrderId).distinct().limit(MAX_ORDER_IDS).toList()));
+
+        List<Long> overdueCash = codCollection.overdueOrderIds();
+        items.add(new Item("codOverdue", "Delivered cash orders not marked collected", overdueCash.size(), false, false,
+                "Delivered more than " + codCollection.overdueDays() + " day(s) ago and still shown as unpaid - collect the cash, then mark them paid.",
+                overdueCash.stream().limit(MAX_ORDER_IDS).toList()));
 
         int total = items.stream().filter(i -> i.count() != null).mapToInt(Item::count).sum();
         return new NeedsAttention(now, total, items);
