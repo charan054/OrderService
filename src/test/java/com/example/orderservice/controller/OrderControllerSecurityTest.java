@@ -889,6 +889,16 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void refundStatusOfAnUnknownOrderWithOwnSessionReturns404() throws Exception {
+        mockMvc.perform(get("/cart/42/refunds").param("phno", "9876543210").with(customer())).andExpect(status().isNotFound());
+    }
+
+    @Test
+    void refundStatusNeedsASession() throws Exception {
+        mockMvc.perform(get("/cart/42/refunds").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void invoiceWithoutPhoneNumberIsABadRequest() throws Exception {
         mockMvc.perform(get("/cart/42/invoice").with(customer())).andExpect(status().isBadRequest());
     }

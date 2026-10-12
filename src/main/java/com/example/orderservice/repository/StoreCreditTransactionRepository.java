@@ -9,4 +9,5 @@ import java.util.List;
 @Repository
 public interface StoreCreditTransactionRepository extends JpaRepository<StoreCreditTransaction, Long> {
     List<StoreCreditTransaction> findTop50ByPhnoOrderByIdDesc(long phno);
+    List<StoreCreditTransaction> findByOrderIdAndTypeOrderByIdAsc(Long orderId, StoreCreditTransaction.Type type);
 }

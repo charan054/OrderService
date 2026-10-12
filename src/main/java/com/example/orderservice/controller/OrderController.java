@@ -85,6 +85,8 @@ public class OrderController {
     @Autowired
     private InvoiceEmailService invoiceEmailService;
     @Autowired
+    private com.example.orderservice.service.RefundStatusService refundStatusService;
+    @Autowired
     private InvoicePdfService invoicePdfService;
     @Autowired
     private DigestService digestService;
@@ -272,6 +274,13 @@ public class OrderController {
                 .contentType(MediaType.APPLICATION_PDF)
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(invoicePdfService.fileName(invoice)).build().toString())
                 .body(invoicePdfService.render(invoice));
+    }
+    // Where the money of this order's cancellations/returns went (PhonePe, store credit, or no longer due). Signed-in
+    // customer (own order only) or service, like the invoice.
+    @GetMapping("/{orderId}/refunds")
+    public com.example.orderservice.dto.RefundStatus getRefundStatus(@PathVariable long orderId, @RequestParam long phno){
+        CustomerAccess.requireSelfOrService(phno);
+        return refundStatusService.statusOf(orderId, phno);
     }
     // Emails the invoice to the customer's VERIFIED address (the caller can't choose one); rate-limited per order.
     @PostMapping("/{orderId}/invoice/email")
