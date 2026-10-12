@@ -66,6 +66,8 @@ public class OrderController {
     @Autowired
     private com.example.orderservice.service.ReturnApprovalService returnApprovalService;
     @Autowired
+    private com.example.orderservice.service.ReturnPickupService returnPickupService;
+    @Autowired
     private ReorderSuggestionService reorderSuggestionService;
 
     @Autowired
@@ -182,6 +184,10 @@ public class OrderController {
                             @RequestParam(required = false) String refundTo){
         requireOrderAccess(orderId);
         requireReturnApproved(orderId);
+        // With pickups on, a customer's return only books the pickup; the refund comes when staff mark it received.
+        if (returnPickupService.isEnabled() && !CustomerAccess.isService()) {
+            return returnPickupService.schedule(orderId, reason, refundTo);
+        }
         return orderService.returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin, refundTo);
     }
     // Moves a not-yet-shipped order to another of the customer's saved addresses; same access as cancel.
@@ -579,6 +585,22 @@ public class OrderController {
         return returnApprovalService.reject(orderId, note);
     }
 
+    // Staff: the pickup steps of a booked return, and the list of returns still on their way back.
+    @PostMapping("/{orderId}/return/pickedup")
+    public Cart returnPickedUp(@PathVariable long orderId) {
+        return returnPickupService.markPickedUp(orderId);
+    }
+
+    @PostMapping("/{orderId}/return/received")
+    public Cart returnReceived(@PathVariable long orderId) {
+        return returnPickupService.markReceived(orderId);
+    }
+
+    @GetMapping("/returns/pickups")
+    public List<Cart> returnPickups() {
+        return returnPickupService.open();
+    }
+
     @GetMapping("/returns/pending")
     public List<Cart> pendingReturns() {
         return returnApprovalService.pending();
@@ -587,7 +609,7 @@ public class OrderController {
     // Whether the storefront should offer "Request return" and wait for approval first.
     @GetMapping("/returnpolicy")
     public java.util.Map<String, Boolean> returnPolicy() {
-        return java.util.Map.of("approvalRequired", returnApprovalService.isRequired());
+        return java.util.Map.of("approvalRequired", returnApprovalService.isRequired(), "pickup", returnPickupService.isEnabled());
     }
 
     private void requireOrderAccess(long orderId) {

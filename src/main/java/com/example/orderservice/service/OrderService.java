@@ -884,6 +884,16 @@ public class OrderService {
         }
     }
 
+    // Passed as the "authorization" of a return that STAFF complete (goods received): the PhonePe refund then goes through
+    // PhonepayService's merchant refund instead of needing the buyer's token. Compared by identity (==), so no header a
+    // customer can send is ever equal to it.
+    static final String STAFF_REFUND = new String("staff-refund");
+
+    /** Returns the whole order on staff's say-so (goods received): refunds with the shop's own key and skips the return window. */
+    public Cart returnOrderByStaff(long orderId, String reason, String refundTo) {
+        return returnOrder(orderId, STAFF_REFUND, "return-received-" + orderId, reason, null, null, refundTo);
+    }
+
     private Cart returnOrderLocked(long orderId,
                        String authorization,
                        String idempotencyKey,
@@ -905,7 +915,9 @@ public class OrderService {
             throw new ProductException("This order cannot be returned");
         }
 
-        requireWithinReturnWindow(orderId);
+        if (authorization != STAFF_REFUND) {
+            requireWithinReturnWindow(orderId);
+        }
 
         double refundedNow = remainingRefundable(cart);
         String destination = payBack(cart, refundedNow, null, toStoreCredit, authorization, idempotencyKey, payerPhno, payerPin);
@@ -1164,6 +1176,10 @@ public class OrderService {
             return null;
         }
         if (paidWithoutCharge(cart)) {
+            return null;
+        }
+        if (authorization == STAFF_REFUND) {
+            merchantRefund(cart.getPaymentTransactionId(), phonepeAmount, idempotencyKey);
             return null;
         }
         String token = resolveBuyerToken(authorization, payerPhno, payerPin);
@@ -2157,6 +2173,21 @@ public class OrderService {
     }
 
     // amount null = whatever is still unrefunded on the payment (see PhonepayService's partial refunds).
+    // Same as refund() but authorised by the shop's own key and paid back to the account that made the payment.
+    private void merchantRefund(long paymentTransactionId, BigDecimal amount, String idempotencyKey) {
+        PaymentResponse refund;
+        try {
+            refund = phonepeClient.merchantRefund(serviceApiKey, paymentTransactionId, new RefundRequest(idempotencyKey, amount));
+        } catch (FeignException e) {
+            HttpStatus status = HttpStatus.resolve(e.status());
+            throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
+        }
+        if (!COMPLETED.equals(refund.status())) {
+            throw new PaymentException(HttpStatus.BAD_GATEWAY,
+                    "Refund status is " + refund.status() + ", not completed. Reference: " + refund.transactionId());
+        }
+    }
+
     private void refund(String authorization, long paymentTransactionId, BigDecimal amount, String idempotencyKey) {
         PaymentResponse refund;
         try {

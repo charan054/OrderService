@@ -2291,6 +2291,40 @@ class OrderServiceTest {
         verify(phonepeClient).refund(eq("Bearer fresh-token"), eq(100000L), any(RefundRequest.class));
     }
 
+    @Test
+    void returnOrderByStaffRefundsWithTheShopsKeyAndIgnoresAnExpiredWindow() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 2));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        TrackingEvent delivered = new TrackingEvent();
+        delivered.setOrderId(42L);
+        delivered.setStatus(OrderStatus.DELIVERED);
+        delivered.setTimestamp(Instant.now().minus(30, java.time.temporal.ChronoUnit.DAYS));
+        lenient().when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of(delivered));
+        when(phonepeClient.merchantRefund(eq(SERVICE_KEY), eq(100000L), any(RefundRequest.class)))
+                .thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.returnOrderByStaff(42L, "damaged", null);
+
+        assertEquals(OrderStatus.RETURNED, result.getStatus());
+        verify(phonepeClient).merchantRefund(eq(SERVICE_KEY), eq(100000L), any(RefundRequest.class));
+        verify(phonepeClient, never()).refund(any(), anyLong(), any());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 2);
+    }
+
+    @Test
+    void aCustomerCannotForgeTheStaffRefundMarkerWithAHeader() {
+        Cart cart = deliveredOrder(42L, 100000L, item(1, 2));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        lenient().when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(phonepeClient.refund(eq("staff-refund"), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        service.returnOrder(42L, "staff-refund", "k", "x");
+
+        verify(phonepeClient, never()).merchantRefund(any(), anyLong(), any());
+    }
+
     private LoyaltyTransaction earnedTransaction(long orderId, int points) {
         LoyaltyTransaction tx = new LoyaltyTransaction();
         tx.setOrderId(orderId);
