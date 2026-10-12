@@ -64,6 +64,8 @@ import java.util.List;
 @RequestMapping("/cart")
 public class OrderController {
     @Autowired
+    private com.example.orderservice.service.ReturnApprovalService returnApprovalService;
+    @Autowired
     private ReorderSuggestionService reorderSuggestionService;
 
     @Autowired
@@ -179,6 +181,7 @@ public class OrderController {
                             @RequestParam(required = false) String payerPin,
                             @RequestParam(required = false) String refundTo){
         requireOrderAccess(orderId);
+        requireReturnApproved(orderId);
         return orderService.returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin, refundTo);
     }
     // Moves a not-yet-shipped order to another of the customer's saved addresses; same access as cancel.
@@ -216,6 +219,7 @@ public class OrderController {
                            @RequestParam(required = false) String payerPin,
                            @RequestParam(required = false) String refundTo){
         requireOrderAccess(orderId);
+        requireReturnApproved(orderId);
         return orderService.returnItem(orderId, productId, quantity, reason, authorization, idempotencyKey, payerPhno, payerPin, refundTo);
     }
     // Operational actions (warehouse/ops moving an order along), not something the buyer's own token gates -
@@ -544,6 +548,42 @@ public class OrderController {
 
     // A customer may only act on their own order; anyone else's order id answers 404 exactly like a nonexistent
     // one, so ids can't be probed. A service-key caller may act on any order.
+    // With returns.require-approval on, a customer (not staff) may only return an order that staff approved.
+    private void requireReturnApproved(long orderId) {
+        if (!CustomerAccess.isService()) {
+            returnApprovalService.assertCustomerMayReturn(orderId);
+        }
+    }
+
+    // The customer asks to return a delivered order (only when returns.require-approval is on).
+    @PostMapping("/{orderId}/return/request")
+    public Cart requestReturn(@PathVariable long orderId, @RequestParam String reason) {
+        requireOrderAccess(orderId);
+        return returnApprovalService.request(orderId, reason);
+    }
+
+    // Staff decisions (service key; MANAGER and up for named admins) and the waiting list.
+    @PostMapping("/{orderId}/return/approve")
+    public Cart approveReturn(@PathVariable long orderId) {
+        return returnApprovalService.approve(orderId);
+    }
+
+    @PostMapping("/{orderId}/return/reject")
+    public Cart rejectReturn(@PathVariable long orderId, @RequestParam(required = false) String note) {
+        return returnApprovalService.reject(orderId, note);
+    }
+
+    @GetMapping("/returns/pending")
+    public List<Cart> pendingReturns() {
+        return returnApprovalService.pending();
+    }
+
+    // Whether the storefront should offer "Request return" and wait for approval first.
+    @GetMapping("/returnpolicy")
+    public java.util.Map<String, Boolean> returnPolicy() {
+        return java.util.Map.of("approvalRequired", returnApprovalService.isRequired());
+    }
+
     private void requireOrderAccess(long orderId) {
         if (!CustomerAccess.canAccess(orderService.ownerPhnoOf(orderId))) {
             throw new OrderNotFoundException("Order not found");

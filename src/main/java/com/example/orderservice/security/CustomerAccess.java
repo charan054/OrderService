@@ -34,7 +34,7 @@ public final class CustomerAccess {
         return customer != null && customer == ownerPhno;
     }
 
-    private static boolean isService() {
+    public static boolean isService() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         return auth != null && auth.getAuthorities().stream().anyMatch(a -> "ROLE_SERVICE".equals(a.getAuthority()));
     }

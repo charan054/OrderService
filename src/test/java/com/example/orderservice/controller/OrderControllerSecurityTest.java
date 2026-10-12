@@ -249,6 +249,23 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void approvingOrRejectingAReturnWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/42/return/approve")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/cart/42/return/reject")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/returns/pending")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void requestingAReturnNeedsASignIn() throws Exception {
+        mockMvc.perform(post("/cart/42/return/request").param("reason", "x")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void theReturnPolicyIsPublic() throws Exception {
+        mockMvc.perform(get("/cart/returnpolicy")).andExpect(status().isOk());
+    }
+
+    @Test
     void addOrderWithoutKeyIsUnauthorized() throws Exception {
         mockMvc.perform(post("/cart/add").contentType(MediaType.APPLICATION_JSON).content(NEW_ORDER))
                 .andExpect(status().isUnauthorized());

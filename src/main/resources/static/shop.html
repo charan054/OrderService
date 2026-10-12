@@ -1377,6 +1377,7 @@
       document.getElementById("payerPhno").value = customerPhno;
       showAccountInfo();
       loadProducts();
+      loadReturnPolicy();
       loadWishlist();
       loadWaitlist();
       loadSearchWatches();
@@ -2077,7 +2078,7 @@
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeOrderAddressTo(${order.orderId})">Change address</button>` : ""}
           ${order.status === "PLACED" && order.paymentMethod === "CASH" && !order.discountAmount && !order.pointsRedeemed && !order.storeCreditUsed && !order.subscriptionId ? `<button class="secondary" style="width:auto;" onclick="addItemToMyOrder(${order.orderId})">Add item</button>` : ""}
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
-          ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
+          ${order.status === "DELIVERED" ? returnControls(order) : ""}
           ${order.status === "DELIVERED" ? (ratedOrderIds.has(order.orderId)
               ? `<span class="meta">Thanks for your feedback</span>`
               : `<button class="secondary" style="width:auto;" onclick="rateMyOrder(${order.orderId})">Rate this order</button>`) : ""}
@@ -2470,6 +2471,38 @@
       if (!response.ok) {
         const body = await response.text();
         alert(body || "Could not cancel this order.");
+        return;
+      }
+      loadAccountView();
+    }
+
+    // With return approval on (GET /cart/returnpolicy) the customer asks first, staff decide, then the customer completes it.
+    let returnPolicy = { approvalRequired: false };
+    async function loadReturnPolicy() {
+      try {
+        const response = await fetch(`${BASE_URL}/cart/returnpolicy`);
+        if (response.ok) returnPolicy = await response.json();
+      } catch (e) { /* default: returns need no approval */ }
+    }
+
+    function returnControls(order) {
+      const id = order.orderId, pm = order.paymentMethod, st = order.returnRequestStatus;
+      if (!returnPolicy.approvalRequired) {
+        return `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${id}, '${pm}')">Request return</button>`;
+      }
+      if (st === "REQUESTED") return `<span class="meta">Return requested - waiting for approval</span>`;
+      if (st === "APPROVED") return `<span class="meta">Return approved</span> <button class="secondary" style="width:auto;" onclick="returnMyOrder(${id}, '${pm}')">Complete return</button>`;
+      const rejected = st === "REJECTED"
+        ? `<span class="meta">Return not approved${order.returnRequestNote ? ": " + escapeHtml(order.returnRequestNote) : ""}</span> ` : "";
+      return `${rejected}<button class="secondary" style="width:auto;" onclick="requestMyReturn(${id})">${rejected ? "Ask again" : "Request return"}</button>`;
+    }
+
+    async function requestMyReturn(orderId) {
+      const reason = prompt("Why do you want to return this order?");
+      if (!reason) return;
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/return/request?reason=${encodeURIComponent(reason)}`, { method: "POST" });
+      if (!response.ok) {
+        alert((await response.text()) || "Could not send the return request.");
         return;
       }
       loadAccountView();
