@@ -10,6 +10,7 @@ import com.example.orderservice.entity.SupportTicket;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.NotificationLogRepository;
 import com.example.orderservice.repository.ProductQuestionRepository;
+import com.example.orderservice.repository.RefundFailureRepository;
 import com.example.orderservice.repository.SupportTicketRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,16 +41,18 @@ public class NeedsAttentionService {
     private final ProductQuestionRepository questions;
     private final CartRepository carts;
     private final NotificationLogRepository notifications;
+    private final RefundFailureRepository refundFailures;
     private final OrderService orderService;
     private final Clock clock;
 
     public NeedsAttentionService(SupportTicketRepository tickets, ProductQuestionRepository questions,
                                  CartRepository carts, NotificationLogRepository notifications,
-                                 OrderService orderService, Clock clock) {
+                                 RefundFailureRepository refundFailures, OrderService orderService, Clock clock) {
         this.tickets = tickets;
         this.questions = questions;
         this.carts = carts;
         this.notifications = notifications;
+        this.refundFailures = refundFailures;
         this.orderService = orderService;
         this.clock = clock;
     }
@@ -84,6 +87,11 @@ public class NeedsAttentionService {
         items.add(new Item("failedNotifications", "Notification emails that did not go out (last 7 days)", failed.size(),
                 false, false, "No verified email on file, or the mail server could not be reached.",
                 failedOrders.stream().limit(MAX_ORDER_IDS).toList()));
+
+        List<com.example.orderservice.entity.RefundFailure> unsettled = refundFailures.findByResolvedAtIsNullOrderByIdAsc();
+        items.add(new Item("failedRefunds", "Refunds the system could not make", unsettled.size(), false, false,
+                "A checkout failed after the buyer was charged and the automatic refund did not go through - refund by hand, then resolve it.",
+                unsettled.stream().map(com.example.orderservice.entity.RefundFailure::getOrderId).distinct().limit(MAX_ORDER_IDS).toList()));
 
         int total = items.stream().filter(i -> i.count() != null).mapToInt(Item::count).sum();
         return new NeedsAttention(now, total, items);

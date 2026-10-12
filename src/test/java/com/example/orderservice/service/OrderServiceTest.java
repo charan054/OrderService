@@ -159,6 +159,9 @@ class OrderServiceTest {
     @Mock
     private CreditNoteService creditNoteService;
 
+    @Mock
+    private RefundFailureService refundFailureService;
+
     @InjectMocks
     private OrderService service;
 
@@ -389,6 +392,24 @@ class OrderServiceTest {
         verify(phonepeClient).refund(eq(AUTH), eq(100000L), any(RefundRequest.class));
         verify(orderRepository).delete(any(Cart.class));
         verify(trackingEventRepository, never()).save(any());
+        verify(refundFailureService, never()).record(anyLong(), anyLong(), anyString(), org.mockito.ArgumentMatchers.anyDouble(), any(), any());
+    }
+
+    // If the automatic refund itself fails, the buyer is out of pocket: it must land on the staff worklist.
+    @Test
+    void aFailedRollbackRefundIsRecordedForStaff() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class)))
+                .thenThrow(declinedBy("refund", 503, "bank down"));
+        lenient().doThrow(declinedBy("updatestock", 400, "Stock too low"))
+                .when(productClient).updateProductStock(SERVICE_KEY, 1, -1);
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        assertThrows(FeignException.class, () -> service.order(cart, AUTH, "checkout-10"));
+
+        verify(refundFailureService).record(eq(42L), eq(CUSTOMER), eq("PHONEPE_REFUND"), eq(500.0), eq(100000L), contains("bank down"));
     }
 
     // The last unit is held for a waitlisted customer: someone else's checkout must not take it, before any charge.
