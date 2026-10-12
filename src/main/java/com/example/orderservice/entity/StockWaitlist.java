@@ -22,4 +22,8 @@ public class StockWaitlist {
     // When the back-in-stock email for the current restock was sent (see StockAlertService). Cleared again once the
     // product is seen out of stock, so the NEXT restock emails the customer once more. Null = not notified yet.
     private Instant notifiedAt;
+    // One unit is held for this customer until this moment, from the restock email on (see StockAlertService); other
+    // customers' checkouts can't take it. Null = no hold. A hold is released by expiring, by the customer ordering,
+    // or by the product selling out.
+    private Instant heldUntil;
 }
