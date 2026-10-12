@@ -28,6 +28,7 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.dto.ReorderReminderResult;
 import com.example.orderservice.service.ReorderReminderService;
 import com.example.orderservice.dto.SlowMover;
+import com.example.orderservice.dto.MarkdownResult;
 import com.example.orderservice.service.SlowMoverService;
 import com.example.orderservice.dto.InventoryValue;
 import com.example.orderservice.service.InventoryValueService;
@@ -484,6 +485,12 @@ public class OrderController {
     @GetMapping("/analytics/slow-movers")
     public List<SlowMover> slowMovers(@RequestParam(required = false) Integer days){
         return slowMoverService.report(days);
+    }
+    // Admin-only (service key by default): lower one product's price by `percent` (1-70) of its current price. Lands
+    // in the price history and triggers the wishlist price-drop alerts.
+    @PostMapping("/analytics/slow-movers/markdown")
+    public MarkdownResult markdownSlowMover(@RequestParam int productId, @RequestParam int percent){
+        return slowMoverService.markdown(productId, percent);
     }
     // Admin-only (service key by default): what the current stock is worth at selling price, per category.
     @GetMapping("/analytics/inventory-value")
