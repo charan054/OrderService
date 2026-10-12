@@ -28,17 +28,28 @@ public class RefundFailureService {
     private final RefundFailureRepository failures;
     private final PhonepeClient phonepeClient;
     private final StoreCreditService storeCreditService;
+    private final CustomerNotifier customerNotifier;
     private final Clock clock;
     private final String serviceApiKey;
 
     public RefundFailureService(RefundFailureRepository failures, PhonepeClient phonepeClient,
-                                StoreCreditService storeCreditService, Clock clock,
+                                StoreCreditService storeCreditService, CustomerNotifier customerNotifier, Clock clock,
                                 @Value("${internal.service.api-key}") String serviceApiKey) {
         this.failures = failures;
         this.phonepeClient = phonepeClient;
         this.storeCreditService = storeCreditService;
+        this.customerNotifier = customerNotifier;
         this.clock = clock;
         this.serviceApiKey = serviceApiKey;
+    }
+
+    // The money has already moved by now: telling the customer must never turn that into an error.
+    private void tellCustomer(RefundFailure f, boolean toStoreCredit) {
+        try {
+            customerNotifier.notifyRefundSettled(f.getCustomerPhno(), f.getOrderId(), f.getAmount(), toStoreCredit);
+        } catch (RuntimeException e) {
+            log.warn("Could not notify the customer about settled refund {}: {}", f.getId(), e.getMessage());
+        }
     }
 
     /** Called from the middle of a rollback, so a database problem here is logged instead of hiding the real error. */
@@ -76,7 +87,9 @@ public class RefundFailureService {
         if ("STORE_CREDIT".equals(f.getKind())) {
             storeCreditService.credit(f.getCustomerPhno(), f.getAmount(), StoreCreditTransaction.Type.REVERSED,
                     f.getOrderId(), "Order could not be completed - store credit returned (settled by staff)");
-            return resolve(id, "Store credit returned automatically on retry");
+            RefundFailure done = resolve(id, "Store credit returned automatically on retry");
+            tellCustomer(done, true);
+            return done;
         }
         if (f.getPaymentTransactionId() == null) {
             throw new ProductException("This failure has no payment to refund - settle it by hand and resolve it");
@@ -93,7 +106,9 @@ public class RefundFailureService {
             throw new PaymentException(HttpStatus.BAD_GATEWAY,
                     "Refund status is " + refund.status() + ", not completed. Reference: " + refund.transactionId());
         }
-        return resolve(id, "Refunded automatically on retry (refund " + refund.transactionId() + ")");
+        RefundFailure done = resolve(id, "Refunded automatically on retry (refund " + refund.transactionId() + ")");
+        tellCustomer(done, false);
+        return done;
     }
 
     public RefundFailure resolve(long id, String resolution) {

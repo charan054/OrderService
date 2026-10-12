@@ -70,6 +70,37 @@ class CustomerNotifierTest {
     }
 
     @Test
+    void aSettledRefundForAFailedCheckoutIsEmailedWithoutAnOrderRow() {
+        verifiedEmail("asha@example.com");
+        when(mailService.send(eq("asha@example.com"), contains("order #42"), contains("refunded to your PhonePe account")))
+                .thenReturn(true);
+
+        notifier.notifyRefundSettled(PHNO, 42L, 120.5, false);
+
+        verify(mailService).send(eq("asha@example.com"), contains("order #42"), contains("Rs. 120.50"));
+        verifyNoInteractions(notifications);
+    }
+
+    @Test
+    void aSettledStoreCreditRefundSaysSo() {
+        verifiedEmail("asha@example.com");
+        when(mailService.send(anyString(), anyString(), contains("added to your Charan Mart store credit"))).thenReturn(true);
+
+        notifier.notifyRefundSettled(PHNO, 42L, 10, true);
+
+        verify(mailService).send(anyString(), anyString(), contains("store credit"));
+    }
+
+    @Test
+    void aSettledRefundWithNoVerifiedEmailSendsNothing() {
+        when(accounts.findById(PHNO)).thenReturn(Optional.empty());
+
+        notifier.notifyRefundSettled(PHNO, 42L, 10, false);
+
+        verifyNoInteractions(mailService);
+    }
+
+    @Test
     void emailsTheVerifiedAddressWhenAnOrderShips() {
         verifiedEmail("asha@example.com");
         when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
