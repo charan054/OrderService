@@ -522,7 +522,7 @@ public class OrderService {
     // One order is changed by one request at a time: two cancels (a double click) would each pass the status check and
     // each put the stock back, and a ship racing a cancel would leave a refunded order marked shipped. The monitor is
     // reentrant, so the pending-payment paths above can take it again from inside.
-    private Object orderLock(long orderId) {
+    Object orderLock(long orderId) {
         return pendingLocks[(int) Math.floorMod(orderId, (long) PENDING_LOCK_STRIPES)];
     }
 
@@ -911,7 +911,7 @@ public class OrderService {
 
     // Measured from the order's latest DELIVERED tracking event; an order with none (delivered before tracking
     // existed) skips the check rather than being blocked forever.
-    private void requireWithinReturnWindow(long orderId) {
+    void requireWithinReturnWindow(long orderId) {
         Instant deliveredAt = trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId).stream()
                 .filter(e -> e.getStatus() == OrderStatus.DELIVERED)
                 .map(TrackingEvent::getTimestamp)

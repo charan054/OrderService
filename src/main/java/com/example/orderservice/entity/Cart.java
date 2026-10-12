@@ -102,6 +102,14 @@ public class Cart {
     // Set by OrderService.returnOrder() when a DELIVERED order is returned; null otherwise. Purely a record of
     // why, same role couponCode/shippingAddressId play - re-editing it after the fact has no effect.
     private String returnReason;
+    // Only with returns.require-approval: REQUESTED / APPROVED / REJECTED (see ReturnApprovalService), the customer's
+    // reason for asking, and staff's note when they say no. Null when nobody asked.
+    @Column(length = 20)
+    private String returnRequestStatus;
+    @Column(length = 300)
+    private String returnRequestReason;
+    @Column(length = 300)
+    private String returnRequestNote;
     // Why the buyer (or admin) cancelled the whole order: one of OrderService.CANCEL_REASONS, optional, plus an
     // optional free-text note. Null for an order that wasn't cancelled, or was cancelled without giving one.
     @Column(length = 40)
