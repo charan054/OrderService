@@ -370,6 +370,27 @@ class OrderServiceTest {
         assertEquals(42L, captor.getValue().getOrderId());
     }
 
+    // Stock can sell out between the read-only check and the decrement. The buyer has already been charged by then, so
+    // the first item's stock must go back, the payment must be refunded and no order may be left behind.
+    @Test
+    void orderRollsBackChargeAndStockWhenALaterItemsStockDecrementIsRefused() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(productClient.getProductById(2)).thenReturn(product(2, 45.0, 10));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        lenient().doThrow(declinedBy("updatestock", 400, "Stock too low"))
+                .when(productClient).updateProductStock(SERVICE_KEY, 2, -1);
+        Cart cart = cart(CUSTOMER, item(1, 2), item(2, 1));
+
+        assertThrows(FeignException.class, () -> service.order(cart, AUTH, "checkout-9"));
+
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 2);
+        verify(phonepeClient).refund(eq(AUTH), eq(100000L), any(RefundRequest.class));
+        verify(orderRepository).delete(any(Cart.class));
+        verify(trackingEventRepository, never()).save(any());
+    }
+
     // ---------- CASH / storefront checkout ----------
 
     // A CASH order never touches PhonepayService at all - no makePayment, no login, and the saved order has no

@@ -273,13 +273,14 @@ public class OrderService {
         // Coupon, points and store credit together can cover the whole order - then there is nothing to charge.
         boolean nothingToCharge = finalPrice < 0.005;
         PaymentResponse payment = null;
+        String buyerToken = null;
         if (cart.getPaymentMethod() != PaymentMethod.CASH && !nothingToCharge) {
             // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the
             // payment (insufficient funds, expired session, locked account, bank down, ...) nothing here should
             // exist either.
             try {
-                String token = resolveBuyerToken(authorization, payerPhno, payerPin);
-                payment = charge(token, finalPrice, idempotencyKey);
+                buyerToken = resolveBuyerToken(authorization, payerPhno, payerPin);
+                payment = charge(buyerToken, finalPrice, idempotencyKey);
             } catch (RuntimeException e) {
                 if (creditTx != null) {
                     storeCreditService.credit(cart.getCustomerPhno(), creditUsed, StoreCreditTransaction.Type.REVERSED,
@@ -288,7 +289,6 @@ public class OrderService {
                 throw e;
             }
         }
-        recordCouponRedemption(cart.getCouponCode(), cart.getCustomerPhno());
         cart.setTotalPrice(finalPrice);
         cart.setDiscountAmount(discount);
         cart.setStatus(OrderStatus.PLACED);
@@ -297,11 +297,23 @@ public class OrderService {
         // markPaid().
         cart.setPaid(payment != null || nothingToCharge);
         Cart saved=orderRepository.save(cart);
-        for(OrderItem orderItem : saved.getOrderItems())
-        {
-            orderItem.setOrderId(saved.getOrderId());
-            moveStock(orderItem.getProductId(), -orderItem.getProductQuantity(), StockMovementContext.SALE, saved.getOrderId(), null);
+        // The stock check above is only a read: someone else can buy the last unit before this decrement lands, and
+        // ProductService then refuses it. By now the buyer has been charged, so undo everything rather than leave a
+        // paid-for order that can't be fulfilled (or a charge with no order at all).
+        List<OrderItem> reserved = new ArrayList<>();
+        try {
+            for(OrderItem orderItem : saved.getOrderItems())
+            {
+                orderItem.setOrderId(saved.getOrderId());
+                moveStock(orderItem.getProductId(), -orderItem.getProductQuantity(), StockMovementContext.SALE, saved.getOrderId(), null);
+                reserved.add(orderItem);
+            }
+        } catch (RuntimeException e) {
+            rollBackFailedPlacement(saved, reserved, payment, buyerToken, creditTx != null ? creditUsed : 0, finalPrice);
+            throw e;
         }
+        // After the stock is secured, so a rolled-back order never uses up a coupon redemption.
+        recordCouponRedemption(cart.getCouponCode(), cart.getCustomerPhno());
         invoiceNumberService.assign(saved);
         Cart result = orderRepository.save(saved);
         storeCreditService.linkOrder(creditTx, result.getOrderId());
@@ -313,6 +325,40 @@ public class OrderService {
                 + " Total: " + result.getTotalPrice());
         notifyCustomer(result, OrderStatus.PLACED, null);
         return result;
+    }
+
+    // Best effort, each step on its own: whatever can't be undone is logged for a human rather than hiding the original error.
+    private void rollBackFailedPlacement(Cart order, List<OrderItem> reserved, PaymentResponse payment, String buyerToken,
+                                         double creditUsed, double charged) {
+        long orderId = order.getOrderId();
+        for (OrderItem item : reserved) {
+            try {
+                moveStock(item.getProductId(), item.getProductQuantity(), StockMovementContext.CANCEL, orderId, "Order could not be completed");
+            } catch (RuntimeException ex) {
+                log.error("Rollback of order {}: could not put back {} x product {}: {}", orderId, item.getProductQuantity(), item.getProductId(), ex.getMessage());
+            }
+        }
+        if (payment != null) {
+            try {
+                refund(buyerToken, payment.transactionId(), null, "place-rollback-" + payment.transactionId());
+            } catch (RuntimeException ex) {
+                log.error("Rollback of order {}: buyer was charged {} (payment {}) and the refund FAILED - refund by hand: {}",
+                        orderId, charged, payment.transactionId(), ex.getMessage());
+            }
+        }
+        if (creditUsed > 0) {
+            try {
+                storeCreditService.credit(order.getCustomerPhno(), creditUsed, StoreCreditTransaction.Type.REVERSED,
+                        orderId, "Order could not be completed - store credit returned");
+            } catch (RuntimeException ex) {
+                log.error("Rollback of order {}: store credit {} was NOT returned: {}", orderId, creditUsed, ex.getMessage());
+            }
+        }
+        try {
+            orderRepository.delete(order);
+        } catch (RuntimeException ex) {
+            log.error("Rollback of order {}: could not remove the order row: {}", orderId, ex.getMessage());
+        }
     }
 
     // The request body is deserialized straight into the entity, so a caller could otherwise (a) send an orderId
@@ -421,8 +467,15 @@ public class OrderService {
         return locks;
     }
 
+    // One order is changed by one request at a time: two cancels (a double click) would each pass the status check and
+    // each put the stock back, and a ship racing a cancel would leave a refunded order marked shipped. The monitor is
+    // reentrant, so the pending-payment paths above can take it again from inside.
+    private Object orderLock(long orderId) {
+        return pendingLocks[(int) Math.floorMod(orderId, (long) PENDING_LOCK_STRIPES)];
+    }
+
     public Cart checkPendingPayment(long orderId) {
-        synchronized (pendingLocks[(int) Math.floorMod(orderId, (long) PENDING_LOCK_STRIPES)]) {
+        synchronized (orderLock(orderId)) {
             return resolvePendingPayment(orderId);
         }
     }
@@ -541,8 +594,27 @@ public class OrderService {
     // refundTo = STORE_CREDIT pays the refund into the customer's store credit instead of back through PhonePe
     // (instant, and needs no PhonePe credentials); null or ORIGINAL keeps the normal refund. Same for the
     // return/item-level methods below.
-    public Cart cancel(long orderId, String authorization, String idempotencyKey, Long payerPhno, String payerPin,
-                       String reason, String note, String refundTo) {
+    public Cart cancel(long orderId,
+                       String authorization,
+                       String idempotencyKey,
+                       Long payerPhno,
+                       String payerPin,
+                       String reason,
+                       String note,
+                       String refundTo) {
+        synchronized (orderLock(orderId)) {
+            return cancelLocked(orderId, authorization, idempotencyKey, payerPhno, payerPin, reason, note, refundTo);
+        }
+    }
+
+    private Cart cancelLocked(long orderId,
+                       String authorization,
+                       String idempotencyKey,
+                       Long payerPhno,
+                       String payerPin,
+                       String reason,
+                       String note,
+                       String refundTo) {
         boolean toStoreCredit = refundsToStoreCredit(refundTo);
         String reasonCode = reason == null || reason.isBlank() ? null : reason.trim().toUpperCase(java.util.Locale.ROOT);
         if (reasonCode != null && !CANCEL_REASONS.contains(reasonCode)) {
@@ -650,8 +722,25 @@ public class OrderService {
         return returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin, null);
     }
 
-    public Cart returnOrder(long orderId, String authorization, String idempotencyKey, String reason, Long payerPhno,
-                            String payerPin, String refundTo) {
+    public Cart returnOrder(long orderId,
+                       String authorization,
+                       String idempotencyKey,
+                       String reason,
+                       Long payerPhno,
+                       String payerPin,
+                       String refundTo) {
+        synchronized (orderLock(orderId)) {
+            return returnOrderLocked(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin, refundTo);
+        }
+    }
+
+    private Cart returnOrderLocked(long orderId,
+                       String authorization,
+                       String idempotencyKey,
+                       String reason,
+                       Long payerPhno,
+                       String payerPin,
+                       String refundTo) {
         boolean toStoreCredit = refundsToStoreCredit(refundTo);
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A return reason is required");
@@ -709,8 +798,27 @@ public class OrderService {
         return cancelItem(orderId, productId, quantity, authorization, idempotencyKey, payerPhno, payerPin, null);
     }
 
-    public Cart cancelItem(long orderId, int productId, int quantity, String authorization, String idempotencyKey,
-                           Long payerPhno, String payerPin, String refundTo) {
+    public Cart cancelItem(long orderId,
+                       int productId,
+                       int quantity,
+                       String authorization,
+                       String idempotencyKey,
+                       Long payerPhno,
+                       String payerPin,
+                       String refundTo) {
+        synchronized (orderLock(orderId)) {
+            return cancelItemLocked(orderId, productId, quantity, authorization, idempotencyKey, payerPhno, payerPin, refundTo);
+        }
+    }
+
+    private Cart cancelItemLocked(long orderId,
+                       int productId,
+                       int quantity,
+                       String authorization,
+                       String idempotencyKey,
+                       Long payerPhno,
+                       String payerPin,
+                       String refundTo) {
         boolean toStoreCredit = refundsToStoreCredit(refundTo);
         Cart cart = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
@@ -756,8 +864,29 @@ public class OrderService {
         return returnItem(orderId, productId, quantity, reason, authorization, idempotencyKey, payerPhno, payerPin, null);
     }
 
-    public Cart returnItem(long orderId, int productId, int quantity, String reason, String authorization,
-                           String idempotencyKey, Long payerPhno, String payerPin, String refundTo) {
+    public Cart returnItem(long orderId,
+                       int productId,
+                       int quantity,
+                       String reason,
+                       String authorization,
+                       String idempotencyKey,
+                       Long payerPhno,
+                       String payerPin,
+                       String refundTo) {
+        synchronized (orderLock(orderId)) {
+            return returnItemLocked(orderId, productId, quantity, reason, authorization, idempotencyKey, payerPhno, payerPin, refundTo);
+        }
+    }
+
+    private Cart returnItemLocked(long orderId,
+                       int productId,
+                       int quantity,
+                       String reason,
+                       String authorization,
+                       String idempotencyKey,
+                       Long payerPhno,
+                       String payerPin,
+                       String refundTo) {
         boolean toStoreCredit = refundsToStoreCredit(refundTo);
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A return reason is required");
@@ -1484,7 +1613,17 @@ public class OrderService {
 
     // carrier / trackingNumber are optional; they are validated before the order is touched, and the shipped email
     // and the buyer's order list show them when present.
-    public Cart ship(long orderId, String carrier, String trackingNumber) {
+    public Cart ship(long orderId,
+                       String carrier,
+                       String trackingNumber) {
+        synchronized (orderLock(orderId)) {
+            return shipLocked(orderId, carrier, trackingNumber);
+        }
+    }
+
+    private Cart shipLocked(long orderId,
+                       String carrier,
+                       String trackingNumber) {
         String cleanCarrier = cleanShipmentField(carrier, "Carrier");
         String cleanTracking = cleanShipmentField(trackingNumber, "Tracking number");
         Cart cart = orderRepository.findById(orderId)
@@ -1525,6 +1664,12 @@ public class OrderService {
     }
 
     public Cart deliver(long orderId) {
+        synchronized (orderLock(orderId)) {
+            return deliverLocked(orderId);
+        }
+    }
+
+    private Cart deliverLocked(long orderId) {
         Cart cart = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
         if (cart.getStatus() != OrderStatus.SHIPPED) {
@@ -1593,6 +1738,12 @@ public class OrderService {
     // PHONEPE order is already paid the moment its charge succeeds (see order()), so marking it "paid" again
     // makes no sense and is rejected instead of silently accepted.
     public Cart markPaid(long orderId) {
+        synchronized (orderLock(orderId)) {
+            return markPaidLocked(orderId);
+        }
+    }
+
+    private Cart markPaidLocked(long orderId) {
         Cart cart = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
         if (cart.getPaymentMethod() != PaymentMethod.CASH) {
