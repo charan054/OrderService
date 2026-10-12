@@ -1573,6 +1573,8 @@
       }
       const account = await response.json();
       walletPoints = account.pointsBalance;
+      myTier = account.tier || "BRONZE";
+      renderCart();
       showAccountInfo();
       const expires = account.pointsBalance > 0 && account.pointsExpireAt
         ? ` They expire on ${new Date(account.pointsExpireAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })} unless you use them.` : "";
@@ -1580,7 +1582,17 @@
     }
 
     let deliveryTerms = { fee: 0, freeAbove: 0 };
+    let myTier = "BRONZE";   // from the loyalty account; picks the customer's own free-delivery threshold
     let zoneFee = null;   // the chosen address's pincode fee, replacing deliveryTerms.fee (null = no special fee)
+    // Same rule as the server (OrderService.freeAboveFor): -1 = always free, 0 = no threshold, else the amount.
+    function myFreeAbove() {
+      const silver = deliveryTerms.freeAboveSilver || 0, gold = deliveryTerms.freeAboveGold || 0;
+      const t = myTier === "GOLD" ? (gold !== 0 ? gold : silver) : myTier === "SILVER" ? silver : 0;
+      if (t === 0) return deliveryTerms.freeAbove;
+      if (t < 0) return -1;
+      return deliveryTerms.freeAbove > 0 ? Math.min(t, deliveryTerms.freeAbove) : t;
+    }
+
     async function loadDeliveryTerms() {
       try {
         const response = await fetch(`${BASE_URL}/cart/deliveryfee`);
@@ -3670,12 +3682,13 @@
       const goods = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
       // The server decides on the goods value after any coupon, so this preview can differ when a coupon is applied.
       const baseFee = zoneFee !== null ? zoneFee : deliveryTerms.fee;
-      const fee = cart.length && baseFee > 0 && !(deliveryTerms.freeAbove > 0 && goods >= deliveryTerms.freeAbove) ? baseFee : 0;
+      const freeAbove = myFreeAbove();
+      const fee = cart.length && baseFee > 0 && !(freeAbove < 0 || (freeAbove > 0 && goods >= freeAbove)) ? baseFee : 0;
       const feeRow = document.getElementById("cartDeliveryRow");
       feeRow.classList.toggle("hidden", !(cart.length && baseFee > 0));
       document.getElementById("cartDelivery").textContent = fee > 0 ? `₹${fee.toFixed(2)}` : "Free";
-      document.getElementById("cartDeliveryLabel").textContent = fee > 0 && deliveryTerms.freeAbove > 0
-        ? `Delivery (free from ₹${deliveryTerms.freeAbove.toFixed(0)})` : "Delivery";
+      document.getElementById("cartDeliveryLabel").textContent = fee > 0 && freeAbove > 0
+        ? `Delivery (free from ₹${freeAbove.toFixed(0)}${myTier !== "BRONZE" && freeAbove < deliveryTerms.freeAbove ? " for " + myTier.toLowerCase() + " members" : ""})` : "Delivery";
       document.getElementById("cartTotal").textContent = `₹${(goods + fee).toFixed(2)}`;
       renderCouponSuggestions();
       saveCart();
