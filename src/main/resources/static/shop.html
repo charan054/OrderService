@@ -1378,6 +1378,7 @@
       document.getElementById("payerPhno").value = customerPhno;
       showAccountInfo();
       loadProducts();
+      refreshNotificationBadge();
       loadDeliveryTerms();
       loadReturnPolicy();
       loadWishlist();
@@ -1896,22 +1897,84 @@
         : `<p style="color:var(--muted);">${(helpEntries || []).length ? "No help entries match your search." : "No help entries yet."}</p>`;
     }
 
+    // Read/unread is remembered per customer in this browser only (nothing is stored on the server).
+    let allNotifications = [];
+    let notificationFilter = "ALL";
+
+    function readNotificationIds() {
+      try { return new Set(JSON.parse(localStorage.getItem("notifRead_" + customerPhno) || "[]")); } catch (e) { return new Set(); }
+    }
+
+    function saveReadNotificationIds(ids) {
+      try { localStorage.setItem("notifRead_" + customerPhno, JSON.stringify([...ids])); } catch (e) { /* not remembered */ }
+    }
+
+    function showUnreadCount() {
+      const read = readNotificationIds();
+      const unread = allNotifications.filter(n => !read.has(n.id)).length;
+      document.getElementById("tabNotifications").textContent = unread ? `My notifications (${unread})` : "My notifications";
+      return unread;
+    }
+
+    // Quietly fetched after sign-in so the tab shows how many are new before it is opened.
+    async function refreshNotificationBadge() {
+      try {
+        const response = await authFetch(`${BASE_URL}/cart/notifications?phno=${encodeURIComponent(customerPhno)}`);
+        if (response.ok) { allNotifications = await response.json(); showUnreadCount(); }
+      } catch (e) { /* the tab still loads on demand */ }
+    }
+
+    function markNotificationRead(id) {
+      const read = readNotificationIds();
+      read.add(id);
+      saveReadNotificationIds(read);
+      renderNotifications();
+    }
+
+    function markAllNotificationsRead() {
+      const read = readNotificationIds();
+      allNotifications.forEach(n => read.add(n.id));
+      saveReadNotificationIds(read);
+      renderNotifications();
+    }
+
+    function setNotificationFilter(filter) {
+      notificationFilter = filter;
+      renderNotifications();
+    }
+
+    function renderNotifications() {
+      const view = document.getElementById("notificationsView");
+      const read = readNotificationIds();
+      const unread = showUnreadCount();
+      const types = [...new Set(allNotifications.map(n => n.eventType))];
+      const filters = ["ALL", "UNREAD", ...types];
+      const shown = allNotifications.filter(n => notificationFilter === "ALL"
+        || (notificationFilter === "UNREAD" ? !read.has(n.id) : n.eventType === notificationFilter));
+      const chips = filters.map(f => `<button class="secondary${f === notificationFilter ? " active" : ""}" style="width:auto; padding:4px 10px;" onclick="setNotificationFilter('${f}')">${f === "ALL" ? "All" : f === "UNREAD" ? "Unread" : escapeHtml(f.charAt(0) + f.slice(1).toLowerCase())}</button>`).join(" ");
+      const bar = allNotifications.length
+        ? `<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">${chips}
+            ${unread ? `<button class="link-button" onclick="markAllNotificationsRead()">Mark all as read</button>` : ""}</div>` : "";
+      view.innerHTML = bar + (shown.length ? shown.map(n => `
+        <div class="order-row" style="${read.has(n.id) ? "" : "border-left:3px solid var(--accent, #2563eb);"}">
+          <div>
+            <strong>${read.has(n.id) ? "" : "&#9679; "}Order #${n.orderId} - ${escapeHtml(n.eventType)}</strong>
+            <span class="meta">${escapeHtml(n.message)}${n.emailed ? " · emailed to you" : ""}</span>
+          </div>
+          <div class="meta">${new Date(n.sentAt).toLocaleString()}
+            ${read.has(n.id) ? "" : `<button class="link-button" onclick="markNotificationRead(${n.id})">Mark read</button>`}</div>
+        </div>
+      `).join("") : `<p style="color:var(--muted);">${allNotifications.length ? "Nothing matches this filter." : "No notifications yet."}</p>`);
+    }
+
     async function loadNotificationsView() {
       const view = document.getElementById("notificationsView");
       view.innerHTML = `<p style="color:var(--muted);">Loading your notifications...</p>`;
 
       const response = await authFetch(`${BASE_URL}/cart/notifications?phno=${encodeURIComponent(customerPhno)}`);
-      const notifications = response.ok ? await response.json() : [];
-
-      view.innerHTML = notifications.length ? notifications.map(n => `
-        <div class="order-row">
-          <div>
-            <strong>Order #${n.orderId} - ${escapeHtml(n.eventType)}</strong>
-            <span class="meta">${escapeHtml(n.message)}${n.emailed ? " · emailed to you" : ""}</span>
-          </div>
-          <div class="meta">${new Date(n.sentAt).toLocaleString()}</div>
-        </div>
-      `).join("") : `<p style="color:var(--muted);">No notifications yet.</p>`;
+      allNotifications = response.ok ? await response.json() : [];
+      notificationFilter = "ALL";
+      renderNotifications();
     }
 
     // Refer-a-friend card: the customer's own code to share, and (until they have used one) a box to enter a
