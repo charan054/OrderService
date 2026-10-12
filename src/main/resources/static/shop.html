@@ -2932,7 +2932,7 @@
         const catalogProduct = products.find(p => p.productId === id);
         const name = waiting ? waiting.productName : catalogProduct ? catalogProduct.productName : "Product #" + id;
         const lines = [];
-        if (waiting) lines.push(`Restock: ${waiting.inStock ? `back in stock (${waiting.currentStock})` : "still out of stock"}`);
+        if (waiting) lines.push(`Restock: ${waiting.inStock ? `back in stock (${waiting.currentStock})` : "still out of stock"}${waiting.heldUntil ? ` - one is held for you until ${new Date(waiting.heldUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}`);
         if (saved) {
           const drop = priceDropsByProductId.get(id);
           if (drop) lines.push(`Price: dropped &#8377;${drop.priceDrop.toFixed(2)} (was &#8377;${drop.priceWhenAdded.toFixed(2)}, now &#8377;${drop.currentPrice.toFixed(2)})`);

@@ -102,6 +102,56 @@ class StockAlertServiceTest {
     }
 
     @Test
+    void aRestockEmailHoldsOneUnitUntilTheHoldMinutesPass() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "holdMinutes", 30L);
+        StockWaitlist entry = waiting(7, null);
+        when(waitlists.findAll()).thenReturn(List.of(entry));
+        when(wishlists.findAll()).thenReturn(List.of());
+        when(searchWatches.findByNotifiedAtIsNull()).thenReturn(List.of());
+        when(productClient.getProductById(7)).thenReturn(product(7, 100, 1));
+        when(waitlists.countByProductIdAndHeldUntilAfter(7, NOW)).thenReturn(0L);
+        verifiedEmail();
+        when(mailService.send(anyString(), anyString(), contains("one is held for you for 30 minutes"))).thenReturn(true);
+
+        service.run();
+
+        assertEquals(NOW.plusSeconds(30 * 60), entry.getHeldUntil());
+    }
+
+    @Test
+    void noHoldIsGivenWhenEveryUnitIsAlreadyHeld() {
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "holdMinutes", 30L);
+        StockWaitlist entry = waiting(7, null);
+        when(waitlists.findAll()).thenReturn(List.of(entry));
+        when(wishlists.findAll()).thenReturn(List.of());
+        when(searchWatches.findByNotifiedAtIsNull()).thenReturn(List.of());
+        when(productClient.getProductById(7)).thenReturn(product(7, 100, 1));
+        when(waitlists.countByProductIdAndHeldUntilAfter(7, NOW)).thenReturn(1L);
+        verifiedEmail();
+        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+
+        service.run();
+
+        assertNull(entry.getHeldUntil());
+        assertEquals(NOW, entry.getNotifiedAt());
+    }
+
+    @Test
+    void aSoldOutProductReleasesItsHold() {
+        StockWaitlist entry = waiting(7, NOW.minusSeconds(60));
+        entry.setHeldUntil(NOW.plusSeconds(600));
+        when(waitlists.findAll()).thenReturn(List.of(entry));
+        when(wishlists.findAll()).thenReturn(List.of());
+        when(searchWatches.findByNotifiedAtIsNull()).thenReturn(List.of());
+        when(productClient.getProductById(7)).thenReturn(product(7, 100, 0));
+
+        service.run();
+
+        assertNull(entry.getHeldUntil());
+        assertNull(entry.getNotifiedAt());
+    }
+
+    @Test
     void aSavedSearchEmailsOnceWhenAMatchingProductIsInStock() {
         com.example.orderservice.entity.SearchWatch watch = new com.example.orderservice.entity.SearchWatch();
         watch.setCustomerPhno(PHNO);

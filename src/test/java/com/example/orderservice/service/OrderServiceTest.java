@@ -391,6 +391,21 @@ class OrderServiceTest {
         verify(trackingEventRepository, never()).save(any());
     }
 
+    // The last unit is held for a waitlisted customer: someone else's checkout must not take it, before any charge.
+    @Test
+    void orderRefusesUnitsHeldForOtherWaitlistedCustomers() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 1));
+        when(stockWaitlistRepository.countByProductIdAndHeldUntilAfterAndCustomerPhnoNot(eq(1), any(), eq(CUSTOMER)))
+                .thenReturn(1L);
+        Cart cart = cart(CUSTOMER, item(1, 1));
+
+        ProductException ex = assertThrows(ProductException.class, () -> service.order(cart, AUTH, null));
+
+        assertTrue(ex.getMessage().contains("held for other customers"));
+        verify(phonepeClient, never()).makePayment(any(), any());
+        verify(orderRepository, never()).save(any());
+    }
+
     // ---------- CASH / storefront checkout ----------
 
     // A CASH order never touches PhonepayService at all - no makePayment, no login, and the saved order has no

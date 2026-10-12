@@ -12,5 +12,7 @@ public interface StockWaitlistRepository extends JpaRepository<StockWaitlist, Lo
     List<StockWaitlist> findByCustomerPhno(long phno);
     Optional<StockWaitlist> findByCustomerPhnoAndProductId(long phno, int productId);
     long countByProductId(int productId);
+    long countByProductIdAndHeldUntilAfterAndCustomerPhnoNot(int productId, java.time.Instant now, long customerPhno);
+    long countByProductIdAndHeldUntilAfter(int productId, java.time.Instant now);
     void deleteByCustomerPhnoAndProductId(long phno, int productId);
 }
