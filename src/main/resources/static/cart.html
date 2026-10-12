@@ -1890,7 +1890,8 @@
       const statuses = Object.entries(c.ordersByStatus).map(([s, n]) => `${escapeHtml(s)}: ${n}`).join(" &middot; ") || "none";
       document.getElementById("lookupResult").innerHTML = `
         <p><strong>${c.phno}</strong> &middot; ${c.email ? escapeHtml(c.email) + " (verified " + new Date(c.emailVerifiedAt).toLocaleDateString() + ")" : "never signed in to the storefront"}</p>
-        <p>${c.totalOrders} orders (${statuses}) &middot; net spend ${money(c.netSpend)}</p>
+        <p>${c.totalOrders} orders (${statuses}) &middot; net spend ${money(c.netSpend)}${c.averageOrderValue > 0 ? " &middot; average order " + money(c.averageOrderValue) : ""}</p>
+        ${c.firstOrderAt ? `<p>Customer since ${new Date(c.firstOrderAt).toLocaleDateString()} &middot; last order ${new Date(c.lastOrderAt).toLocaleDateString()}</p>` : ""}
         <p>Loyalty: ${escapeHtml(c.loyaltyTier)}, ${c.loyaltyPointsBalance} points (${c.lifetimePointsEarned} earned in total) &middot; ${c.wishlistCount} wishlisted &middot; ${c.reviewCount} reviews</p>
         ${c.recentOrders.length ? `<table class="orders-table"><thead><tr><th>Order</th><th>Status</th><th>Payment</th><th>Total</th><th>Refunded</th></tr></thead><tbody>${c.recentOrders.map(o => `
           <tr><td>#${o.orderId}</td><td>${escapeHtml(o.status)}</td><td>${escapeHtml(o.paymentMethod)}${o.paymentMethod === "CASH" ? (o.paid ? " (paid)" : o.status === "CANCELLED" ? "" : " (unpaid)") : ""}</td><td>${money(o.totalPrice)}</td><td>${money(o.refundedAmount)}</td></tr>`).join("")}</tbody></table>` : "<p>No orders.</p>"}

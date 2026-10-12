@@ -8,12 +8,14 @@ import java.util.Map;
 
 // Everything the admin dashboard shows about one customer in a single call (GET /customer/admin/lookup).
 // email/emailVerifiedAt are null for a phone that has never signed in to the storefront. netSpend counts only
-// orders that still stand (not cancelled/returned/awaiting payment) minus any per-item refunds.
+// orders that still stand (not cancelled/returned/awaiting payment) minus any per-item refunds; averageOrderValue is
+// that net spend per standing order, and first/lastOrderAt (null if undated) come from the orders' first tracking events.
 public record AdminCustomerLookup(long phno, String email, Instant emailVerifiedAt, int totalOrders,
                                   Map<String, Integer> ordersByStatus, double netSpend,
                                   int wishlistCount, long reviewCount, LoyaltyTier loyaltyTier,
                                   int loyaltyPointsBalance, long lifetimePointsEarned,
-                                  List<RecentOrder> recentOrders, List<AddressLine> addresses) {
+                                  List<RecentOrder> recentOrders, List<AddressLine> addresses,
+                                  double averageOrderValue, Instant firstOrderAt, Instant lastOrderAt) {
     public record RecentOrder(long orderId, String status, String paymentMethod, boolean paid, double totalPrice,
                               double refundedAmount) {
     }

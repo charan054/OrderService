@@ -30,7 +30,7 @@ import static org.mockito.Mockito.when;
 class CustomerExportServiceTest {
     private static final Instant NOW = Instant.parse("2026-10-07T10:00:00Z");
     private static final String HEADER = "customerPhno,customerName,email,marketingEmails,segment,dormant,orders,"
-            + "netSpend,firstOrderAt,lastOrderAt,daysSinceLastOrder";
+            + "netSpend,firstOrderAt,lastOrderAt,daysSinceLastOrder,avgOrderValue";
 
     @Mock
     private CartRepository orders;
@@ -100,8 +100,8 @@ class CustomerExportServiceTest {
 
         assertEquals(HEADER, lines.get(0));
         assertEquals(3, lines.size()); // Cy has no order that stands
-        assertEquals("9000000001,Ann B,ann@example.com,true,REPEAT,false,2,700.00,2026-06-29T10:00:00Z,2026-10-04T10:00:00Z,3", lines.get(1));
-        assertEquals("9000000002,Bob,bob@example.com,false,NEW,true,1,200.00,2026-03-21T10:00:00Z,2026-03-21T10:00:00Z,200", lines.get(2));
+        assertEquals("9000000001,Ann B,ann@example.com,true,REPEAT,false,2,700.00,2026-06-29T10:00:00Z,2026-10-04T10:00:00Z,3,350.00", lines.get(1));
+        assertEquals("9000000002,Bob,bob@example.com,false,NEW,true,1,200.00,2026-03-21T10:00:00Z,2026-03-21T10:00:00Z,200,200.00", lines.get(2));
     }
 
     @Test
@@ -131,7 +131,7 @@ class CustomerExportServiceTest {
 
         List<String> lines = lines(service.exportCsv("all", 90));
 
-        assertEquals("9000000009,Old,,,NEW,false,1,80.00,,,", lines.get(1));
+        assertEquals("9000000009,Old,,,NEW,false,1,80.00,,,,80.00", lines.get(1));
         assertEquals(1, lines(service.exportCsv("dormant", 90)).size());
     }
 
