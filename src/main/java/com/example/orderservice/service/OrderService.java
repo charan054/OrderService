@@ -149,6 +149,11 @@ public class OrderService {
     private double shippingFee;
     @Value("${shipping.free-above:0}")
     private double shippingFreeAbove;
+    // Lower free-delivery thresholds for loyalty members: 0 = same as everyone, a negative value = always free for that tier.
+    @Value("${shipping.free-above.silver:0}")
+    private double shippingFreeAboveSilver;
+    @Value("${shipping.free-above.gold:0}")
+    private double shippingFreeAboveGold;
     @Value("${gst.store-name:Charan Mart}")
     private String storeName;
     @Value("${gst.store-gstin:}")
@@ -258,7 +263,7 @@ public class OrderService {
         }
         // Same fail-fast reasoning, applied on top of the coupon discount: redeeming more points than the
         // customer's balance actually holds, or more than what's left to pay, must fail before any payment.
-        double deliveryFee = deliveryFeeFor(price - discount, zoneFeeOf(cart));
+        double deliveryFee = deliveryFeeFor(price - discount, zoneFeeOf(cart), freeAboveFor(cart.getCustomerPhno()));
         cart.setDeliveryFee(deliveryFee);
         double pointsDiscount = resolvePointsRedemption(cart, price - discount);
         // Store credit comes off last, after coupon and points - same fail-fast validation (see resolveStoreCredit).
@@ -445,11 +450,40 @@ public class OrderService {
 
     /** As above, with the delivery pincode's own fee (null = the shop-wide one) replacing shipping.fee. */
     double deliveryFeeFor(double goodsValue, Double zoneFee) {
+        return deliveryFeeFor(goodsValue, zoneFee, shippingFreeAbove);
+    }
+
+    /** As above, with the customer's own free-delivery threshold (their tier's, see freeAboveFor). */
+    double deliveryFeeFor(double goodsValue, Double zoneFee, double freeAbove) {
         double base = zoneFee != null ? zoneFee : shippingFee;
-        if (base <= 0 || (shippingFreeAbove > 0 && goodsValue >= shippingFreeAbove)) {
+        // 0 only means "always charged" for the shop-wide threshold; for a tier it was resolved to a real number or to
+        // "free", so a threshold below zero here means free delivery.
+        if (base <= 0 || freeAbove < 0 || (freeAbove > 0 && goodsValue >= freeAbove)) {
             return 0;
         }
         return roundMoney(base);
+    }
+
+    /**
+     * The goods value from which this customer's delivery is free: their loyalty tier's threshold when one is set (a
+     * negative tier value means always free, returned as -1), else the shop-wide one. Never worse than the shop-wide
+     * threshold. Gold uses silver's value when it has none of its own.
+     */
+    double freeAboveFor(long phno) {
+        if (shippingFreeAboveSilver == 0 && shippingFreeAboveGold == 0) {
+            return shippingFreeAbove;   // no tier perks configured: nothing to look up
+        }
+        LoyaltyTier tier = loyaltyAccountRepository.findById(phno)
+                .map(a -> LoyaltyTier.forLifetimePoints(a.getLifetimePointsEarned())).orElse(LoyaltyTier.BRONZE);
+        double tierValue = tier == LoyaltyTier.GOLD ? (shippingFreeAboveGold != 0 ? shippingFreeAboveGold : shippingFreeAboveSilver)
+                : tier == LoyaltyTier.SILVER ? shippingFreeAboveSilver : 0;
+        if (tierValue == 0) {
+            return shippingFreeAbove;
+        }
+        if (tierValue < 0) {
+            return -1;
+        }
+        return shippingFreeAbove > 0 ? Math.min(tierValue, shippingFreeAbove) : tierValue;
     }
 
     // The fee set on the pincode of the order's chosen address, or null (no address, no pincode list, or no fee set there).
@@ -466,7 +500,9 @@ public class OrderService {
 
     /** What the storefront shows before checkout: the flat fee and the goods value from which it is waived. */
     public java.util.Map<String, Double> getDeliveryFeeTerms() {
-        return java.util.Map.of("fee", Math.max(0, shippingFee), "freeAbove", Math.max(0, shippingFreeAbove));
+        // 0 = no special value for that tier; negative = always free for it.
+        return java.util.Map.of("fee", Math.max(0, shippingFee), "freeAbove", Math.max(0, shippingFreeAbove),
+                "freeAboveSilver", shippingFreeAboveSilver, "freeAboveGold", shippingFreeAboveGold);
     }
 
     private static final long UPI_COLLECT_TIMEOUT_MINUTES = 4;

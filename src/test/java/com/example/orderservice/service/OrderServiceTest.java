@@ -574,6 +574,47 @@ class OrderServiceTest {
         assertEquals(500.0, bigResult.getTotalPrice());
     }
 
+    private void loyaltyMember(long lifetimePoints) {
+        com.example.orderservice.entity.LoyaltyAccount account = new com.example.orderservice.entity.LoyaltyAccount();
+        account.setCustomerPhno(CUSTOMER);
+        account.setLifetimePointsEarned(lifetimePoints);
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.of(account));
+    }
+
+    @Test
+    void silverAndGoldMembersGetTheirOwnFreeDeliveryThreshold() {
+        ReflectionTestUtils.setField(service, "shippingFee", 40.0);
+        ReflectionTestUtils.setField(service, "shippingFreeAbove", 500.0);
+        ReflectionTestUtils.setField(service, "shippingFreeAboveSilver", 300.0);
+        ReflectionTestUtils.setField(service, "shippingFreeAboveGold", -1.0);
+
+        loyaltyMember(0);
+        assertEquals(500.0, service.freeAboveFor(CUSTOMER));
+        loyaltyMember(600);
+        assertEquals(300.0, service.freeAboveFor(CUSTOMER));
+        loyaltyMember(2500);
+        assertEquals(-1.0, service.freeAboveFor(CUSTOMER));   // gold: always free
+        assertEquals(0.0, service.deliveryFeeFor(10.0, null, service.freeAboveFor(CUSTOMER)));
+        loyaltyMember(600);
+        assertEquals(0.0, service.deliveryFeeFor(300.0, null, service.freeAboveFor(CUSTOMER)));
+        assertEquals(40.0, service.deliveryFeeFor(299.0, null, service.freeAboveFor(CUSTOMER)));
+    }
+
+    @Test
+    void aTierThresholdIsNeverWorseThanTheShopWideOneAndGoldFallsBackToSilver() {
+        ReflectionTestUtils.setField(service, "shippingFreeAbove", 200.0);
+        ReflectionTestUtils.setField(service, "shippingFreeAboveSilver", 900.0);
+        ReflectionTestUtils.setField(service, "shippingFreeAboveGold", 0.0);
+        loyaltyMember(600);
+        assertEquals(200.0, service.freeAboveFor(CUSTOMER));
+        loyaltyMember(2500);
+        assertEquals(200.0, service.freeAboveFor(CUSTOMER));   // gold unset -> silver's 900, capped by the shop-wide 200
+        ReflectionTestUtils.setField(service, "shippingFreeAbove", 0.0);
+        assertEquals(900.0, service.freeAboveFor(CUSTOMER));   // with no shop-wide free threshold the tier one still applies
+        when(loyaltyAccountRepository.findById(CUSTOMER)).thenReturn(Optional.empty());
+        assertEquals(0.0, service.freeAboveFor(CUSTOMER));
+    }
+
     @Test
     void theDeliveryFeeIsOffByDefaultAndACustomerCannotSetItThemselves() {
         stubCartSaveAssignsAnId();
