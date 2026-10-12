@@ -555,6 +555,50 @@ class OrderServiceTest {
     }
 
     @Test
+    void aSmallCashOrderPaysTheDeliveryFeeAndABigOneDoesNot() {
+        ReflectionTestUtils.setField(service, "shippingFee", 40.0);
+        ReflectionTestUtils.setField(service, "shippingFreeAbove", 500.0);
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 100.0, 10));
+        Cart small = cart(CUSTOMER, item(1, 2));
+        small.setPaymentMethod(PaymentMethod.CASH);
+        Cart big = cart(CUSTOMER, item(1, 5));
+        big.setPaymentMethod(PaymentMethod.CASH);
+
+        Cart smallResult = service.order(small, null, null);
+        Cart bigResult = service.order(big, null, null);
+
+        assertEquals(40.0, smallResult.getDeliveryFee());
+        assertEquals(240.0, smallResult.getTotalPrice());
+        assertEquals(0.0, bigResult.getDeliveryFee());
+        assertEquals(500.0, bigResult.getTotalPrice());
+    }
+
+    @Test
+    void theDeliveryFeeIsOffByDefaultAndACustomerCannotSetItThemselves() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 100.0, 10));
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setDeliveryFee(-500.0);
+
+        Cart result = service.order(cart, null, null);
+
+        assertEquals(0.0, result.getDeliveryFee());
+        assertEquals(100.0, result.getTotalPrice());
+    }
+
+    @Test
+    void theFeeIsMeasuredAfterTheCouponAndStillChargedWhenPointsCoverTheGoods() {
+        ReflectionTestUtils.setField(service, "shippingFee", 30.0);
+        ReflectionTestUtils.setField(service, "shippingFreeAbove", 200.0);
+        assertEquals(30.0, service.deliveryFeeFor(199.99));
+        assertEquals(0.0, service.deliveryFeeFor(200.0));
+        ReflectionTestUtils.setField(service, "shippingFreeAbove", 0.0);
+        assertEquals(30.0, service.deliveryFeeFor(100000.0));
+    }
+
+    @Test
     void anOrdinaryCheckoutCannotClaimASubscriptionDiscount() {
         stubCartSaveAssignsAnId();
         when(productClient.getProductById(1)).thenReturn(product(1, 200.0, 10));
@@ -1892,6 +1936,21 @@ class OrderServiceTest {
         verify(orderKafkaProducer).sendMessage(contains("Order marked paid"));
     }
 
+    @Test
+    void markPaidEmailsTheCustomerAndSurvivesANotifierFailure() {
+        Cart cart = placedOrder(42L, 0, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setPaid(false);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        when(customerNotifier.notifyOrderUpdate(any(), any(), any())).thenThrow(new IllegalStateException("db down"));
+
+        Cart result = service.markPaid(42L);
+
+        assertTrue(result.isPaid());
+        verify(customerNotifier).notifyOrderUpdate(eq(cart), contains("Payment received"), any());
+    }
+
     // ---------- getInvoice() ----------
 
     @Test
@@ -3222,6 +3281,7 @@ class OrderServiceTest {
         Cart result = service.changeOrderAddress(42L, 8L);
 
         assertEquals(8L, result.getShippingAddressId());
+        verify(customerNotifier).notifyOrderUpdate(eq(order), contains("address updated"), any());
     }
 
     @Test

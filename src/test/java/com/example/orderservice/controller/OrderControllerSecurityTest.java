@@ -116,6 +116,11 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void deliveryFeeTermsArePublic() throws Exception {
+        mockMvc.perform(get("/cart/deliveryfee")).andExpect(status().isOk());
+    }
+
+    @Test
     void searchIsPublic() throws Exception {
         when(productClient.search(any(), any(), anyInt(), anyInt())).thenReturn(new ProductSearchResult(List.of()));
         mockMvc.perform(get("/cart/search").param("name", "mug")).andExpect(status().isOk());
@@ -246,6 +251,23 @@ class OrderControllerSecurityTest {
     void removeFromOwnWaitlistWithOwnSessionSucceeds() throws Exception {
         mockMvc.perform(delete("/waitlist/self/remove").param("phno", "9876543210").param("productId", "1").with(customer()))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void approvingOrRejectingAReturnWithoutKeyIsUnauthorized() throws Exception {
+        mockMvc.perform(post("/cart/42/return/approve")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/cart/42/return/reject")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/returns/pending")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void requestingAReturnNeedsASignIn() throws Exception {
+        mockMvc.perform(post("/cart/42/return/request").param("reason", "x")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void theReturnPolicyIsPublic() throws Exception {
+        mockMvc.perform(get("/cart/returnpolicy")).andExpect(status().isOk());
     }
 
     @Test

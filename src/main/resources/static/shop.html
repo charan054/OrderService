@@ -735,6 +735,7 @@
                 <div id="cartLines"><p style="color:var(--muted); font-size:14px;">Your cart is empty.</p></div>
                 <div id="laterBox"></div>
                 <div id="cartShare" class="hidden" style="margin-top:8px;"><button class="secondary" style="width:auto;" onclick="shareCart()">Share cart</button> <span id="cartShareMsg" style="font-size:12px; color:var(--muted);"></span></div>
+                <div class="total-row hidden" id="cartDeliveryRow"><span id="cartDeliveryLabel">Delivery</span><span id="cartDelivery">₹0</span></div>
                 <div class="total-row"><span>Total</span><span id="cartTotal">₹0</span></div>
 
                 <select id="shippingAddressId" onchange="checkAddressPincode()">
@@ -1378,6 +1379,8 @@
       showAccountInfo();
       loadProducts();
       refreshNotificationBadge();
+      loadDeliveryTerms();
+      loadReturnPolicy();
       loadWishlist();
       loadWaitlist();
       loadSearchWatches();
@@ -1569,6 +1572,14 @@
       const expires = account.pointsBalance > 0 && account.pointsExpireAt
         ? ` They expire on ${new Date(account.pointsExpireAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })} unless you use them.` : "";
       hint.textContent = `You have ${account.pointsBalance} loyalty points (1 point = ₹1).${expires}`;
+    }
+
+    let deliveryTerms = { fee: 0, freeAbove: 0 };
+    async function loadDeliveryTerms() {
+      try {
+        const response = await fetch(`${BASE_URL}/cart/deliveryfee`);
+        if (response.ok) { deliveryTerms = await response.json(); renderCart(); }
+      } catch (e) { /* no fee preview - the server still charges it */ }
     }
 
     async function loadProducts() {
@@ -2140,7 +2151,7 @@
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeOrderAddressTo(${order.orderId})">Change address</button>` : ""}
           ${order.status === "PLACED" && order.paymentMethod === "CASH" && !order.discountAmount && !order.pointsRedeemed && !order.storeCreditUsed && !order.subscriptionId ? `<button class="secondary" style="width:auto;" onclick="addItemToMyOrder(${order.orderId})">Add item</button>` : ""}
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
-          ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
+          ${order.status === "DELIVERED" ? returnControls(order) : ""}
           ${order.status === "DELIVERED" ? (ratedOrderIds.has(order.orderId)
               ? `<span class="meta">Thanks for your feedback</span>`
               : `<button class="secondary" style="width:auto;" onclick="rateMyOrder(${order.orderId})">Rate this order</button>`) : ""}
@@ -2533,6 +2544,38 @@
       if (!response.ok) {
         const body = await response.text();
         alert(body || "Could not cancel this order.");
+        return;
+      }
+      loadAccountView();
+    }
+
+    // With return approval on (GET /cart/returnpolicy) the customer asks first, staff decide, then the customer completes it.
+    let returnPolicy = { approvalRequired: false };
+    async function loadReturnPolicy() {
+      try {
+        const response = await fetch(`${BASE_URL}/cart/returnpolicy`);
+        if (response.ok) returnPolicy = await response.json();
+      } catch (e) { /* default: returns need no approval */ }
+    }
+
+    function returnControls(order) {
+      const id = order.orderId, pm = order.paymentMethod, st = order.returnRequestStatus;
+      if (!returnPolicy.approvalRequired) {
+        return `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${id}, '${pm}')">Request return</button>`;
+      }
+      if (st === "REQUESTED") return `<span class="meta">Return requested - waiting for approval</span>`;
+      if (st === "APPROVED") return `<span class="meta">Return approved</span> <button class="secondary" style="width:auto;" onclick="returnMyOrder(${id}, '${pm}')">Complete return</button>`;
+      const rejected = st === "REJECTED"
+        ? `<span class="meta">Return not approved${order.returnRequestNote ? ": " + escapeHtml(order.returnRequestNote) : ""}</span> ` : "";
+      return `${rejected}<button class="secondary" style="width:auto;" onclick="requestMyReturn(${id})">${rejected ? "Ask again" : "Request return"}</button>`;
+    }
+
+    async function requestMyReturn(orderId) {
+      const reason = prompt("Why do you want to return this order?");
+      if (!reason) return;
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/return/request?reason=${encodeURIComponent(reason)}`, { method: "POST" });
+      if (!response.ok) {
+        alert((await response.text()) || "Could not send the return request.");
         return;
       }
       loadAccountView();
@@ -3378,6 +3421,7 @@
       const rows = inv.lines.map(l => `<tr><td>${escapeHtml(l.productName)}</td><td class="r">${l.quantity}</td><td class="r">${money(l.unitPrice)}</td><td class="r">${money(l.lineTotal)}</td></tr>`).join("");
       const adj = [];
       if (inv.discountAmount > 0) adj.push(`<tr><td colspan="3" class="r">Coupon${inv.couponCode ? " (" + escapeHtml(inv.couponCode) + ")" : ""}</td><td class="r">-${money(inv.discountAmount)}</td></tr>`);
+      if (inv.deliveryFee > 0) adj.push(`<tr><td colspan="3" class="r">Delivery fee</td><td class="r">+${money(inv.deliveryFee)}</td></tr>`);
       if (inv.pointsRedeemed > 0) adj.push(`<tr><td colspan="3" class="r">Loyalty points redeemed</td><td class="r">-${money(inv.pointsRedeemed)}</td></tr>`);
       if (inv.storeCreditUsed > 0) adj.push(`<tr><td colspan="3" class="r">Store credit used</td><td class="r">-${money(inv.storeCreditUsed)}</td></tr>`);
       // Cancelled/returned units since checkout - same wording as the order list ("taken off" for cash).
@@ -3615,8 +3659,15 @@
       }
       renderLater();
       document.getElementById("cartShare").classList.toggle("hidden", !cart.length);
-      const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-      document.getElementById("cartTotal").textContent = `₹${total.toFixed(2)}`;
+      const goods = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      // The server decides on the goods value after any coupon, so this preview can differ when a coupon is applied.
+      const fee = cart.length && deliveryTerms.fee > 0 && !(deliveryTerms.freeAbove > 0 && goods >= deliveryTerms.freeAbove) ? deliveryTerms.fee : 0;
+      const feeRow = document.getElementById("cartDeliveryRow");
+      feeRow.classList.toggle("hidden", !(cart.length && deliveryTerms.fee > 0));
+      document.getElementById("cartDelivery").textContent = fee > 0 ? `₹${fee.toFixed(2)}` : "Free";
+      document.getElementById("cartDeliveryLabel").textContent = fee > 0 && deliveryTerms.freeAbove > 0
+        ? `Delivery (free from ₹${deliveryTerms.freeAbove.toFixed(0)})` : "Delivery";
+      document.getElementById("cartTotal").textContent = `₹${(goods + fee).toFixed(2)}`;
       renderCouponSuggestions();
       saveCart();
     }

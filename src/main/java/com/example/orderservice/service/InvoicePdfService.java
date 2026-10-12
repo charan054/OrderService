@@ -171,6 +171,9 @@ public class InvoicePdfService {
         if (inv.discountAmount() > 0) {
             total(t, "Coupon" + (inv.couponCode() == null ? "" : " (" + safe(inv.couponCode()) + ")"), "-" + money(inv.discountAmount()), false);
         }
+        if (inv.deliveryFee() > 0) {
+            total(t, "Delivery fee", "+" + money(inv.deliveryFee()), false);
+        }
         if (inv.pointsRedeemed() > 0) {
             total(t, "Loyalty points redeemed", "-" + money(inv.pointsRedeemed()), false);
         }

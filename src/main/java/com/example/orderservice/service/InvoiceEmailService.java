@@ -132,6 +132,9 @@ public class InvoiceEmailService {
             b.append("Coupon").append(inv.couponCode() == null ? "" : " (" + inv.couponCode() + ")")
                     .append(": -Rs. ").append(money(inv.discountAmount())).append('\n');
         }
+        if (inv.deliveryFee() > 0) {
+            b.append("Delivery fee: +Rs. ").append(money(inv.deliveryFee())).append('\n');
+        }
         if (inv.pointsRedeemed() > 0) {
             b.append("Loyalty points redeemed: -Rs. ").append(money(inv.pointsRedeemed())).append('\n');
         }

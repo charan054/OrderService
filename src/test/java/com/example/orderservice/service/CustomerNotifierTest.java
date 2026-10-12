@@ -237,6 +237,19 @@ class CustomerNotifierTest {
     }
 
     @Test
+    void orderUpdateEmailCarriesTheSubjectAndLeadAndKeepsTheOrderStatus() {
+        verifiedEmail("asha@example.com");
+        when(mailService.send(anyString(), anyString(), anyString())).thenReturn(true);
+        Cart cart = order(PaymentMethod.CASH, false);
+        cart.setStatus(OrderStatus.PLACED);
+
+        NotificationLog log = notifier.notifyOrderUpdate(cart, "Delivery address updated for order #42", "Address changed.");
+
+        verify(mailService).send(eq("asha@example.com"), eq("Delivery address updated for order #42"), contains("Address changed."));
+        assertEquals(OrderStatus.PLACED, log.getEventType());
+    }
+
+    @Test
     void shippedEmailMentionsCarrierAndTrackingWhenRecorded() {
         com.example.orderservice.entity.Cart cart = order(PaymentMethod.PHONEPE, true);
         cart.setCarrier("Delhivery");

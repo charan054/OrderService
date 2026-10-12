@@ -75,7 +75,7 @@ public class CreditNoteService {
             items.add(new GstCalculator.Item(item.getProductId(), f.name(), f.hsnCode(), f.rate(), f.unitPrice(),
                     item.getProductQuantity(), item.getOutstandingQuantity()));
         }
-        double discountRatio = GstCalculator.discountRatio(items, order.getDiscountAmount());
+        double discountRatio = GstCalculator.discountRatio(items, order.getDiscountAmount() - order.getDeliveryFee());
         String placeOfSupply = placeOfSupply(order);
         boolean interState = GstCalculator.isInterState(storeState, placeOfSupply);
 

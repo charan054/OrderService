@@ -402,6 +402,23 @@
     </section>
 
     <section class="grid">
+        <div class="card wide" id="card-returnrequests">
+            <div class="card-header">
+                <div class="icon">&#8617;</div>
+                <div class="title-wrap">
+                    <h2>Return Requests</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Customers asking to return a delivered order (only when RETURNS_REQUIRE_APPROVAL is on). Approve to let them complete the return themselves, or reject with a note. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadReturnRequests()">Refresh</button>
+            </div>
+            <div id="returnRequestsWrap"></div>
+        </div>
+    </section>
+
+    <section class="grid">
         <div class="card wide" id="card-couponreport">
             <div class="card-header">
                 <div class="icon">&#127903;</div>
@@ -2165,6 +2182,36 @@
         headers: { "X-Service-Key": serviceKey }
       });
       await loadRefundFailures();
+    }
+
+    async function loadReturnRequests() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const rows = await apiCall("http://localhost:8083/cart/returns/pending", { headers: { "X-Service-Key": serviceKey } });
+      if (!Array.isArray(rows)) return;
+      document.getElementById("returnRequestsWrap").innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Reason</th><th></th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>#${r.orderId}</td><td>${r.customerPhno}</td><td>&#8377;${Number(r.totalPrice).toFixed(2)}</td>
+            <td style="white-space:normal;">${escapeHtml(r.returnRequestReason || "")}</td>
+            <td><button onclick="decideReturn(${r.orderId}, true)">Approve</button> <button onclick="decideReturn(${r.orderId}, false)">Reject</button></td></tr>`).join("")}</tbody></table>`
+        : `<p>No return requests waiting.</p>`;
+      showStatus(`${rows.length} return request(s) waiting.`, "success");
+    }
+
+    async function decideReturn(orderId, approve) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      let query = "";
+      if (!approve) {
+        const note = prompt("Why is this return not approved? (the customer sees this)");
+        if (note === null) return;
+        query = "?note=" + encodeURIComponent(note.trim());
+      }
+      await apiCall(`http://localhost:8083/cart/${orderId}/return/${approve ? "approve" : "reject"}${query}`, {
+        method: "POST",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      await loadReturnRequests();
     }
 
     // ---------- internal order notes ----------
