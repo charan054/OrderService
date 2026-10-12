@@ -61,6 +61,7 @@ public final class AdminPolicy {
             rule(GET, "/cart/gallery", AdminRole.SUPPORT),
             rule(GET, "/pincodes/check", AdminRole.SUPPORT),
             rule(GET, "/pincodes/slots", AdminRole.SUPPORT),
+            rule(GET, "/pincodes/slots/availability", AdminRole.SUPPORT),
             rule(GET, "/questions/product", AdminRole.SUPPORT),
             // Orders and customers.
             rule(GET, "/cart/byphno", AdminRole.SUPPORT),

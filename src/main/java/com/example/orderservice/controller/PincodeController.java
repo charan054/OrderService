@@ -27,6 +27,12 @@ public class PincodeController {
         return orderService.getDeliverySlots();
     }
 
+    // Which windows can still take an order (public, like /slots): full ones are greyed out at checkout.
+    @GetMapping("/slots/availability")
+    public List<com.example.orderservice.dto.SlotAvailability> slotAvailability() {
+        return orderService.getSlotAvailability();
+    }
+
     @PostMapping("/add")
     public ServiceablePincode add(@RequestBody ServiceablePincode pincode) {
         return orderService.savePincode(pincode);
