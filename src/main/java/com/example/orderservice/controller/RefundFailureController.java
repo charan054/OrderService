@@ -20,6 +20,12 @@ public class RefundFailureController {
         return service.open();
     }
 
+    // Tries the refund again through PhonepayService; resolves the entry when it goes through.
+    @PostMapping("/{id}/retry")
+    public RefundFailure retry(@PathVariable long id) {
+        return service.retry(id);
+    }
+
     @PostMapping("/{id}/resolve")
     public RefundFailure resolve(@PathVariable long id, @RequestParam String note) {
         return service.resolve(id, note);

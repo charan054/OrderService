@@ -29,6 +29,12 @@ public interface PhonepeClient {
     PaymentResponse refund(@RequestHeader("Authorization") String authorization,
                            @PathVariable long transactionId, @RequestBody RefundRequest request);
 
+    // Merchant-only (X-Service-Key): pays a completed payment back to the account that made it, without that buyer's
+    // session - used to settle a refund that failed while a checkout was being undone (RefundFailureService.retry).
+    @PostMapping("/phonepe/merchant/transactions/{transactionId}/refund")
+    PaymentResponse merchantRefund(@RequestHeader("X-Service-Key") String serviceKey,
+                                   @PathVariable long transactionId, @RequestBody RefundRequest request);
+
     // Lets a checkout that only has the buyer's phone+PIN (the storefront flow) obtain the same session token a
     // buyer who already had one would supply directly - PhonepayService's own credential check, nothing verified
     // here.

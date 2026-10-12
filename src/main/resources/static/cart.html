@@ -2138,9 +2138,21 @@
             <tr><td>${new Date(r.createdAt).toLocaleString()}</td><td>#${r.orderId}</td><td>${r.customerPhno}</td>
             <td>${escapeHtml(r.kind === "STORE_CREDIT" ? "Store credit" : "PhonePe refund")}${r.paymentTransactionId ? " (payment " + r.paymentTransactionId + ")" : ""}</td>
             <td>&#8377;${Number(r.amount).toFixed(2)}</td><td style="white-space:normal;">${escapeHtml(r.reason || "")}</td>
-            <td><button onclick="resolveRefundFailure(${r.id})">Resolve</button></td></tr>`).join("")}</tbody></table>`
+            <td><button onclick="retryRefundFailure(${r.id})">Retry refund</button> <button onclick="resolveRefundFailure(${r.id})">Resolve</button></td></tr>`).join("")}</tbody></table>`
         : `<p>Nothing to settle.</p>`;
       showStatus(`${rows.length} refund(s) to settle.`, "success");
+    }
+
+    async function retryRefundFailure(id) {
+      if (!confirm("Pay this refund back to the customer now? It is sent once, even if you press the button again.")) return;
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const done = await apiCall(`http://localhost:8083/refundfailures/${id}/retry`, {
+        method: "POST",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      if (done) showStatus("Refund sent and marked resolved.", "success");
+      await loadRefundFailures();
     }
 
     async function resolveRefundFailure(id) {
