@@ -258,7 +258,7 @@ public class OrderService {
         }
         // Same fail-fast reasoning, applied on top of the coupon discount: redeeming more points than the
         // customer's balance actually holds, or more than what's left to pay, must fail before any payment.
-        double deliveryFee = deliveryFeeFor(price - discount);
+        double deliveryFee = deliveryFeeFor(price - discount, zoneFeeOf(cart));
         cart.setDeliveryFee(deliveryFee);
         double pointsDiscount = resolvePointsRedemption(cart, price - discount);
         // Store credit comes off last, after coupon and points - same fail-fast validation (see resolveStoreCredit).
@@ -440,10 +440,28 @@ public class OrderService {
 
     /** The fee for goods worth `goodsValue` (after any coupon): none when fees are off or the order is big enough. */
     double deliveryFeeFor(double goodsValue) {
-        if (shippingFee <= 0 || (shippingFreeAbove > 0 && goodsValue >= shippingFreeAbove)) {
+        return deliveryFeeFor(goodsValue, null);
+    }
+
+    /** As above, with the delivery pincode's own fee (null = the shop-wide one) replacing shipping.fee. */
+    double deliveryFeeFor(double goodsValue, Double zoneFee) {
+        double base = zoneFee != null ? zoneFee : shippingFee;
+        if (base <= 0 || (shippingFreeAbove > 0 && goodsValue >= shippingFreeAbove)) {
             return 0;
         }
-        return roundMoney(shippingFee);
+        return roundMoney(base);
+    }
+
+    // The fee set on the pincode of the order's chosen address, or null (no address, no pincode list, or no fee set there).
+    private Double zoneFeeOf(Cart cart) {
+        if (cart.getShippingAddressId() == null) {
+            return null;
+        }
+        return shippingAddressRepository.findById(cart.getShippingAddressId())
+                .filter(a -> a.getCustomerPhno() == cart.getCustomerPhno() && a.getPincode() != null)
+                .flatMap(a -> serviceablePincodeRepository.findById(String.valueOf(a.getPincode()).trim()))
+                .map(ServiceablePincode::getDeliveryFee)
+                .orElse(null);
     }
 
     /** What the storefront shows before checkout: the flat fee and the goods value from which it is waived. */
@@ -1595,11 +1613,11 @@ public class OrderService {
     public PincodeServiceability checkPincode(String pincode) {
         String p = normalizePincode(pincode);
         if (serviceablePincodeRepository.count() == 0) {
-            return new PincodeServiceability(p, true, null, null, null);
+            return new PincodeServiceability(p, true, null, null, null, null);
         }
         return serviceablePincodeRepository.findById(p)
-                .map(sp -> new PincodeServiceability(p, true, sp.getDeliveryDays(), sp.getCity(), sp.getState()))
-                .orElse(new PincodeServiceability(p, false, null, null, null));
+                .map(sp -> new PincodeServiceability(p, true, sp.getDeliveryDays(), sp.getCity(), sp.getState(), sp.getDeliveryFee()))
+                .orElse(new PincodeServiceability(p, false, null, null, null, null));
     }
 
     public ServiceablePincode savePincode(ServiceablePincode pincode) {
@@ -1609,12 +1627,15 @@ public class OrderService {
         }
         pincode.setCity(blankToNull(pincode.getCity() == null ? null : pincode.getCity().trim()));
         pincode.setState(blankToNull(pincode.getState() == null ? null : pincode.getState().trim()));
+        if (pincode.getDeliveryFee() != null && (pincode.getDeliveryFee() < 0 || pincode.getDeliveryFee() > 10000)) {
+            throw new ProductException("Delivery fee must be between 0 and 10000");
+        }
         return serviceablePincodeRepository.save(pincode);
     }
 
     private static final int MAX_PINCODE_IMPORT_ROWS = 5000;
 
-    // Bulk load from CSV text: pincode,deliveryDays[,city,state] per line; a header row (first cell not a number) and
+    // Bulk load from CSV text: pincode,deliveryDays[,city,state[,deliveryFee]] per line; a header row (first cell not a number) and
     // blank lines are skipped. A bad row is reported with its line number and never stops the rest, same as the
     // product bulk import.
     public PincodeImportResult importPincodes(String csv) {
@@ -1646,6 +1667,13 @@ public class OrderService {
                 }
                 sp.setCity(cells.length > 2 ? cells[2] : null);
                 sp.setState(cells.length > 3 ? cells[3] : null);
+                if (cells.length > 4 && !cells[4].isBlank()) {
+                    try {
+                        sp.setDeliveryFee(Double.parseDouble(cells[4].trim()));
+                    } catch (NumberFormatException e) {
+                        throw new ProductException("Delivery fee must be a number");
+                    }
+                }
                 savePincode(sp);
                 imported++;
             } catch (ProductException e) {

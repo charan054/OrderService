@@ -4319,6 +4319,59 @@ class OrderServiceTest {
     }
 
     @Test
+    void importPincodesReadsAnOptionalDeliveryFeeColumn() {
+        when(serviceablePincodeRepository.save(any(com.example.orderservice.entity.ServiceablePincode.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+
+        com.example.orderservice.dto.PincodeImportResult r = service.importPincodes(
+                "411001,2,Pune,Maharashtra,0\n560001,3,,,80\n400001,2,,,abc\n500001,2,,,-5\n");
+
+        assertEquals(2, r.imported());
+        assertEquals(2, r.errors().size());
+        org.mockito.ArgumentCaptor<com.example.orderservice.entity.ServiceablePincode> saved =
+                org.mockito.ArgumentCaptor.forClass(com.example.orderservice.entity.ServiceablePincode.class);
+        verify(serviceablePincodeRepository, times(2)).save(saved.capture());
+        assertEquals(0.0, saved.getAllValues().get(0).getDeliveryFee());
+        assertEquals(80.0, saved.getAllValues().get(1).getDeliveryFee());
+    }
+
+    @Test
+    void aPincodesOwnFeeReplacesTheShopWideOneButNotTheFreeThreshold() {
+        ReflectionTestUtils.setField(service, "shippingFee", 40.0);
+        ReflectionTestUtils.setField(service, "shippingFreeAbove", 500.0);
+        assertEquals(80.0, service.deliveryFeeFor(100.0, 80.0));
+        assertEquals(0.0, service.deliveryFeeFor(100.0, 0.0));
+        assertEquals(0.0, service.deliveryFeeFor(500.0, 80.0));
+        assertEquals(40.0, service.deliveryFeeFor(100.0, null));
+        ReflectionTestUtils.setField(service, "shippingFee", 0.0);
+        assertEquals(80.0, service.deliveryFeeFor(100.0, 80.0));   // a remote-zone fee works even with no shop-wide fee
+    }
+
+    @Test
+    void checkoutUsesTheFeeOfTheChosenAddressesPincode() {
+        ReflectionTestUtils.setField(service, "shippingFee", 40.0);
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 100.0, 10));
+        ShippingAddress addr = address(CUSTOMER, true);
+        addr.setId(8L);
+        when(shippingAddressRepository.findById(8L)).thenReturn(Optional.of(addr));
+        com.example.orderservice.entity.ServiceablePincode zone = new com.example.orderservice.entity.ServiceablePincode();
+        zone.setPincode("110001");
+        zone.setDeliveryFee(90.0);
+        when(serviceablePincodeRepository.findById("110001")).thenReturn(Optional.of(zone));
+        when(serviceablePincodeRepository.count()).thenReturn(1L);
+        when(serviceablePincodeRepository.existsById("110001")).thenReturn(true);
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setShippingAddressId(8L);
+
+        Cart result = service.order(cart, null, null);
+
+        assertEquals(90.0, result.getDeliveryFee());
+        assertEquals(190.0, result.getTotalPrice());
+    }
+
+    @Test
     void removePincodeRejectsAnUnknownOne() {
         when(serviceablePincodeRepository.existsById("411001")).thenReturn(false);
 

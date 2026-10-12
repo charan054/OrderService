@@ -1452,11 +1452,14 @@
       const opt = document.getElementById("shippingAddressId").selectedOptions[0];
       const pincode = opt && opt.dataset ? opt.dataset.pincode : "";
       hint.style.color = "var(--muted)";
-      if (!pincode) { hint.textContent = ""; return; }
+      zoneFee = null;
+      if (!pincode) { hint.textContent = ""; renderCart(); return; }
       try {
         const r = await fetch(`${BASE_URL}/pincodes/check?pincode=${encodeURIComponent(pincode)}`);
         if (!r.ok) { hint.textContent = ""; return; }
         const d = await r.json();
+        zoneFee = d.serviceable && d.deliveryFee !== null && d.deliveryFee !== undefined ? d.deliveryFee : null;
+        renderCart();
         if (!d.serviceable) {
           hint.style.color = "#c0392b";
           hint.textContent = `Sorry, we don't deliver to ${pincode} yet.`;
@@ -1575,6 +1578,7 @@
     }
 
     let deliveryTerms = { fee: 0, freeAbove: 0 };
+    let zoneFee = null;   // the chosen address's pincode fee, replacing deliveryTerms.fee (null = no special fee)
     async function loadDeliveryTerms() {
       try {
         const response = await fetch(`${BASE_URL}/cart/deliveryfee`);
@@ -3661,9 +3665,10 @@
       document.getElementById("cartShare").classList.toggle("hidden", !cart.length);
       const goods = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
       // The server decides on the goods value after any coupon, so this preview can differ when a coupon is applied.
-      const fee = cart.length && deliveryTerms.fee > 0 && !(deliveryTerms.freeAbove > 0 && goods >= deliveryTerms.freeAbove) ? deliveryTerms.fee : 0;
+      const baseFee = zoneFee !== null ? zoneFee : deliveryTerms.fee;
+      const fee = cart.length && baseFee > 0 && !(deliveryTerms.freeAbove > 0 && goods >= deliveryTerms.freeAbove) ? baseFee : 0;
       const feeRow = document.getElementById("cartDeliveryRow");
-      feeRow.classList.toggle("hidden", !(cart.length && deliveryTerms.fee > 0));
+      feeRow.classList.toggle("hidden", !(cart.length && baseFee > 0));
       document.getElementById("cartDelivery").textContent = fee > 0 ? `₹${fee.toFixed(2)}` : "Free";
       document.getElementById("cartDeliveryLabel").textContent = fee > 0 && deliveryTerms.freeAbove > 0
         ? `Delivery (free from ₹${deliveryTerms.freeAbove.toFixed(0)})` : "Delivery";
