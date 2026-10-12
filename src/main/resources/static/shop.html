@@ -692,6 +692,7 @@
     <section id="shopSection" class="hidden">
         <div class="layout">
             <div>
+                <div id="ratePrompt" class="hidden" style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:12px;"></div>
                 <div class="search-row">
                     <input type="text" id="searchName" placeholder="Search products (press / )" oninput="onSearchChange()" list="searchSuggestions" autocomplete="off" />
                     <datalist id="searchSuggestions"></datalist>
@@ -1316,7 +1317,57 @@
       return `<div class="cart-line"><span>Estimated delivery</span><span>${eta.toLocaleDateString()}</span></div>`;
     }
 
+    // ---- one-tap rating after delivery ----
+    // The newest delivered order that has no feedback yet (and was not dismissed on this browser) gets a banner with
+    // thumbs up / down. Thumbs up is saved as 5 stars and thumbs down as 1; a thumbs down then offers "Report a
+    // problem". The full star form stays under My account > Rate this order.
+    const rateDismissKey = () => `shopRateDismissed_${customerPhno}`;
+    function dismissedRateIds() {
+      try { return JSON.parse(localStorage.getItem(rateDismissKey()) || "[]"); } catch (e) { return []; }
+    }
+
+    async function loadRatePrompt() {
+      const box = document.getElementById("ratePrompt");
+      box.classList.add("hidden");
+      if (!customerPhno) return;
+      try {
+        const [ordersResponse, feedbackResponse] = await Promise.all([
+          authFetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(customerPhno)}`),
+          authFetch(`${BASE_URL}/feedback/mine?phno=${encodeURIComponent(customerPhno)}`)
+        ]);
+        if (!ordersResponse.ok || !feedbackResponse.ok) return;
+        const rated = new Set((await feedbackResponse.json()).map(f => f.orderId));
+        const skipped = new Set(dismissedRateIds());
+        const order = (await ordersResponse.json())
+          .filter(o => o.status === "DELIVERED" && !rated.has(o.orderId) && !skipped.has(o.orderId))
+          .sort((a, b) => b.orderId - a.orderId)[0];
+        if (!order) return;
+        box.innerHTML = `<strong>How was order #${order.orderId}?</strong>
+          <button class="secondary" style="width:auto; margin:0 6px;" onclick="thumbRate(${order.orderId}, true)" aria-label="Good">&#128077;</button>
+          <button class="secondary" style="width:auto;" onclick="thumbRate(${order.orderId}, false)" aria-label="Not good">&#128078;</button>
+          <button class="secondary" style="width:auto; float:right;" onclick="dismissRatePrompt(${order.orderId})">Not now</button>`;
+        box.classList.remove("hidden");
+      } catch (e) { /* the prompt is optional; My account still has Rate this order */ }
+    }
+
+    function dismissRatePrompt(orderId) {
+      try { localStorage.setItem(rateDismissKey(), JSON.stringify([...dismissedRateIds(), orderId].slice(-50))); } catch (e) {}
+      document.getElementById("ratePrompt").classList.add("hidden");
+    }
+
+    async function thumbRate(orderId, up) {
+      const box = document.getElementById("ratePrompt");
+      const response = await authFetch(`${BASE_URL}/feedback/submit?phno=${encodeURIComponent(customerPhno)}&orderId=${orderId}&rating=${up ? 5 : 1}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't save your feedback. Please try again."); return; }
+      ratedOrderIds.add(orderId);
+      box.innerHTML = up
+        ? `Thanks for the feedback! &#128154;`
+        : `Sorry to hear that. <button class="secondary" style="width:auto; margin-left:6px;" onclick="reportProblem(${orderId})">Tell us what went wrong</button>`;
+      if (up) setTimeout(() => box.classList.add("hidden"), 3000);
+    }
+
     function enterShop() {
+      loadRatePrompt();
       loadSavedForLater();
       restoreSavedCart();
       document.getElementById("loginSection").classList.add("hidden");
