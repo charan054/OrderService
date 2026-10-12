@@ -19,8 +19,7 @@ import java.util.Locale;
 /**
  * Tells a customer their order moved on its own (ship/deliver happen on the warehouse's schedule, unlike
  * placing/cancelling/returning, which the customer just did themselves). Emails the address the customer verified
- * at storefront sign-in (see CustomerAuthService) and records a NotificationLog row either way, so "My
- * notifications" works even for a customer who has never signed in and so has no email on file.
+ * at storefront sign-in (see CustomerAuthService) and records a NotificationLog row either way, so "My\n * notifications" works even for a customer who has never signed in and so has no email on file.
  *
  * Called directly from OrderService rather than off the Kafka topic: no broker is reachable in every environment
  * this runs in, and a customer email shouldn't depend on one being up. The Kafka message is still published.
@@ -74,6 +73,16 @@ public class CustomerNotifier {
                 : "Nothing was charged for these items, so there is nothing to refund.\n";
         String body = "Hi " + name + ",\n\n" + quantity + " x product #" + productId + " from order #" + order.getOrderId()
                 + " was " + what + ".\n\n" + refundLine + "\nThe rest of your order is unchanged.\n";
+        return deliver(order, order.getStatus(), subject, body);
+    }
+
+    // A change to a live order that is not a status change (delivery slot/address, items added, tracking corrected,
+    // cash collected). Recorded and emailed like the status ones; the record keeps the order's current status.
+    public NotificationLog notifyOrderUpdate(Cart order, String subject, String lead) {
+        String name = order.getCustomerName() == null || order.getCustomerName().isBlank() ? "there" : order.getCustomerName();
+        String total = String.format(Locale.ROOT, "%.2f", order.getTotalPrice());
+        String body = "Hi " + name + ",\n\n" + lead + "\n\nOrder total: Rs. " + total
+                + "\n\nYou can follow every step under \"My notifications\" and \"My account\" in the shop.\n";
         return deliver(order, order.getStatus(), subject, body);
     }
 

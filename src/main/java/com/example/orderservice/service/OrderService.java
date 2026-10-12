@@ -719,6 +719,10 @@ public class OrderService {
         cart.setDeliveryNote(scratch.getDeliveryNote());
         Cart saved = orderRepository.save(cart);
         sendNotification("Delivery details changed. OrderId: " + saved.getOrderId());
+        notifyOrderUpdate(saved, "Delivery details updated for order #" + saved.getOrderId(),
+                "The delivery details for your order #" + saved.getOrderId() + " were updated."
+                        + (saved.getDeliverySlot() == null || saved.getDeliverySlot().isBlank() ? "" : "\nDelivery slot: " + saved.getDeliverySlot())
+                        + (saved.getDeliveryNote() == null || saved.getDeliveryNote().isBlank() ? "" : "\nInstructions: " + saved.getDeliveryNote()));
         return saved;
     }
 
@@ -784,6 +788,9 @@ public class OrderService {
             releaseWaitlistHolds(saved);
             sendNotification("Item added to order. OrderId: " + orderId + " Product: " + productId + " Quantity: " + quantity
                     + " Customer: " + mask(saved.getCustomerPhno()));
+            notifyOrderUpdate(saved, "Items added to order #" + orderId,
+                    quantity + " x product #" + productId + " was added to your order #" + orderId
+                            + ". Please keep the new total ready for cash on delivery.");
             return saved;
         } catch (RuntimeException e) {
             try {
@@ -1763,7 +1770,12 @@ public class OrderService {
         if (trackingNumber != null) {
             cart.setTrackingNumber(cleanTracking);
         }
-        return orderRepository.save(cart);
+        Cart saved = orderRepository.save(cart);
+        notifyOrderUpdate(saved, "Shipping details updated for order #" + saved.getOrderId(),
+                "The shipping details for your order #" + saved.getOrderId() + " were updated."
+                        + (saved.getCarrier() == null || saved.getCarrier().isBlank() ? "" : "\nCarrier: " + saved.getCarrier())
+                        + (saved.getTrackingNumber() == null || saved.getTrackingNumber().isBlank() ? "" : "\nTracking number: " + saved.getTrackingNumber()));
+        return saved;
     }
 
     public Cart deliver(long orderId) {
@@ -1858,6 +1870,8 @@ public class OrderService {
         cart.setPaid(true);
         Cart result = orderRepository.save(cart);
         sendNotification("Order marked paid (cash collected). OrderId: " + result.getOrderId());
+        notifyOrderUpdate(result, "Payment received for order #" + result.getOrderId(),
+                "We have received your cash payment for order #" + result.getOrderId() + ". Thank you!");
         return result;
     }
 
@@ -1989,6 +2003,14 @@ public class OrderService {
             customerNotifier.notifyStatusChange(order, status, detail);
         } catch (RuntimeException e) {
             log.error("Customer notification failed for order {} ({}): {}", order.getOrderId(), status, e.getMessage());
+        }
+    }
+
+    private void notifyOrderUpdate(Cart order, String subject, String lead) {
+        try {
+            customerNotifier.notifyOrderUpdate(order, subject, lead);
+        } catch (RuntimeException e) {
+            log.error("Customer notification failed for order {} ({}): {}", order.getOrderId(), subject, e.getMessage());
         }
     }
 
@@ -2284,8 +2306,7 @@ public class OrderService {
         return productClient.unhideReview(serviceApiKey, productId, reviewId);
     }
 
-    // Straight proxy to ProductService's own public gallery listing - same "shop.html only calls its own
-    // origin" reasoning as getProductReviews() above.
+    // Straight proxy to ProductService's own public gallery listing - same "shop.html only calls its own\n    // origin" reasoning as getProductReviews() above.
     public List<ProductGalleryImage> getGalleryImages(long productId) {
         return productClient.getGalleryImages(productId).stream()
                 .map(i -> new ProductGalleryImage(i.id(), i.productId(), absolutizeImageUrl(i.imageUrl())))
@@ -2916,6 +2937,8 @@ public class OrderService {
             validateShippingAddress(cart);
             Cart saved = orderRepository.save(cart);
             sendNotification("Delivery address changed. OrderId: " + orderId + " Customer: " + mask(saved.getCustomerPhno()));
+            notifyOrderUpdate(saved, "Delivery address updated for order #" + orderId,
+                    "The delivery address for your order #" + orderId + " was changed. If you did not ask for this, please contact support.");
             return saved;
         }
     }
