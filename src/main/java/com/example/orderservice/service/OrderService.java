@@ -230,6 +230,13 @@ public class OrderService {
             {
                 throw new ProductException("Product quantity exceeded");
             }
+            // Units held for OTHER waitlisted customers (back-in-stock holds) aren't for sale to this buyer.
+            long heldForOthers = stockWaitlistRepository.countByProductIdAndHeldUntilAfterAndCustomerPhnoNot(
+                    orderItem.getProductId(), Instant.now(), cart.getCustomerPhno());
+            if(orderItem.getProductQuantity()>pro.getProductStock()-heldForOthers)
+            {
+                throw new ProductException("Product quantity exceeded - the remaining stock is being held for other customers for a few minutes");
+            }
             price=price+(orderItem.getProductQuantity()*pro.getProductPrice());
             orderItem.setUnitPrice(pro.getProductPrice());
             orderItem.setGstRate(pro.getGstRate() != null ? pro.getGstRate() : defaultGstRate);
@@ -314,6 +321,7 @@ public class OrderService {
         }
         // After the stock is secured, so a rolled-back order never uses up a coupon redemption.
         recordCouponRedemption(cart.getCouponCode(), cart.getCustomerPhno());
+        releaseWaitlistHolds(saved);
         invoiceNumberService.assign(saved);
         Cart result = orderRepository.save(saved);
         storeCreditService.linkOrder(creditTx, result.getOrderId());
@@ -325,6 +333,22 @@ public class OrderService {
                 + " Total: " + result.getTotalPrice());
         notifyCustomer(result, OrderStatus.PLACED, null);
         return result;
+    }
+
+    // The customer bought what was held for them: the hold has done its job. Never fails the order.
+    private void releaseWaitlistHolds(Cart order) {
+        try {
+            for (OrderItem item : order.getOrderItems()) {
+                stockWaitlistRepository.findByCustomerPhnoAndProductId(order.getCustomerPhno(), item.getProductId())
+                        .filter(w -> w.getHeldUntil() != null)
+                        .ifPresent(w -> {
+                            w.setHeldUntil(null);
+                            stockWaitlistRepository.save(w);
+                        });
+            }
+        } catch (RuntimeException e) {
+            log.warn("Order {}: could not release waitlist hold: {}", order.getOrderId(), e.getMessage());
+        }
     }
 
     // Best effort, each step on its own: whatever can't be undone is logged for a human rather than hiding the original error.
@@ -2699,7 +2723,8 @@ public class OrderService {
                 continue;
             }
             statuses.add(new WaitlistStatus(product.getProductId(), product.getProductName(),
-                    product.getProductStock(), product.getProductStock() > 0));
+                    product.getProductStock(), product.getProductStock() > 0,
+                    item.getHeldUntil() != null && item.getHeldUntil().isAfter(Instant.now()) ? item.getHeldUntil() : null));
         }
         return statuses;
     }

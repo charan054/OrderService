@@ -48,6 +48,10 @@ public class StockAlertService {
     private final EmailPreferenceService preferences;
     private final Clock clock;
     private final String shopUrl;
+    // Minutes one unit is held for a waitlisted customer once they are emailed (0 = no holds). Field-injected so
+    // direct construction (tests) keeps holds off unless asked.
+    @Value("${alerts.hold-minutes:30}")
+    private long holdMinutes = 0;
 
     public StockAlertService(WishlistRepository wishlists, StockWaitlistRepository waitlists, SearchWatchRepository searchWatches,
                              CustomerAccountRepository accounts, ProductClient productClient, MailService mailService,
@@ -75,15 +79,17 @@ public class StockAlertService {
         Map<Integer, Product> products = new HashMap<>();
         Map<Long, Pending> byCustomer = new LinkedHashMap<>();
 
+        Map<Integer, Long> heldThisRun = new HashMap<>();
         for (StockWaitlist entry : waitlists.findAll()) {
             Product product = lookup(products, entry.getProductId());
             if (product == null) {
                 continue;
             }
             if (product.getProductStock() <= 0) {
-                if (entry.getNotifiedAt() != null) {
-                    // Sold out again: arm the next restock email.
+                if (entry.getNotifiedAt() != null || entry.getHeldUntil() != null) {
+                    // Sold out again: arm the next restock email, and any hold is moot.
                     entry.setNotifiedAt(null);
+                    entry.setHeldUntil(null);
                     waitlists.save(entry);
                 }
                 continue;
@@ -91,10 +97,25 @@ public class StockAlertService {
             if (entry.getNotifiedAt() == null) {
                 Pending pending = byCustomer.computeIfAbsent(entry.getCustomerPhno(), k -> new Pending());
                 pending.restocks++;
+                // A hold only while there is a unit nobody else holds (earlier waiters in this list get first pick).
+                boolean hold = false;
+                if (holdMinutes > 0) {
+                    long taken = waitlists.countByProductIdAndHeldUntilAfter(entry.getProductId(), clock.instant())
+                            + heldThisRun.getOrDefault(entry.getProductId(), 0L);
+                    if (taken < product.getProductStock()) {
+                        hold = true;
+                        heldThisRun.merge(entry.getProductId(), 1L, Long::sum);
+                    }
+                }
+                final boolean held = hold;
                 pending.lines.add("Back in stock: " + product.getProductName() + " - Rs. " + money(product.getProductPrice())
-                        + " (" + product.getProductStock() + " available)" + link(entry.getProductId()));
+                        + " (" + product.getProductStock() + " available)"
+                        + (held ? " - one is held for you for " + holdMinutes + " minutes" : "") + link(entry.getProductId()));
                 pending.onSent.add(() -> {
                     entry.setNotifiedAt(clock.instant());
+                    if (held) {
+                        entry.setHeldUntil(clock.instant().plus(java.time.Duration.ofMinutes(holdMinutes)));
+                    }
                     waitlists.save(entry);
                 });
             }
