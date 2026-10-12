@@ -46,10 +46,11 @@ public final class GstCalculator {
                 round(cgstTotal + sgstTotal + igstTotal));
     }
 
-    // The share of the order's gross that a coupon took off, applied evenly to every line.
+    // The share of the order's gross that a coupon took off (less any delivery fee), applied evenly to every line.
     public static double discountRatio(List<Item> items, double couponDiscount) {
         double orderGross = items.stream().mapToDouble(i -> i.unitPrice() * i.originalQuantity()).sum();
-        return orderGross <= 0 ? 0 : Math.min(1, Math.max(0, couponDiscount / orderGross));
+        // Negative when the order carries a delivery fee larger than its coupon: a surcharge spread over the lines.
+        return orderGross <= 0 ? 0 : Math.min(1, couponDiscount / orderGross);
     }
 
     /** One product's tax if keptQuantity of its units stand: value supplied, split into taxable value and tax. */
