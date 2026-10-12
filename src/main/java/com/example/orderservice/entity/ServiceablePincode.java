@@ -18,4 +18,6 @@ public class ServiceablePincode {
     // Optional: lets the storefront fill in the city/state when a customer types the pincode.
     private String city;
     private String state;
+    // Optional delivery fee for this pincode, replacing the shop-wide shipping.fee (0 = free zone). Null = the shop-wide fee.
+    private Double deliveryFee;
 }

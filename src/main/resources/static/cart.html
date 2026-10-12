@@ -569,11 +569,12 @@
             <input type="number" id="pinDays" placeholder="Delivery days (1-30)" />
             <input type="text" id="pinCity" placeholder="City (optional, autofills the storefront address form)" />
             <input type="text" id="pinState" placeholder="State (optional)" />
+            <input type="number" id="pinFee" placeholder="Delivery fee for this pincode (optional; 0 = free, blank = shop-wide fee)" />
             <button class="blue" onclick="addPincode()">Add / Update Pincode</button>
             <button onclick="listPincodes()">List Pincodes</button>
             <button onclick="removePincode()">Remove Pincode</button>
             <p style="margin-top:14px;">Or import many at once - one <code>pincode,deliveryDays,city,state</code> per line (city and state optional, header row allowed):</p>
-            <textarea id="pinImportCsv" rows="5" placeholder="411001,2,Pune,Maharashtra"></textarea>
+            <textarea id="pinImportCsv" rows="5" placeholder="411001,2,Pune,Maharashtra,40"></textarea>
             <button class="blue" onclick="importPincodes()">Import Pincodes</button>
         </div>
 
@@ -3205,7 +3206,8 @@
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
         body: JSON.stringify({ pincode, deliveryDays: Number(deliveryDays),
-          city: document.getElementById("pinCity").value.trim(), state: document.getElementById("pinState").value.trim() })
+          city: document.getElementById("pinCity").value.trim(), state: document.getElementById("pinState").value.trim(),
+          deliveryFee: document.getElementById("pinFee").value.trim() === "" ? null : Number(document.getElementById("pinFee").value) })
       });
       showStatus("Pincode saved. Result opened in new tab.", "success");
       openResultTab("Add Pincode", data);
