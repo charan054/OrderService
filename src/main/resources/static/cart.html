@@ -401,6 +401,23 @@
         </div>
     </section>
 
+    <section class="grid">
+        <div class="card wide" id="card-couponreport">
+            <div class="card-header">
+                <div class="icon">&#127903;</div>
+                <div class="title-wrap">
+                    <h2>Coupon Performance</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>How each coupon did: orders, discount given and revenue from the orders that still stand, plus how many were cancelled or returned. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadCouponReport()">Refresh</button>
+            </div>
+            <div id="couponReportWrap"></div>
+        </div>
+    </section>
+
     <section class="products-section">
         <div class="section-header">
             <div>
@@ -2090,6 +2107,24 @@
           <tr><td>#${f.orderId}</td><td>${f.customerPhno}</td><td>${stars(f.rating)}</td><td>${f.deliveryRating ? stars(f.deliveryRating) : "-"}</td>
           <td style="white-space:normal;">${escapeHtml(f.comment || "")}</td><td>${new Date(f.createdAt).toLocaleDateString()}</td></tr>`).join("")}</tbody></table>`;
       showStatus(`${s.totalFeedback} feedback entr${s.totalFeedback === 1 ? "y" : "ies"}.`, "success");
+    }
+
+    // ---------- coupon performance ----------
+    async function loadCouponReport() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const report = await apiCall("http://localhost:8083/coupons/report", { headers: { "X-Service-Key": serviceKey } });
+      if (!report || !Array.isArray(report.rows)) return;
+      const money = n => "&#8377;" + Number(n).toFixed(2);
+      document.getElementById("couponReportWrap").innerHTML = report.rows.length
+        ? `<p>Discount given: <strong>${money(report.totalDiscountGiven)}</strong> &middot; Net revenue from coupon orders: <strong>${money(report.totalNetRevenue)}</strong></p>`
+          + `<table class="orders-table"><thead><tr><th>Code</th><th>Off</th><th>Status</th><th>Orders</th><th>Cancelled / returned</th><th>Discount given</th><th>Net revenue</th><th>Avg order</th><th>Used</th></tr></thead><tbody>${report.rows.map(r => `
+            <tr><td>${escapeHtml(r.code)}${r.unlisted ? " (single-use)" : ""}</td><td>${r.discountPercent == null ? "?" : r.discountPercent + "%"}</td>
+            <td>${!r.known ? "deleted" : !r.active ? "inactive" : r.expired ? "expired" : "active"}</td>
+            <td>${r.standingOrders}</td><td>${r.cancelledOrReturned}</td><td>${money(r.discountGiven)}</td><td>${money(r.netRevenue)}</td>
+            <td>${r.averageOrderValue == null ? "-" : money(r.averageOrderValue)}</td><td>${r.redemptionCount}${r.maxRedemptions != null ? " / " + r.maxRedemptions : ""}</td></tr>`).join("")}</tbody></table>`
+        : `<p>No coupons yet.</p>`;
+      showStatus(`${report.rows.length} coupon(s).`, "success");
     }
 
     // ---------- refunds to settle ----------
