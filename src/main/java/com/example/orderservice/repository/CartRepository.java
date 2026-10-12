@@ -15,6 +15,7 @@ public interface CartRepository extends JpaRepository<Cart, Long> {
 
     // Account deletion: orders that are still moving, or a delivered cash order whose payment was never recorded.
     long countByCustomerPhno(long phno);
+    long countByDeliverySlotAndStatusIn(String deliverySlot, java.util.Collection<com.example.orderservice.entity.OrderStatus> statuses);
     long countByCustomerPhnoAndStatusIn(long phno, java.util.Collection<com.example.orderservice.entity.OrderStatus> statuses);
     long countByCustomerPhnoAndStatusAndPaymentMethodAndPaidFalse(long phno, com.example.orderservice.entity.OrderStatus status,
                                                                   com.example.orderservice.entity.PaymentMethod method);

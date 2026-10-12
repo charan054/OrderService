@@ -51,6 +51,7 @@ public class AccountErasure {
 
         int wishlist = run("delete from Wishlist w where w.customerPhno = :p", phno);
         run("delete from WishlistShare s where s.customerPhno = :p", phno);
+        run("delete from ReorderReminder r where r.customerPhno = :p", phno);
         int alerts = run("delete from StockWaitlist w where w.customerPhno = :p", phno)
                 + run("delete from SearchWatch w where w.customerPhno = :p", phno);
         SavedCart savedCart = em.find(SavedCart.class, phno);

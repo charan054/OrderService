@@ -25,6 +25,8 @@ import com.example.orderservice.dto.ModerationReview;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.entity.Cart;
+import com.example.orderservice.dto.ReorderReminderResult;
+import com.example.orderservice.service.ReorderReminderService;
 import com.example.orderservice.dto.SlowMover;
 import com.example.orderservice.dto.MarkdownResult;
 import com.example.orderservice.service.SlowMoverService;
@@ -59,6 +61,9 @@ import java.util.List;
 @RestController
 @RequestMapping("/cart")
 public class OrderController {
+    @Autowired
+    private ReorderReminderService reorderReminderService;
+
     @Autowired
     private SlowMoverService slowMoverService;
 
@@ -470,6 +475,11 @@ public class OrderController {
     @PostMapping("/alerts/run")
     public StockAlertRunResult runStockAlerts(){
         return stockAlertService.run();
+    }
+    // Admin-only (service key by default): run the "time to reorder?" email job now. Each repeat purchase is nudged once.
+    @PostMapping("/reorder-reminders/run")
+    public ReorderReminderResult runReorderReminders(){
+        return reorderReminderService.run();
     }
     // Admin-only (service key by default): products with stock that have not sold in the last `days` days (default 30).
     @GetMapping("/analytics/slow-movers")
