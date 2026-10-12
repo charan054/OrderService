@@ -872,6 +872,8 @@
     let wishlistProductIds = new Set();
     let wishlistItems = []; // the raw wishlist entries (productId, priceWhenAdded)
     let waitlistProductIds = new Set();
+    // productId -> the moment (ms) a unit held for this customer after a restock email is released again.
+    let waitlistHolds = new Map();
     let priceDropsByProductId = new Map();
     let activeTab = "all";
     const PRODUCTS_PER_PAGE = 12;
@@ -1390,8 +1392,32 @@
       const response = await authFetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`);
       const waitlist = response.ok ? await response.json() : [];
       waitlistProductIds = new Set(waitlist.map(item => item.productId));
+      waitlistHolds = new Map(waitlist.filter(item => item.heldUntil).map(item => [item.productId, Date.parse(item.heldUntil)]));
       renderProducts();
     }
+
+    // "One is held for you - 12:34 left" on the product card while a restock hold is running; ticks every second and
+    // drops itself (and refreshes the waitlist) when the time is up.
+    function holdText(until) {
+      const left = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+      return `One is held for you - ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} left`;
+    }
+
+    function holdBadgeHtml(productId) {
+      const until = waitlistHolds.get(productId);
+      if (!until || until <= Date.now()) return "";
+      return `<div class="price-drop-badge hold-badge" data-until="${until}">${holdText(until)}</div>`;
+    }
+
+    setInterval(() => {
+      let expired = false;
+      document.querySelectorAll(".hold-badge").forEach(badge => {
+        const until = Number(badge.dataset.until);
+        if (until <= Date.now()) { badge.remove(); expired = true; }
+        else badge.textContent = holdText(until);
+      });
+      if (expired && customerPhno) loadWaitlist();
+    }, 1000);
 
     async function toggleWaitlist(productId) {
       const isWaitlisted = waitlistProductIds.has(productId);
@@ -2733,6 +2759,7 @@
             <label class="compare-check"><input type="checkbox" ${compareIds.has(p.productId) ? "checked" : ""}
                    onchange="toggleCompare(${p.productId}, this)" /> Compare</label>
             ${priceDrop ? `<div class="price-drop-badge">Price dropped ₹${priceDrop.priceDrop.toFixed(2)}</div>` : ""}
+            ${holdBadgeHtml(p.productId)}
             <div class="price-row"><span class="price">₹${p.productPrice}</span></div>
             ${p.productStock <= 0
               ? `<button class="secondary" style="width:auto;" onclick="toggleWaitlist(${p.productId})">${isWaitlisted ? "Notified when back ✓" : "Notify me"}</button>`
