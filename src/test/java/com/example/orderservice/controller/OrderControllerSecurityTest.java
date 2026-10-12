@@ -829,6 +829,12 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void reorderSuggestionsAreServiceKeyOnly() throws Exception {
+        mockMvc.perform(get("/cart/analytics/reorder-suggestions")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/analytics/reorder-suggestions").with(customer())).andExpect(status().isForbidden());
+    }
+
+    @Test
     void slotAvailabilityIsPublic() throws Exception {
         mockMvc.perform(get("/pincodes/slots/availability")).andExpect(status().isOk());
     }

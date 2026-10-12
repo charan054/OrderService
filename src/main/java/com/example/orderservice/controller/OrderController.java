@@ -28,6 +28,8 @@ import com.example.orderservice.entity.Cart;
 import com.example.orderservice.dto.ReorderReminderResult;
 import com.example.orderservice.service.ReorderReminderService;
 import com.example.orderservice.dto.SlowMover;
+import com.example.orderservice.dto.ReorderSuggestion;
+import com.example.orderservice.service.ReorderSuggestionService;
 import com.example.orderservice.dto.MarkdownResult;
 import com.example.orderservice.service.SlowMoverService;
 import com.example.orderservice.dto.InventoryValue;
@@ -61,6 +63,9 @@ import java.util.List;
 @RestController
 @RequestMapping("/cart")
 public class OrderController {
+    @Autowired
+    private ReorderSuggestionService reorderSuggestionService;
+
     @Autowired
     private ReorderReminderService reorderReminderService;
 
@@ -485,6 +490,13 @@ public class OrderController {
     @GetMapping("/analytics/slow-movers")
     public List<SlowMover> slowMovers(@RequestParam(required = false) Integer days){
         return slowMoverService.report(days);
+    }
+    // Admin-only (service key by default): products that would run out within `cover` days at the pace of the last
+    // `days` days of sales, with how many units to add (defaults 30 and 30).
+    @GetMapping("/analytics/reorder-suggestions")
+    public List<ReorderSuggestion> reorderSuggestions(@RequestParam(required = false) Integer days,
+                                                      @RequestParam(required = false) Integer cover){
+        return reorderSuggestionService.report(days, cover);
     }
     // Admin-only (service key by default): lower one product's price by `percent` (1-70) of its current price. Lands
     // in the price history and triggers the wishlist price-drop alerts.
