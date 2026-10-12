@@ -2048,6 +2048,7 @@
           <button class="secondary" style="width:auto;" onclick="emailInvoice(${order.orderId})">Email invoice</button>
           <button class="secondary" style="width:auto;" onclick="reorderMyOrder(${order.orderId})">Buy again</button>
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeDelivery(${order.orderId})">Change delivery</button>` : ""}
+          ${order.status === "PLACED" && order.paymentMethod === "CASH" && !order.discountAmount && !order.pointsRedeemed && !order.storeCreditUsed && !order.subscriptionId ? `<button class="secondary" style="width:auto;" onclick="addItemToMyOrder(${order.orderId})">Add item</button>` : ""}
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
           ${order.status === "DELIVERED" ? `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${order.orderId}, '${order.paymentMethod}')">Request return</button>` : ""}
           ${order.status === "DELIVERED" ? (ratedOrderIds.has(order.orderId)
@@ -2382,6 +2383,25 @@
       if (!params.length) return;
       const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/delivery?${params.join("&")}`, { method: "PUT" });
       if (!response.ok) { alert((await response.text()) || "Couldn't change the delivery details."); return; }
+      loadAccountView();
+    }
+
+    // Adds units of an in-stock product to a not-yet-shipped cash order. Picks the product by name from the loaded catalog.
+    async function addItemToMyOrder(orderId) {
+      const term = prompt("Which product do you want to add? Type part of its name.");
+      if (!term || !term.trim()) return;
+      const matches = products.filter(p => p.productStock > 0 && p.productName.toLowerCase().includes(term.trim().toLowerCase())).slice(0, 8);
+      if (!matches.length) { alert("No in-stock product matches that."); return; }
+      let pick = matches[0];
+      if (matches.length > 1) {
+        const n = Number(prompt("Which one?\n" + matches.map((p, i) => `${i + 1}. ${p.productName} - \u20b9${p.productPrice}`).join("\n")));
+        if (!Number.isInteger(n) || n < 1 || n > matches.length) return;
+        pick = matches[n - 1];
+      }
+      const qty = Number(prompt(`How many of ${pick.productName} (\u20b9${pick.productPrice} each, ${pick.productStock} in stock)?`, "1"));
+      if (!Number.isInteger(qty) || qty < 1) return;
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/items/add?productId=${pick.productId}&quantity=${qty}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't add that item."); return; }
       loadAccountView();
     }
 

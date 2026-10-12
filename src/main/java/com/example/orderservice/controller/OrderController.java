@@ -181,6 +181,13 @@ public class OrderController {
         requireOrderAccess(orderId);
         return orderService.returnOrder(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin, refundTo);
     }
+    // Adds units of a product to a not-yet-shipped cash order (see OrderService.addItem for the limits). Same access as
+    // cancel: the order's signed-in owner, or the service key. No money moves, so no payment credentials are needed.
+    @PostMapping("/{orderId}/items/add")
+    public Cart addItem(@PathVariable long orderId, @RequestParam int productId, @RequestParam int quantity){
+        requireOrderAccess(orderId);
+        return orderService.addItem(orderId, productId, quantity);
+    }
     // Per-item versions of cancel/return above: some units of one product in the order. Same access (the order's
     // signed-in owner, or the service key) and the same PhonePe credential rules for the partial refund.
     @PostMapping("/{orderId}/items/{productId}/cancel")

@@ -427,6 +427,85 @@ class OrderServiceTest {
         verify(orderRepository, never()).save(any());
     }
 
+    // ---------- add items to a placed order ----------
+
+    private Cart placedCashOrder(OrderItem... items) {
+        Cart c = cart(CUSTOMER, items);
+        c.setOrderId(42L);
+        c.setStatus(OrderStatus.PLACED);
+        c.setPaymentMethod(PaymentMethod.CASH);
+        double total = 0;
+        for (OrderItem i : items) {
+            i.setUnitPrice(500.0);
+            total += i.getProductQuantity() * 500.0;
+        }
+        c.setTotalPrice(total);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(c));
+        return c;
+    }
+
+    @Test
+    void addItemRaisesAnExistingLineAndTheTotalAndTakesTheStock() {
+        Cart order = placedCashOrder(item(1, 2));
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(orderRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        Cart result = service.addItem(42L, 1, 3);
+
+        assertEquals(5, result.getOrderItems().get(0).getProductQuantity());
+        assertEquals(2500.0, result.getTotalPrice());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, -3);
+    }
+
+    @Test
+    void addItemCreatesANewLineForANewProductAtTodaysPrice() {
+        placedCashOrder(item(1, 1));
+        when(productClient.getProductById(2)).thenReturn(product(2, 45.0, 10));
+        when(orderRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        Cart result = service.addItem(42L, 2, 2);
+
+        assertEquals(2, result.getOrderItems().size());
+        assertEquals(45.0, result.getOrderItems().get(1).getUnitPrice());
+        assertEquals(590.0, result.getTotalPrice());
+    }
+
+    @Test
+    void addItemRefusesOrdersThatShippedWereDiscountedOrArePaidOnline() {
+        Cart shipped = placedCashOrder(item(1, 1));
+        shipped.setStatus(OrderStatus.SHIPPED);
+        assertThrows(ProductException.class, () -> service.addItem(42L, 1, 1));
+
+        Cart discounted = placedCashOrder(item(1, 1));
+        discounted.setDiscountAmount(50);
+        assertThrows(ProductException.class, () -> service.addItem(42L, 1, 1));
+
+        Cart online = placedCashOrder(item(1, 1));
+        online.setPaymentMethod(PaymentMethod.PHONEPE);
+        assertThrows(ProductException.class, () -> service.addItem(42L, 1, 1));
+
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void addItemRefusesWhenThePriceOfAnExistingLineHasChanged() {
+        placedCashOrder(item(1, 1));
+        when(productClient.getProductById(1)).thenReturn(product(1, 550.0, 10));
+
+        assertThrows(ProductException.class, () -> service.addItem(42L, 1, 1));
+
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void addItemRefusesMoreThanTheStockThatIsNotHeldForOthers() {
+        placedCashOrder(item(1, 1));
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 2));
+        when(stockWaitlistRepository.countByProductIdAndHeldUntilAfterAndCustomerPhnoNot(eq(1), any(), eq(CUSTOMER))).thenReturn(1L);
+
+        assertThrows(ProductException.class, () -> service.addItem(42L, 1, 2));
+    }
+
     // ---------- CASH / storefront checkout ----------
 
     // A CASH order never touches PhonepayService at all - no makePayment, no login, and the saved order has no
