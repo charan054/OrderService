@@ -1187,6 +1187,24 @@
             <div id="slowMoversWrap" class="orders-table-wrap"></div>
         </div>
         <div class="card wide">
+            <div class="card-header">
+                <div class="icon">&#128722;</div>
+                <div class="title-wrap">
+                    <h2>Reorder Suggestions</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Products that would run out within the cover period at the pace of recent sales, with how many units to add so they last that long. Based on past sales only (cancelled and returned units do not count) - not a forecast. Requires the Service Key above.</p>
+            <div class="form-row">
+                <input type="number" id="reorderDays" value="30" min="1" max="365" aria-label="Days of sales to look at" />
+                <input type="number" id="reorderCover" value="30" min="1" max="365" aria-label="Days of stock to cover" />
+            </div>
+            <div class="orders-actions">
+                <button onclick="loadReorderSuggestions()">Load Suggestions</button>
+            </div>
+            <div id="reorderSuggestionsWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
             <div class="card-header" id="card-moderation">
                 <div class="icon">🛡️</div>
                 <div class="title-wrap">
@@ -2260,12 +2278,39 @@
       const rows = await apiCall(`${BASE_URL}/analytics/slow-movers?days=${days}`, { headers: { "X-Service-Key": serviceKey } });
       if (!Array.isArray(rows)) return;
       document.getElementById("slowMoversWrap").innerHTML = rows.length
-        ? `<table class="orders-table"><thead><tr><th>Product</th><th>Category</th><th>In stock</th><th>Value tied up</th><th>Last sold</th></tr></thead><tbody>${rows.map(r => `
+        ? `<table class="orders-table"><thead><tr><th>Product</th><th>Category</th><th>In stock</th><th>Value tied up</th><th>Last sold</th><th>Action</th></tr></thead><tbody>${rows.map(r => `
             <tr><td>${escapeHtml(r.productName)} (#${r.productId})</td><td>${escapeHtml(r.productCategory || "")}</td><td>${r.productStock}</td>
               <td>₹${r.stockValue.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-              <td>${r.lastSoldAt ? `${r.daysSinceLastSale} day(s) ago` : "never"}</td></tr>`).join("")}</tbody></table>`
+              <td>${r.lastSoldAt ? `${r.daysSinceLastSale} day(s) ago` : "never"}</td>
+              <td><button onclick="markDownSlowMover(${r.productId})">Mark down...</button></td></tr>`).join("")}</tbody></table>`
         : `<p>Nothing is stuck - every stocked product sold within the last ${days} day(s).</p>`;
       showStatus(`${rows.length} slow mover(s) loaded.`, "success");
+    }
+
+    async function loadReorderSuggestions() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const days = parseInt(document.getElementById("reorderDays").value, 10) || 30;
+      const cover = parseInt(document.getElementById("reorderCover").value, 10) || 30;
+      const rows = await apiCall(`${BASE_URL}/analytics/reorder-suggestions?days=${days}&cover=${cover}`, { headers: { "X-Service-Key": serviceKey } });
+      if (!Array.isArray(rows)) return;
+      document.getElementById("reorderSuggestionsWrap").innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>Product</th><th>In stock</th><th>Sold (last ${days}d)</th><th>Per day</th><th>Days left</th><th>Buy about</th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>${escapeHtml(r.productName)} (#${r.productId})</td><td>${r.productStock}</td><td>${r.unitsSold}</td>
+              <td>${r.dailyRate}</td><td>${r.daysOfStock}</td><td><strong>${r.suggestedQuantity}</strong></td></tr>`).join("")}</tbody></table>`
+        : `<p>Nothing is due - everything that sold lately has at least ${cover} day(s) of stock.</p>`;
+      showStatus(`${rows.length} product(s) to reorder.`, "success");
+    }
+
+    async function markDownSlowMover(productId) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const answer = prompt("Mark this product down by what percent of its current price? (1-70)\nCustomers who wishlisted it get a price-drop alert.", "10");
+      if (answer === null) return;
+      const percent = parseInt(answer, 10);
+      if (!Number.isInteger(percent) || percent < 1 || percent > 70) { showStatus("Enter a whole percent from 1 to 70.", "error"); return; }
+      const r = await apiCall(`${BASE_URL}/analytics/slow-movers/markdown?productId=${productId}&percent=${percent}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      if (r) showStatus(`${r.productName}: \u20b9${r.oldPrice.toFixed(2)} \u2192 \u20b9${r.newPrice.toFixed(2)} (${r.percent}% off).`, "success");
     }
 
     // ---------- review moderation ----------

@@ -25,7 +25,12 @@ import com.example.orderservice.dto.ModerationReview;
 import com.example.orderservice.dto.SalesAnalytics;
 import com.example.orderservice.dto.StorefrontReview;
 import com.example.orderservice.entity.Cart;
+import com.example.orderservice.dto.ReorderReminderResult;
+import com.example.orderservice.service.ReorderReminderService;
 import com.example.orderservice.dto.SlowMover;
+import com.example.orderservice.dto.ReorderSuggestion;
+import com.example.orderservice.service.ReorderSuggestionService;
+import com.example.orderservice.dto.MarkdownResult;
 import com.example.orderservice.service.SlowMoverService;
 import com.example.orderservice.dto.InventoryValue;
 import com.example.orderservice.service.InventoryValueService;
@@ -58,6 +63,12 @@ import java.util.List;
 @RestController
 @RequestMapping("/cart")
 public class OrderController {
+    @Autowired
+    private ReorderSuggestionService reorderSuggestionService;
+
+    @Autowired
+    private ReorderReminderService reorderReminderService;
+
     @Autowired
     private SlowMoverService slowMoverService;
 
@@ -470,10 +481,28 @@ public class OrderController {
     public StockAlertRunResult runStockAlerts(){
         return stockAlertService.run();
     }
+    // Admin-only (service key by default): run the "time to reorder?" email job now. Each repeat purchase is nudged once.
+    @PostMapping("/reorder-reminders/run")
+    public ReorderReminderResult runReorderReminders(){
+        return reorderReminderService.run();
+    }
     // Admin-only (service key by default): products with stock that have not sold in the last `days` days (default 30).
     @GetMapping("/analytics/slow-movers")
     public List<SlowMover> slowMovers(@RequestParam(required = false) Integer days){
         return slowMoverService.report(days);
+    }
+    // Admin-only (service key by default): products that would run out within `cover` days at the pace of the last
+    // `days` days of sales, with how many units to add (defaults 30 and 30).
+    @GetMapping("/analytics/reorder-suggestions")
+    public List<ReorderSuggestion> reorderSuggestions(@RequestParam(required = false) Integer days,
+                                                      @RequestParam(required = false) Integer cover){
+        return reorderSuggestionService.report(days, cover);
+    }
+    // Admin-only (service key by default): lower one product's price by `percent` (1-70) of its current price. Lands
+    // in the price history and triggers the wishlist price-drop alerts.
+    @PostMapping("/analytics/slow-movers/markdown")
+    public MarkdownResult markdownSlowMover(@RequestParam int productId, @RequestParam int percent){
+        return slowMoverService.markdown(productId, percent);
     }
     // Admin-only (service key by default): what the current stock is worth at selling price, per category.
     @GetMapping("/analytics/inventory-value")
