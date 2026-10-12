@@ -1892,6 +1892,21 @@ class OrderServiceTest {
         verify(orderKafkaProducer).sendMessage(contains("Order marked paid"));
     }
 
+    @Test
+    void markPaidEmailsTheCustomerAndSurvivesANotifierFailure() {
+        Cart cart = placedOrder(42L, 0, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setPaid(false);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        when(customerNotifier.notifyOrderUpdate(any(), any(), any())).thenThrow(new IllegalStateException("db down"));
+
+        Cart result = service.markPaid(42L);
+
+        assertTrue(result.isPaid());
+        verify(customerNotifier).notifyOrderUpdate(eq(cart), contains("Payment received"), any());
+    }
+
     // ---------- getInvoice() ----------
 
     @Test
@@ -3222,6 +3237,7 @@ class OrderServiceTest {
         Cart result = service.changeOrderAddress(42L, 8L);
 
         assertEquals(8L, result.getShippingAddressId());
+        verify(customerNotifier).notifyOrderUpdate(eq(order), contains("address updated"), any());
     }
 
     @Test
