@@ -144,6 +144,11 @@ public class OrderService {
     // GST (see GstCalculator): the rate for products with none of their own, and the seller details printed on invoices.
     @Value("${gst.default-rate:18}")
     private double defaultGstRate;
+    // Delivery fee (see deliveryFeeFor): charged when the goods, after any coupon, come to less than freeAbove. 0 = no fee.
+    @Value("${shipping.fee:0}")
+    private double shippingFee;
+    @Value("${shipping.free-above:0}")
+    private double shippingFreeAbove;
     @Value("${gst.store-name:Charan Mart}")
     private String storeName;
     @Value("${gst.store-gstin:}")
@@ -253,10 +258,13 @@ public class OrderService {
         }
         // Same fail-fast reasoning, applied on top of the coupon discount: redeeming more points than the
         // customer's balance actually holds, or more than what's left to pay, must fail before any payment.
+        double deliveryFee = deliveryFeeFor(price - discount);
+        cart.setDeliveryFee(deliveryFee);
         double pointsDiscount = resolvePointsRedemption(cart, price - discount);
         // Store credit comes off last, after coupon and points - same fail-fast validation (see resolveStoreCredit).
         double creditUsed = resolveStoreCredit(cart, price - discount - pointsDiscount);
-        double finalPrice = price - discount - pointsDiscount - creditUsed;
+        // Points and store credit only ever pay for the goods; the delivery fee is paid with the order's own method.
+        double finalPrice = price - discount - pointsDiscount - creditUsed + deliveryFee;
         // Same fail-fast reasoning as stock/coupon above: an address that doesn't exist, or belongs to someone
         // else's phone number, must reject the order before any payment is attempted.
         validateShippingAddress(cart);
@@ -427,6 +435,20 @@ public class OrderService {
         cart.setPaymentDeadline(null);
         cart.setDiscountAmount(0);
         cart.setSubscriptionId(null);
+        cart.setDeliveryFee(0);
+    }
+
+    /** The fee for goods worth `goodsValue` (after any coupon): none when fees are off or the order is big enough. */
+    double deliveryFeeFor(double goodsValue) {
+        if (shippingFee <= 0 || (shippingFreeAbove > 0 && goodsValue >= shippingFreeAbove)) {
+            return 0;
+        }
+        return roundMoney(shippingFee);
+    }
+
+    /** What the storefront shows before checkout: the flat fee and the goods value from which it is waived. */
+    public java.util.Map<String, Double> getDeliveryFeeTerms() {
+        return java.util.Map.of("fee", Math.max(0, shippingFee), "freeAbove", Math.max(0, shippingFreeAbove));
     }
 
     private static final long UPI_COLLECT_TIMEOUT_MINUTES = 4;
@@ -1941,7 +1963,8 @@ public class OrderService {
         // Place of supply is where the goods go; without a saved address it is taken to be the store's own state.
         String placeOfSupply = shipTo != null && shipTo.getState() != null && !shipTo.getState().isBlank()
                 ? shipTo.getState().trim() : storeState;
-        Invoice.Tax tax = GstCalculator.compute(taxItems, order.getDiscountAmount(),
+        // The delivery fee is spread over the lines like a negative discount (see Cart.deliveryFee).
+        Invoice.Tax tax = GstCalculator.compute(taxItems, order.getDiscountAmount() - order.getDeliveryFee(),
                 GstCalculator.isInterState(storeState, placeOfSupply), storeName, storeGstin, storeState, placeOfSupply);
         return new Invoice(orderId, placedAt, order.getCustomerName(), order.getCustomerPhno(), lines,
                 order.getCouponCode(), order.getDiscountAmount(),
@@ -1950,7 +1973,7 @@ public class OrderService {
                 order.getRefundedAmount(),
                 String.valueOf(order.getPaymentMethod()), order.isPaid(), String.valueOf(order.getStatus()), address,
                 order.getDeliveryNote(), order.getDeliverySlot(), order.getInvoiceNumber(), order.getInvoiceDate(), tax,
-                creditNoteService.forOrder(orderId));
+                creditNoteService.forOrder(orderId), order.getDeliveryFee());
     }
 
     public List<TrackingEvent> getTracking(long orderId) {

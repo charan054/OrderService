@@ -12,7 +12,19 @@ public record Invoice(long orderId, Instant placedAt, String customerName, long 
                       List<Line> lines, String couponCode, double discountAmount, int pointsRedeemed,
                       double storeCreditUsed, double totalPrice, double refundedAmount, String paymentMethod, boolean paid, String status,
                       String shippingAddress, String deliveryNote, String deliverySlot,
-                      String invoiceNumber, Instant invoiceDate, Tax tax, List<CreditNoteView> creditNotes) {
+                      String invoiceNumber, Instant invoiceDate, Tax tax, List<CreditNoteView> creditNotes,
+                      double deliveryFee) {
+    // Without a delivery fee (none charged, or not looked up).
+    public Invoice(long orderId, Instant placedAt, String customerName, long customerPhno,
+                   List<Line> lines, String couponCode, double discountAmount, int pointsRedeemed,
+                   double storeCreditUsed, double totalPrice, double refundedAmount, String paymentMethod, boolean paid, String status,
+                   String shippingAddress, String deliveryNote, String deliverySlot,
+                   String invoiceNumber, Instant invoiceDate, Tax tax, List<CreditNoteView> creditNotes) {
+        this(orderId, placedAt, customerName, customerPhno, lines, couponCode, discountAmount, pointsRedeemed,
+                storeCreditUsed, totalPrice, refundedAmount, paymentMethod, paid, status, shippingAddress,
+                deliveryNote, deliverySlot, invoiceNumber, invoiceDate, tax, creditNotes, 0);
+    }
+
     // Without credit notes (none issued, or not looked up).
     public Invoice(long orderId, Instant placedAt, String customerName, long customerPhno,
                    List<Line> lines, String couponCode, double discountAmount, int pointsRedeemed,
@@ -21,7 +33,7 @@ public record Invoice(long orderId, Instant placedAt, String customerName, long 
                    String invoiceNumber, Instant invoiceDate, Tax tax) {
         this(orderId, placedAt, customerName, customerPhno, lines, couponCode, discountAmount, pointsRedeemed,
                 storeCreditUsed, totalPrice, refundedAmount, paymentMethod, paid, status, shippingAddress,
-                deliveryNote, deliverySlot, invoiceNumber, invoiceDate, tax, List.of());
+                deliveryNote, deliverySlot, invoiceNumber, invoiceDate, tax, List.of(), 0);
     }
 
     // GST breakdown of what was actually supplied (see GstCalculator). Prices include GST, so this splits the tax out of

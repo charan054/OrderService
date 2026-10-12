@@ -316,6 +316,12 @@ public class OrderController {
     public List<Product> findAll(){
         return orderService.getProducts();
     }
+    // The flat delivery fee and the free-delivery threshold, for the storefront's cart panel (0 fee = no fee).
+    @GetMapping("/deliveryfee")
+    public java.util.Map<String, Double> deliveryFee() {
+        return orderService.getDeliveryFeeTerms();
+    }
+
     // Same public catalog-browsing trust level as /cart/display above - the storefront's search box/category
     // filter, proxied to ProductService's own public /product/search (see ProductClient.search).
     @GetMapping("/search")

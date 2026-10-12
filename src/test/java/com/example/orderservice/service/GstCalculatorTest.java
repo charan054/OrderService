@@ -123,4 +123,21 @@ class GstCalculatorTest {
         assertEquals(8.1, r.cgst());
         assertEquals(8.1, r.sgst());
     }
+
+    // A delivery fee is passed as a negative discount: gross 100, fee 10 = 10% surcharge, so the line is supplied at 110.
+    @Test
+    void aDeliveryFeeRaisesTheValueSuppliedAndIsTaxedAtTheGoodsRate() {
+        Invoice.Tax tax = GstCalculator.compute(List.of(item(1, 18, 100, 1, 1)), -10, false,
+                "Charan Mart", "", "", null);
+
+        assertEquals(110.0, tax.lines().get(0).total());
+        assertEquals(93.22, tax.taxableValue());
+        assertEquals(16.78, tax.totalTax(), 0.0001);
+    }
+
+    @Test
+    void aFeeLargerThanTheGoodsCannotBeTreatedAsMoreThanACompleteWaiver() {
+        assertEquals(-1.0, GstCalculator.discountRatio(List.of(item(1, 18, 100, 1, 1)), -100));
+        assertEquals(1.0, GstCalculator.discountRatio(List.of(item(1, 18, 100, 1, 1)), 500));
+    }
 }

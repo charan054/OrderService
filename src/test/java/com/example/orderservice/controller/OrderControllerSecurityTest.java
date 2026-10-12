@@ -116,6 +116,11 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void deliveryFeeTermsArePublic() throws Exception {
+        mockMvc.perform(get("/cart/deliveryfee")).andExpect(status().isOk());
+    }
+
+    @Test
     void searchIsPublic() throws Exception {
         when(productClient.search(any(), any(), anyInt(), anyInt())).thenReturn(new ProductSearchResult(List.of()));
         mockMvc.perform(get("/cart/search").param("name", "mug")).andExpect(status().isOk());
