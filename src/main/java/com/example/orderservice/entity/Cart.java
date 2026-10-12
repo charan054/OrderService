@@ -18,6 +18,7 @@ import java.util.List;
         "discountAmount",
         "pointsRedeemed",
         "totalPrice",
+        "deliveryFee",
         "shippingAddressId",
         "deliveryNote",
         "deliverySlot",
@@ -47,6 +48,9 @@ public class Cart {
     // Kept on the saved order as a record of how many points were applied, same role couponCode plays.
     private Integer pointsRedeemed;
     private double totalPrice;
+    // Delivery fee charged at checkout (0 = none), already inside totalPrice. For tax it is spread over the items like a
+    // negative discount (a composite supply takes the goods' own GST rates), and refunds share it out with the items.
+    private double deliveryFee;
     // How much of totalPrice no longer stands: refunded to the buyer for a PhonePe order, or no longer due for a
     // cash one. Grows with each per-item cancel/return and reaches totalPrice on a full cancel/return.
     private double refundedAmount;

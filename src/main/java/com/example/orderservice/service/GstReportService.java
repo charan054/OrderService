@@ -112,7 +112,7 @@ public class GstReportService {
                 items.add(new GstCalculator.Item(item.getProductId(), "", null, rate, price,
                         item.getProductQuantity(), item.getProductQuantity()));
             }
-            double ratio = GstCalculator.discountRatio(items, order.getDiscountAmount());
+            double ratio = GstCalculator.discountRatio(items, order.getDiscountAmount() - order.getDeliveryFee());
             YearMonth month = YearMonth.from(order.getInvoiceDate().atZone(zone));
             for (GstCalculator.Item item : items) {
                 if (item.originalQuantity() <= 0) {

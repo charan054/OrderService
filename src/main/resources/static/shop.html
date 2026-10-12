@@ -735,6 +735,7 @@
                 <div id="cartLines"><p style="color:var(--muted); font-size:14px;">Your cart is empty.</p></div>
                 <div id="laterBox"></div>
                 <div id="cartShare" class="hidden" style="margin-top:8px;"><button class="secondary" style="width:auto;" onclick="shareCart()">Share cart</button> <span id="cartShareMsg" style="font-size:12px; color:var(--muted);"></span></div>
+                <div class="total-row hidden" id="cartDeliveryRow"><span id="cartDeliveryLabel">Delivery</span><span id="cartDelivery">₹0</span></div>
                 <div class="total-row"><span>Total</span><span id="cartTotal">₹0</span></div>
 
                 <select id="shippingAddressId" onchange="checkAddressPincode()">
@@ -1377,6 +1378,7 @@
       document.getElementById("payerPhno").value = customerPhno;
       showAccountInfo();
       loadProducts();
+      loadDeliveryTerms();
       loadReturnPolicy();
       loadWishlist();
       loadWaitlist();
@@ -1569,6 +1571,14 @@
       const expires = account.pointsBalance > 0 && account.pointsExpireAt
         ? ` They expire on ${new Date(account.pointsExpireAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })} unless you use them.` : "";
       hint.textContent = `You have ${account.pointsBalance} loyalty points (1 point = ₹1).${expires}`;
+    }
+
+    let deliveryTerms = { fee: 0, freeAbove: 0 };
+    async function loadDeliveryTerms() {
+      try {
+        const response = await fetch(`${BASE_URL}/cart/deliveryfee`);
+        if (response.ok) { deliveryTerms = await response.json(); renderCart(); }
+      } catch (e) { /* no fee preview - the server still charges it */ }
     }
 
     async function loadProducts() {
@@ -3348,6 +3358,7 @@
       const rows = inv.lines.map(l => `<tr><td>${escapeHtml(l.productName)}</td><td class="r">${l.quantity}</td><td class="r">${money(l.unitPrice)}</td><td class="r">${money(l.lineTotal)}</td></tr>`).join("");
       const adj = [];
       if (inv.discountAmount > 0) adj.push(`<tr><td colspan="3" class="r">Coupon${inv.couponCode ? " (" + escapeHtml(inv.couponCode) + ")" : ""}</td><td class="r">-${money(inv.discountAmount)}</td></tr>`);
+      if (inv.deliveryFee > 0) adj.push(`<tr><td colspan="3" class="r">Delivery fee</td><td class="r">+${money(inv.deliveryFee)}</td></tr>`);
       if (inv.pointsRedeemed > 0) adj.push(`<tr><td colspan="3" class="r">Loyalty points redeemed</td><td class="r">-${money(inv.pointsRedeemed)}</td></tr>`);
       if (inv.storeCreditUsed > 0) adj.push(`<tr><td colspan="3" class="r">Store credit used</td><td class="r">-${money(inv.storeCreditUsed)}</td></tr>`);
       // Cancelled/returned units since checkout - same wording as the order list ("taken off" for cash).
@@ -3585,8 +3596,15 @@
       }
       renderLater();
       document.getElementById("cartShare").classList.toggle("hidden", !cart.length);
-      const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-      document.getElementById("cartTotal").textContent = `₹${total.toFixed(2)}`;
+      const goods = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      // The server decides on the goods value after any coupon, so this preview can differ when a coupon is applied.
+      const fee = cart.length && deliveryTerms.fee > 0 && !(deliveryTerms.freeAbove > 0 && goods >= deliveryTerms.freeAbove) ? deliveryTerms.fee : 0;
+      const feeRow = document.getElementById("cartDeliveryRow");
+      feeRow.classList.toggle("hidden", !(cart.length && deliveryTerms.fee > 0));
+      document.getElementById("cartDelivery").textContent = fee > 0 ? `₹${fee.toFixed(2)}` : "Free";
+      document.getElementById("cartDeliveryLabel").textContent = fee > 0 && deliveryTerms.freeAbove > 0
+        ? `Delivery (free from ₹${deliveryTerms.freeAbove.toFixed(0)})` : "Delivery";
+      document.getElementById("cartTotal").textContent = `₹${(goods + fee).toFixed(2)}`;
       renderCouponSuggestions();
       saveCart();
     }
