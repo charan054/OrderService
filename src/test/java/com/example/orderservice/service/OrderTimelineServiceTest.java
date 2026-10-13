@@ -138,4 +138,18 @@ class OrderTimelineServiceTest {
                 steps.stream().map(TimelineEntry::title).toList());
         assertEquals("EXCHANGE", steps.get(0).kind());
     }
+
+    @Test
+    void theEmailsAnExchangeSentAreNotRepeatedNextToItsOwnEntries() {
+        order.setStatus(OrderStatus.DELIVERED);
+        when(notifications.findByOrderIdOrderBySentAtAsc(42L)).thenReturn(List.of(
+                note(OrderStatus.DELIVERED, "Exchange requested for order #42", 10),
+                note(OrderStatus.DELIVERED, "Your exchange for order #42 is approved", 20),
+                note(OrderStatus.DELIVERED, "Your exchange for order #42 is complete", 30),
+                note(OrderStatus.DELIVERED, "Delivery details updated for order #42", 40)));
+
+        List<TimelineEntry> steps = service.timeline(42L, PHNO);
+
+        assertEquals(List.of("Delivery details updated for order #42"), steps.stream().map(TimelineEntry::title).toList());
+    }
 }
