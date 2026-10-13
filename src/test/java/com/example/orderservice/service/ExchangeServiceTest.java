@@ -270,4 +270,11 @@ class ExchangeServiceTest {
         verify(creditNotes, never()).issueSupplementary(any(), org.mockito.ArgumentMatchers.anyInt(),
                 org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyDouble(), any());
     }
+
+    @Test
+    void mineListsACustomersExchangesNewestFirst() {
+        ExchangeRequest r = new ExchangeRequest();
+        when(exchanges.findByCustomerPhnoOrderByIdDesc(9000000001L)).thenReturn(List.of(r));
+        assertEquals(List.of(r), service.mine(9000000001L));
+    }
 }

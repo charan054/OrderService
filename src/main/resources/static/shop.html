@@ -2145,6 +2145,8 @@
       const storeCredit = creditResponse.ok ? await creditResponse.json() : null;
       const prefsResponse = await authFetch(`${BASE_URL}/prefs/mine?phno=${encodeURIComponent(customerPhno)}`);
       const emailPrefs = prefsResponse.ok ? await prefsResponse.json() : null;
+      const exchangesResponse = await authFetch(`${BASE_URL}/cart/exchanges/mine?phno=${encodeURIComponent(customerPhno)}`);
+      myExchanges = exchangesResponse.ok ? await exchangesResponse.json() : [];
       const recommendationsResponse = await authFetch(`${BASE_URL}/cart/recommendations?phno=${encodeURIComponent(customerPhno)}&limit=8`);
       const recommendations = recommendationsResponse.ok ? await recommendationsResponse.json() : [];
 
@@ -2187,6 +2189,7 @@
           ${order.status !== "PENDING_PAYMENT" ? `<button class="secondary" style="width:auto;" onclick="reportProblem(${order.orderId})">Report a problem</button>` : ""}
         </div>
         ${orderItemsHtml(order)}
+        ${exchangeLinesHtml(order)}
       `).join("") : `<p style="color:var(--muted);">${orderFilter.status || orderFilter.from || orderFilter.to ? "No orders match these filters." : "No orders yet."}</p>`;
 
       const addressesHtml = addresses.map(a => `
@@ -2247,6 +2250,33 @@
           <button id="addressCancel" class="secondary hidden" style="width:auto;" onclick="cancelAddressEdit()">Cancel</button>
         </div>
       `;
+    }
+
+    let myExchanges = [];
+    const EXCHANGE_STATUS_TEXT = {
+      REQUESTED: "Waiting for approval", APPROVED: "Approved - replacement on its way",
+      RECEIVED: "Complete", REJECTED: "Not approved", CANCELLED: "Withdrawn"
+    };
+
+    // This order's exchange requests, newest first, with a Withdraw button while one is still waiting for approval.
+    function exchangeLinesHtml(order) {
+      const mine = myExchanges.filter(x => x.orderId === order.orderId);
+      if (!mine.length) return "";
+      const name = id => { const p = products.find(p => p.productId === id); return p ? p.productName : `product #${id}`; };
+      return `<div class="order-items">${mine.map(x => {
+        const diff = x.priceDifference > 0 ? `, Rs. ${Number(x.priceDifference).toFixed(2)} from store credit`
+          : x.priceDifference < 0 ? `, Rs. ${Number(-x.priceDifference).toFixed(2)} back as store credit` : "";
+        return `<div class="order-item-line"><span>Exchange: ${x.quantity} &times; ${escapeHtml(name(x.productId))} &rarr; ${escapeHtml(name(x.replacementProductId))}
+          <span class="meta">(${escapeHtml(EXCHANGE_STATUS_TEXT[x.status] || x.status)}${diff})</span></span>
+          ${x.status === "REQUESTED" ? `<button class="link-button" onclick="withdrawMyExchange(${x.id})">Withdraw</button>` : ""}</div>`;
+      }).join("")}</div>`;
+    }
+
+    async function withdrawMyExchange(id) {
+      if (!confirm("Withdraw this exchange request?")) return;
+      const response = await authFetch(`${BASE_URL}/cart/exchanges/${encodeURIComponent(id)}/withdraw`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Could not withdraw the exchange."); return; }
+      loadAccountView();
     }
 
     // One line per item, with cancel (PLACED) / return (DELIVERED) buttons for single items. Orders placed before

@@ -10,6 +10,7 @@ import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.entity.DeliveryAttempt;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.DeliveryAttemptRepository;
+import com.example.orderservice.repository.ExchangeRequestRepository;
 import com.example.orderservice.repository.NotificationLogRepository;
 import com.example.orderservice.repository.StoreCreditTransactionRepository;
 import com.example.orderservice.repository.TrackingEventRepository;
@@ -33,10 +34,12 @@ public class OrderTimelineService {
     private final NotificationLogRepository notifications;
     private final StoreCreditTransactionRepository credits;
     private final DeliveryAttemptRepository deliveryAttempts;
+    private final ExchangeRequestRepository exchanges;
 
     public OrderTimelineService(CartRepository orders, TrackingEventRepository tracking,
                                 NotificationLogRepository notifications, StoreCreditTransactionRepository credits,
-                                DeliveryAttemptRepository deliveryAttempts) {
+                                DeliveryAttemptRepository deliveryAttempts, ExchangeRequestRepository exchanges) {
+        this.exchanges = exchanges;
         this.orders = orders;
         this.tracking = tracking;
         this.notifications = notifications;
@@ -61,6 +64,22 @@ public class OrderTimelineService {
             if (a.getCreatedAt() != null) {
                 out.add(new TimelineEntry(a.getCreatedAt(), "DELIVERY", "Delivery attempt " + a.getAttemptNo() + " failed: "
                         + (a.getReason() == null ? "" : a.getReason().toLowerCase(Locale.ROOT).replace('_', ' '))));
+            }
+        }
+        for (com.example.orderservice.entity.ExchangeRequest x : exchanges.findByOrderIdOrderByIdAsc(orderId)) {
+            String what = x.getQuantity() + " x product #" + x.getProductId() + " for product #" + x.getReplacementProductId();
+            if (x.getCreatedAt() != null) {
+                out.add(new TimelineEntry(x.getCreatedAt(), "EXCHANGE", "Exchange requested: " + what));
+            }
+            String step = switch (x.getStatus() == null ? "" : x.getStatus()) {
+                case "APPROVED" -> "Exchange approved - replacement on its way";
+                case "RECEIVED" -> "Exchange complete - original item received";
+                case "REJECTED" -> "Exchange not approved";
+                case "CANCELLED" -> "Exchange withdrawn";
+                default -> null;
+            };
+            if (step != null && x.getUpdatedAt() != null) {
+                out.add(new TimelineEntry(x.getUpdatedAt(), "EXCHANGE", step));
             }
         }
         for (StoreCreditTransaction t : credits.findByOrderIdAndTypeOrderByIdAsc(orderId, StoreCreditTransaction.Type.REFUND)) {

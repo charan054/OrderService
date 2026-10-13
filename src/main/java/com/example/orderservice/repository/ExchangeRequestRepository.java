@@ -11,6 +11,8 @@ import java.util.List;
 public interface ExchangeRequestRepository extends JpaRepository<ExchangeRequest, Long> {
     List<ExchangeRequest> findByOrderIdOrderByIdAsc(long orderId);
 
+    List<ExchangeRequest> findByCustomerPhnoOrderByIdDesc(long customerPhno);
+
     List<ExchangeRequest> findByOrderIdAndStatusIn(long orderId, Collection<String> statuses);
 
     List<ExchangeRequest> findByStatusInOrderByIdAsc(Collection<String> statuses);
