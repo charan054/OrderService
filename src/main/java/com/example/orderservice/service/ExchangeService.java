@@ -207,6 +207,11 @@ public class ExchangeService {
         return exchanges.findByOrderIdOrderByIdAsc(orderId);
     }
 
+    /** Every exchange a customer has asked for, newest first. */
+    public List<ExchangeRequest> mine(long phno) {
+        return exchanges.findByCustomerPhnoOrderByIdDesc(phno);
+    }
+
     public List<ExchangeRequest> open() {
         return exchanges.findByStatusInOrderByIdAsc(OPEN);
     }

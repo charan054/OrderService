@@ -658,6 +658,13 @@ public class OrderController {
         return exchangeService.cancel(id);
     }
 
+    // The signed-in customer's own exchanges across all their orders (or staff, for any phone number).
+    @GetMapping("/exchanges/mine")
+    public List<com.example.orderservice.entity.ExchangeRequest> myExchanges(@RequestParam long phno) {
+        CustomerAccess.requireSelfOrService(phno);
+        return exchangeService.mine(phno);
+    }
+
     @GetMapping("/exchanges/open")
     public List<com.example.orderservice.entity.ExchangeRequest> openExchanges() {
         return exchangeService.open();

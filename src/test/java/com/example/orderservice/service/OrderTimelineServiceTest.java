@@ -32,6 +32,7 @@ class OrderTimelineServiceTest {
     private NotificationLogRepository notifications;
     private StoreCreditTransactionRepository credits;
     private com.example.orderservice.repository.DeliveryAttemptRepository deliveryAttempts;
+    private com.example.orderservice.repository.ExchangeRequestRepository exchangeRepo;
     private OrderTimelineService service;
     private Cart order;
 
@@ -42,7 +43,8 @@ class OrderTimelineServiceTest {
         notifications = mock(NotificationLogRepository.class);
         credits = mock(StoreCreditTransactionRepository.class);
         deliveryAttempts = mock(com.example.orderservice.repository.DeliveryAttemptRepository.class);
-        service = new OrderTimelineService(orders, tracking, notifications, credits, deliveryAttempts);
+        exchangeRepo = mock(com.example.orderservice.repository.ExchangeRequestRepository.class);
+        service = new OrderTimelineService(orders, tracking, notifications, credits, deliveryAttempts, exchangeRepo);
         order = new Cart();
         order.setOrderId(42L);
         order.setCustomerPhno(PHNO);
@@ -116,5 +118,24 @@ class OrderTimelineServiceTest {
         assertEquals(List.of("Shipped via Delhivery", "Delivery attempt 1 failed: customer unavailable"),
                 steps.stream().map(TimelineEntry::title).toList());
         assertEquals("DELIVERY", steps.get(1).kind());
+    }
+
+    @Test
+    void anExchangeShowsWhenItWasRequestedAndWhereItStands() {
+        order.setStatus(OrderStatus.DELIVERED);
+        com.example.orderservice.entity.ExchangeRequest x = new com.example.orderservice.entity.ExchangeRequest();
+        x.setProductId(1);
+        x.setQuantity(2);
+        x.setReplacementProductId(5);
+        x.setStatus("APPROVED");
+        x.setCreatedAt(T0.plusSeconds(10 * 60));
+        x.setUpdatedAt(T0.plusSeconds(20 * 60));
+        when(exchangeRepo.findByOrderIdOrderByIdAsc(42L)).thenReturn(List.of(x));
+
+        List<TimelineEntry> steps = service.timeline(42L, PHNO);
+
+        assertEquals(List.of("Exchange requested: 2 x product #1 for product #5", "Exchange approved - replacement on its way"),
+                steps.stream().map(TimelineEntry::title).toList());
+        assertEquals("EXCHANGE", steps.get(0).kind());
     }
 }
