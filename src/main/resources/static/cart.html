@@ -496,7 +496,9 @@
                     <option value="PLACED">Placed orders</option>
                     <option value="SHIPPED">Shipped orders (reprint)</option>
                 </select>
+                <label style="font-size:13px;"><input type="checkbox" id="psIncludePacked"> include already packed</label>
                 <button onclick="printPackingSlips()">Open printable slips</button>
+                <button id="psMarkPacked" onclick="markSlipsPacked()" disabled>Mark these as packed</button>
             </div>
         </div>
     </section>
@@ -2334,6 +2336,18 @@
         : `<p>No exchanges waiting.</p>`;
     }
 
+    let lastSlipIds = [];
+
+    async function markSlipsPacked() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey || !lastSlipIds.length) return;
+      if (!confirm(`Mark ${lastSlipIds.length} order(s) as packed? They will leave the pick list.`)) return;
+      const params = new URLSearchParams();
+      lastSlipIds.forEach(id => params.append("orderIds", id));
+      const data = await apiCall(`http://localhost:8083/cart/packed?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      if (data) { showStatus(`${data.marked} order(s) marked as packed.`, "success"); lastSlipIds = []; document.getElementById("psMarkPacked").disabled = true; }
+    }
+
     async function printPackingSlips() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
@@ -2341,8 +2355,11 @@
       if (ids.some(x => !/^\d+$/.test(x))) { showStatus("Order IDs must be numbers separated by commas.", "error"); return; }
       const params = new URLSearchParams();
       if (ids.length) ids.forEach(id => params.append("orderIds", id)); else params.set("status", document.getElementById("psStatus").value);
+      if (document.getElementById("psIncludePacked").checked) params.set("includePacked", "true");
       const data = await apiCall(`http://localhost:8083/cart/packing-slips?${params}`, { headers: { "X-Service-Key": serviceKey } });
       if (!data || !Array.isArray(data.slips)) return;
+      lastSlipIds = data.slips.map(s => s.orderId);
+      document.getElementById("psMarkPacked").disabled = !lastSlipIds.length;
       if (!data.slips.length) { showStatus("No orders to pack.", "success"); return; }
       const e = escapeHtml;
       const pick = `<section class="slip"><h2>Pick list &mdash; ${data.slips.length} order(s)</h2><table><tr><th>Product</th><th>Units</th><th>Orders</th></tr>${data.pickList.map(l =>

@@ -40,7 +40,8 @@ class PackingSlipServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PackingSlipService(orders, addresses, productClient);
+        service = new PackingSlipService(orders, addresses, productClient,
+                java.time.Clock.fixed(java.time.Instant.parse("2026-10-13T10:00:00Z"), java.time.ZoneOffset.UTC));
         lenient().when(productClient.getProductById(1)).thenReturn(product(1, "Soap"));
         lenient().when(productClient.getProductById(2)).thenReturn(product(2, "Dal"));
     }
@@ -139,5 +140,35 @@ class PackingSlipServiceTest {
     void giftReceiptRefusesAnOrderThatIsNotAGift() {
         when(orders.findById(9L)).thenReturn(Optional.of(order(9, PaymentMethod.PHONEPE, item(1, 1, 0))));
         assertThrows(ProductException.class, () -> service.giftReceipt(9L));
+    }
+
+    @Test
+    void packedPlacedOrdersLeaveThePickListUnlessAskedFor() {
+        Cart packed = order(1, PaymentMethod.PHONEPE, item(1, 1, 0));
+        packed.setPackedAt(java.time.Instant.parse("2026-10-13T09:00:00Z"));
+        Cart open = order(2, PaymentMethod.PHONEPE, item(1, 1, 0));
+        when(orders.findByStatus(OrderStatus.PLACED)).thenReturn(new ArrayList<>(List.of(packed, open)));
+
+        assertEquals(List.of(2L), service.build(null, null).slips().stream().map(PackingSlips.Slip::orderId).toList());
+        assertEquals(2, service.build(null, null, true).slips().size());
+    }
+
+    @Test
+    void markPackedOnlyTouchesPlacedUnpackedOrdersAndUnpackPutsOneBack() {
+        Cart a = order(1, PaymentMethod.PHONEPE, item(1, 1, 0));
+        Cart shipped = order(2, PaymentMethod.PHONEPE, item(1, 1, 0));
+        shipped.setStatus(OrderStatus.SHIPPED);
+        Cart already = order(3, PaymentMethod.PHONEPE, item(1, 1, 0));
+        already.setPackedAt(java.time.Instant.parse("2026-10-12T09:00:00Z"));
+        when(orders.findAllById(List.of(1L, 2L, 3L))).thenReturn(List.of(a, shipped, already));
+
+        assertEquals(1, service.markPacked(List.of(1L, 2L, 3L)));
+        assertEquals(java.time.Instant.parse("2026-10-13T10:00:00Z"), a.getPackedAt());
+        assertEquals(null, shipped.getPackedAt());
+        assertThrows(ProductException.class, () -> service.markPacked(List.of()));
+
+        when(orders.findById(1L)).thenReturn(Optional.of(a));
+        when(orders.save(a)).thenReturn(a);
+        assertEquals(null, service.unpack(1L).getPackedAt());
     }
 }

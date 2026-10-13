@@ -80,6 +80,8 @@ public class Cart {
     // Gift options chosen at checkout: wrap the order, and/or a short message for the card. Free - no price change.
     // Cleared of anything over MAX_GIFT_MESSAGE_LENGTH by OrderService.order(); shown on the packing slip.
     private boolean giftWrap;
+    // When staff ticked this placed order off as packed (PackingSlipService.markPacked); null if not yet.
+    private java.time.Instant packedAt;
     // Set by staff when a shipped order is running late (DeliveryFailureService.markDelayed): the new date promised to the
     // customer and why. Null on an order that is on time.
     private java.time.LocalDate expectedDeliveryDate;
