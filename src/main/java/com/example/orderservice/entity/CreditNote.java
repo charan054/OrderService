@@ -41,6 +41,10 @@ public class CreditNote {
     // CANCELLED or RETURNED. A plain string, not a Hibernate enum, so a new reason is not a MySQL schema change.
     @Column(length = 20)
     private String reason;
+    // CREDIT_NOTE (tax reversed) or SUPPLEMENTARY_INVOICE (extra value supplied after the invoice, e.g. a dearer exchange):
+    // the second is stored here too, numbered from the normal invoice series, and counts on the invoice side of the GST report.
+    @Column(length = 24, nullable = false)
+    private String kind = "CREDIT_NOTE";
     private boolean interState;
     @Column(length = 60)
     private String placeOfSupply;

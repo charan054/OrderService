@@ -245,4 +245,30 @@ class CreditNoteServiceTest {
         assertThat(service.forOrder(-1)).isEmpty();
         assertThat(Optional.of(views.get(1).number())).hasValueSatisfying(n -> assertThat(n).endsWith("/000002"));
     }
+
+    @Test
+    void aSupplementaryInvoiceUsesTheReplacementsRateAndTheInvoiceNumberSeries() {
+        Product dear = new Product();
+        dear.setProductName("Shampoo");
+        dear.setProductPrice(236);
+        dear.setHsnCode("3305");
+        dear.setGstRate(12.0);
+        when(productClient.getProductById(9)).thenReturn(dear);
+        OrderItem soap = item(1, 1, 118, 18.0);
+        Cart order = invoicedOrder("Karnataka", 0, soap);
+
+        CreditNote note = service.issueSupplementary(order, 9, 1, 112.0, "EXCHANGE").orElseThrow();
+
+        assertThat(note.getKind()).isEqualTo("SUPPLEMENTARY_INVOICE");
+        assertThat(note.getNumber()).startsWith("CM/20").doesNotContain("/CN/");
+        assertThat(note.getTaxableValue()).isEqualTo(100.0);
+        assertThat(note.getCgst()).isEqualTo(6.0);
+        assertThat(note.getSgst()).isEqualTo(6.0);
+        assertThat(note.getLines()).singleElement().satisfies(l -> {
+            assertThat(l.getProductName()).isEqualTo("Shampoo");
+            assertThat(l.getHsnCode()).isEqualTo("3305");
+            assertThat(l.getGstRate()).isEqualTo(12.0);
+        });
+        assertThat(service.issueSupplementary(order, 9, 1, 0, "EXCHANGE")).isEmpty();
+    }
 }

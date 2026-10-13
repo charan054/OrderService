@@ -233,12 +233,12 @@ public class InvoicePdfService {
         if (notes == null || notes.isEmpty()) {
             return;
         }
-        Paragraph h = new Paragraph("Credit notes (tax reversed for cancelled or returned items)", HEADING);
+        Paragraph h = new Paragraph("Credit notes and supplementary invoices (tax changes after the invoice)", HEADING);
         h.setSpacingBefore(16);
         h.setSpacingAfter(4);
         doc.add(h);
         for (CreditNoteView n : notes) {
-            Paragraph title = new Paragraph(safe(n.number()) + "  -  " + ("RETURNED".equals(n.reason()) ? "Returned" : "Cancelled")
+            Paragraph title = new Paragraph(safe(n.number()) + "  -  " + CreditNoteView.label(n)
                     + "  -  " + date(n.issuedAt()) + "  -  against " + safe(n.invoiceNumber() == null ? "invoice" : n.invoiceNumber()), BOLD);
             title.setSpacingBefore(6);
             title.setSpacingAfter(2);
@@ -262,7 +262,7 @@ public class InvoicePdfService {
                 body(t, money(l.igst()), Element.ALIGN_RIGHT);
                 body(t, money(l.total()), Element.ALIGN_RIGHT);
             }
-            bold(t, "Credit note total", Element.ALIGN_LEFT);
+            bold(t, "SUPPLEMENTARY_INVOICE".equals(n.kind()) ? "Supplementary invoice total" : "Credit note total", Element.ALIGN_LEFT);
             bold(t, "", Element.ALIGN_LEFT);
             bold(t, "", Element.ALIGN_RIGHT);
             bold(t, money(n.taxableValue()), Element.ALIGN_RIGHT);

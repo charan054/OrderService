@@ -3618,8 +3618,9 @@
     function creditNotesHtml(notes, money) {
       if (!notes || !notes.length) return "";
       const gst = l => Number(l.cgst) + Number(l.sgst) + Number(l.igst);
-      return `<h3 style="margin-top:24px;">Credit notes</h3>` + notes.map(n => `
-        <div class="meta"><strong>${escapeHtml(n.number)}</strong> &middot; ${new Date(n.issuedAt).toLocaleDateString()} &middot; ${n.reason === "RETURNED" ? "Returned" : "Cancelled"} &middot; against ${escapeHtml(n.invoiceNumber || "")}</div>
+      const label = n => n.reason === "EXCHANGE" ? (n.kind === "SUPPLEMENTARY_INVOICE" ? "Supplementary invoice - exchange for a dearer item" : "Credit note - exchange for a cheaper item") : n.reason === "RETURNED" ? "Returned" : "Cancelled";
+      return `<h3 style="margin-top:24px;">${notes.some(n => n.kind === "SUPPLEMENTARY_INVOICE") ? "Credit notes and supplementary invoices" : "Credit notes"}</h3>` + notes.map(n => `
+        <div class="meta"><strong>${escapeHtml(n.number)}</strong> &middot; ${new Date(n.issuedAt).toLocaleDateString()} &middot; ${label(n)} &middot; against ${escapeHtml(n.invoiceNumber || "")}</div>
         <table><tr><th>Item</th><th>HSN</th><th class="r">GST %</th><th class="r">Taxable</th><th class="r">GST</th><th class="r">Value</th></tr>
         ${n.lines.map(l => `<tr><td>${escapeHtml(l.productName)} &times; ${l.quantity}</td><td>${escapeHtml(l.hsnCode || "-")}</td><td class="r">${l.gstRate}</td><td class="r">${money(l.taxableValue)}</td><td class="r">${money(gst(l))}</td><td class="r">${money(l.total)}</td></tr>`).join("")}
         <tr class="total"><td colspan="3" class="r">Total</td><td class="r">${money(n.taxableValue)}</td><td class="r">${money(gst(n))}</td><td class="r">${money(n.total)}</td></tr></table>`).join("");

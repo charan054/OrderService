@@ -45,6 +45,13 @@ public class InvoiceNumberService {
         if (order.getInvoiceNumber() != null) {
             return;
         }
+        order.setInvoiceNumber(nextInvoiceNumber());
+        order.setInvoiceDate(clock.instant());
+    }
+
+    /** The next number in the tax-invoice series (also used for supplementary invoices). */
+    @Transactional
+    public synchronized String nextInvoiceNumber() {
         Instant now = clock.instant();
         String fiscalYear = fiscalYear(LocalDate.ofInstant(now, zone));
         InvoiceSequence sequence = sequences.lockByFiscalYear(fiscalYear).orElseGet(() -> {
@@ -55,8 +62,7 @@ public class InvoiceNumberService {
         });
         sequence.setLastNumber(sequence.getLastNumber() + 1);
         sequences.save(sequence);
-        order.setInvoiceNumber(String.format("%s/%s/%06d", prefix, fiscalYear, sequence.getLastNumber()));
-        order.setInvoiceDate(now);
+        return String.format("%s/%s/%06d", prefix, fiscalYear, sequence.getLastNumber());
     }
 
     /** The next credit note number, PREFIX/CN/2026-27/000001, in its own series per financial year. */

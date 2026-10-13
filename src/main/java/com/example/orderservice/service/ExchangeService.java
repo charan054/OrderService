@@ -141,6 +141,9 @@ public class ExchangeService {
                 }
                 throw e;
             }
+            if (r.getPriceDifference() > 0) {
+                issueSupplementaryInvoice(r);
+            }
             r.setStatus(APPROVED);
             r.setUpdatedAt(clock.instant());
             ExchangeRequest saved = exchanges.save(r);
@@ -230,6 +233,17 @@ public class ExchangeService {
         } catch (RuntimeException e) {
             org.slf4j.LoggerFactory.getLogger(ExchangeService.class).error(
                     "Could not issue a GST credit note for the exchange on order {}", r.getOrderId(), e);
+        }
+    }
+
+    // The extra value the customer paid for a dearer swap, invoiced at the replacement's own GST rate. A failure here
+    // never undoes the approval; it is logged for the books.
+    private void issueSupplementaryInvoice(ExchangeRequest r) {
+        try {
+            creditNotes.issueSupplementary(load(r.getOrderId()), r.getReplacementProductId(), r.getQuantity(), r.getPriceDifference(), "EXCHANGE");
+        } catch (RuntimeException e) {
+            org.slf4j.LoggerFactory.getLogger(ExchangeService.class).error(
+                    "Could not issue a supplementary invoice for the exchange on order {}", r.getOrderId(), e);
         }
     }
 
