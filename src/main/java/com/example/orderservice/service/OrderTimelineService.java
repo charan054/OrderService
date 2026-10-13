@@ -7,7 +7,9 @@ import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.StoreCreditTransaction;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.exception.OrderNotFoundException;
+import com.example.orderservice.entity.DeliveryAttempt;
 import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.repository.DeliveryAttemptRepository;
 import com.example.orderservice.repository.NotificationLogRepository;
 import com.example.orderservice.repository.StoreCreditTransactionRepository;
 import com.example.orderservice.repository.TrackingEventRepository;
@@ -30,13 +32,16 @@ public class OrderTimelineService {
     private final TrackingEventRepository tracking;
     private final NotificationLogRepository notifications;
     private final StoreCreditTransactionRepository credits;
+    private final DeliveryAttemptRepository deliveryAttempts;
 
     public OrderTimelineService(CartRepository orders, TrackingEventRepository tracking,
-                                NotificationLogRepository notifications, StoreCreditTransactionRepository credits) {
+                                NotificationLogRepository notifications, StoreCreditTransactionRepository credits,
+                                DeliveryAttemptRepository deliveryAttempts) {
         this.orders = orders;
         this.tracking = tracking;
         this.notifications = notifications;
         this.credits = credits;
+        this.deliveryAttempts = deliveryAttempts;
     }
 
     public List<TimelineEntry> timeline(long orderId, long phno) {
@@ -47,10 +52,16 @@ public class OrderTimelineService {
             out.add(new TimelineEntry(e.getTimestamp(), "STATUS", statusTitle(order, e.getStatus())));
         }
         for (NotificationLog n : notifications.findByOrderIdOrderBySentAtAsc(orderId)) {
-            if (n.getSentAt() == null || n.getMessage() == null || isStatusMessage(order, n)) {
+            if (n.getSentAt() == null || n.getMessage() == null || isStatusMessage(order, n) || isDeliveryAttemptMessage(n)) {
                 continue;
             }
             out.add(new TimelineEntry(n.getSentAt(), "UPDATE", n.getMessage()));
+        }
+        for (DeliveryAttempt a : deliveryAttempts.findByOrderIdOrderByAttemptNoAsc(orderId)) {
+            if (a.getCreatedAt() != null) {
+                out.add(new TimelineEntry(a.getCreatedAt(), "DELIVERY", "Delivery attempt " + a.getAttemptNo() + " failed: "
+                        + (a.getReason() == null ? "" : a.getReason().toLowerCase(Locale.ROOT).replace('_', ' '))));
+            }
         }
         for (StoreCreditTransaction t : credits.findByOrderIdAndTypeOrderByIdAsc(orderId, StoreCreditTransaction.Type.REFUND)) {
             if (t.getCreatedAt() != null) {
@@ -60,6 +71,11 @@ public class OrderTimelineService {
         }
         out.sort(Comparator.comparing(TimelineEntry::at));
         return out;
+    }
+
+    // The email a failed delivery attempt sent (DeliveryFailureService); the attempt itself is shown instead.
+    private static boolean isDeliveryAttemptMessage(NotificationLog n) {
+        return n.getMessage().startsWith("We could not deliver order #");
     }
 
     // A notification the status change already produced (same wording the notifier used), so the tracking event stands for it.
