@@ -4079,6 +4079,27 @@ class OrderServiceTest {
     }
 
     @Test
+    void returnItemByStaffUsesTheMerchantRefundAndIgnoresAnExpiredWindow() {
+        Cart cart = deliveredOrder(42L, 100000L, pricedItem(1, 1, 100), pricedItem(2, 1, 100));
+        cart.setTotalPrice(200);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        TrackingEvent delivered = new TrackingEvent();
+        delivered.setOrderId(42L);
+        delivered.setStatus(OrderStatus.DELIVERED);
+        delivered.setTimestamp(Instant.now().minus(30, java.time.temporal.ChronoUnit.DAYS));
+        lenient().when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of(delivered));
+        when(phonepeClient.merchantRefund(eq(SERVICE_KEY), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        lenient().when(loyaltyTransactionRepository.findByOrderIdAndType(anyLong(), any())).thenReturn(Optional.empty());
+
+        Cart result = service.returnItemByStaff(42L, 2, 1, "wrong size", null, 9L);
+
+        verify(phonepeClient).merchantRefund(SERVICE_KEY, 100000L, new RefundRequest("item-return-received-9", new BigDecimal("100.00")));
+        verify(phonepeClient, never()).refund(any(), anyLong(), any());
+        assertEquals(1, itemOf(result, 2).getReturnedQuantity());
+    }
+
+    @Test
     void returnItemOfAnOrderThatIsNotDeliveredIsRejected() {
         Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 100));
         when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));

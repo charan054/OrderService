@@ -432,6 +432,7 @@
                 <button onclick="loadReturnPickups()">Refresh</button>
             </div>
             <div id="returnPickupsWrap"></div>
+            <div id="itemPickupsWrap"></div>
         </div>
     </section>
 
@@ -2243,7 +2244,23 @@
               ? `<button onclick="stepReturnPickup(${r.orderId}, 'pickedup')">Mark picked up</button>`
               : `<button onclick="stepReturnPickup(${r.orderId}, 'received')">Mark received &amp; refund</button>`}</td></tr>`).join("")}</tbody></table>`
         : `<p>No returns on their way back.</p>`;
-      showStatus(`${rows.length} return(s) on their way back.`, "success");
+      const items = await apiCall("http://localhost:8083/cart/returns/item-pickups", { headers: { "X-Service-Key": serviceKey } });
+      document.getElementById("itemPickupsWrap").innerHTML = Array.isArray(items) && items.length
+        ? `<p><strong>Single items</strong></p><table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Item</th><th>Qty</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${items.map(r => `
+            <tr><td>#${r.orderId}</td><td>${r.customerPhno}</td><td>#${r.productId}</td><td>${r.quantity}</td>
+            <td style="white-space:normal;">${escapeHtml(r.reason || "")}</td><td>${escapeHtml(r.status)}</td>
+            <td>${r.status === "AWAITING_PICKUP"
+              ? `<button onclick="stepItemPickup(${r.id}, 'pickedup')">Mark picked up</button>`
+              : `<button onclick="stepItemPickup(${r.id}, 'received')">Mark received &amp; refund</button>`}</td></tr>`).join("")}</tbody></table>` : "";
+      showStatus(`${rows.length} return(s) and ${Array.isArray(items) ? items.length : 0} item(s) on their way back.`, "success");
+    }
+
+    async function stepItemPickup(id, step) {
+      if (step === "received" && !confirm("Item is back? This returns those units and pays the refund now.")) return;
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      await apiCall(`http://localhost:8083/cart/returns/item-pickups/${id}/${step}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      await loadReturnPickups();
     }
 
     async function stepReturnPickup(orderId, step) {

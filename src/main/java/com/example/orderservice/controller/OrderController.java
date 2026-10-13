@@ -226,6 +226,10 @@ public class OrderController {
                            @RequestParam(required = false) String refundTo){
         requireOrderAccess(orderId);
         requireReturnApproved(orderId);
+        // With pickups on, a customer's item return books a pickup instead (refunded when staff mark it received).
+        if (returnPickupService.isEnabled() && !CustomerAccess.isService()) {
+            return returnPickupService.scheduleItem(orderId, productId, quantity, reason, refundTo);
+        }
         return orderService.returnItem(orderId, productId, quantity, reason, authorization, idempotencyKey, payerPhno, payerPin, refundTo);
     }
     // Operational actions (warehouse/ops moving an order along), not something the buyer's own token gates -
@@ -594,6 +598,21 @@ public class OrderController {
     @PostMapping("/{orderId}/return/received")
     public Cart returnReceived(@PathVariable long orderId) {
         return returnPickupService.markReceived(orderId);
+    }
+
+    @GetMapping("/returns/item-pickups")
+    public List<com.example.orderservice.entity.ItemReturnPickup> itemReturnPickups() {
+        return returnPickupService.openItems();
+    }
+
+    @PostMapping("/returns/item-pickups/{id}/pickedup")
+    public com.example.orderservice.entity.ItemReturnPickup itemPickedUp(@PathVariable long id) {
+        return returnPickupService.markItemPickedUp(id);
+    }
+
+    @PostMapping("/returns/item-pickups/{id}/received")
+    public com.example.orderservice.entity.ItemReturnPickup itemReceived(@PathVariable long id) {
+        return returnPickupService.markItemReceived(id);
     }
 
     @GetMapping("/returns/pickups")

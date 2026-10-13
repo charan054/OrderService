@@ -31,12 +31,17 @@ class ReturnPickupServiceTest {
     private OrderService orderService;
     @Mock
     private CustomerNotifier notifier;
+    @Mock
+    private com.example.orderservice.repository.ItemReturnPickupRepository itemPickups;
 
     private ReturnPickupService service;
 
     @BeforeEach
     void setUp() {
-        service = new ReturnPickupService(orders, orderService, notifier, true);
+        service = new ReturnPickupService(orders, itemPickups, orderService, notifier,
+                java.time.Clock.fixed(java.time.Instant.parse("2026-10-12T10:00:00Z"), java.time.ZoneOffset.UTC), true);
+        lenient().when(itemPickups.save(any(com.example.orderservice.entity.ItemReturnPickup.class))).thenAnswer(i -> i.getArgument(0));
+        lenient().when(itemPickups.findByOrderIdAndStatusIn(org.mockito.ArgumentMatchers.anyLong(), any())).thenReturn(List.of());
         lenient().when(orderService.orderLock(42L)).thenReturn(new Object());
         lenient().when(orders.save(any(Cart.class))).thenAnswer(i -> i.getArgument(0));
     }
@@ -106,5 +111,72 @@ class ReturnPickupServiceTest {
         when(orders.findAll()).thenReturn(List.of(none, returned, a));
 
         assertEquals(List.of(a), service.open());
+    }
+
+    private com.example.orderservice.entity.ItemReturnPickup booked(long id, String status) {
+        com.example.orderservice.entity.ItemReturnPickup p = new com.example.orderservice.entity.ItemReturnPickup();
+        p.setId(id);
+        p.setOrderId(42L);
+        p.setProductId(7);
+        p.setQuantity(2);
+        p.setReason("damaged");
+        p.setRefundTo("STORE_CREDIT");
+        p.setStatus(status);
+        when(itemPickups.findById(id)).thenReturn(Optional.of(p));
+        return p;
+    }
+
+    @Test
+    void scheduleItemBooksAPickupAfterCheckingTheUnitsAreStillReturnable() {
+        Cart cart = delivered();
+        com.example.orderservice.entity.ItemReturnPickup earlier = new com.example.orderservice.entity.ItemReturnPickup();
+        earlier.setProductId(7);
+        earlier.setQuantity(1);
+        when(itemPickups.findByOrderIdAndStatusIn(org.mockito.ArgumentMatchers.eq(42L), any())).thenReturn(List.of(earlier));
+
+        service.scheduleItem(42L, 7, 2, " broken ", "STORE_CREDIT");
+
+        verify(orderService).requireReturnableItem(cart, 7, 2, 1);
+        org.mockito.ArgumentCaptor<com.example.orderservice.entity.ItemReturnPickup> saved =
+                org.mockito.ArgumentCaptor.forClass(com.example.orderservice.entity.ItemReturnPickup.class);
+        verify(itemPickups).save(saved.capture());
+        assertEquals("AWAITING_PICKUP", saved.getValue().getStatus());
+        assertEquals("broken", saved.getValue().getReason());
+        verify(orderService, never()).returnItemByStaff(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt(), any(), any(), org.mockito.ArgumentMatchers.anyLong());
+    }
+
+    @Test
+    void scheduleItemRefusesBlankReasonNonDeliveredAndAWholeOrderPickup() {
+        Cart cart = delivered();
+        assertThrows(ProductException.class, () -> service.scheduleItem(42L, 7, 1, " ", null));
+        cart.setReturnPickupStatus("AWAITING_PICKUP");
+        assertThrows(ProductException.class, () -> service.scheduleItem(42L, 7, 1, "x", null));
+        cart.setReturnPickupStatus(null);
+        cart.setStatus(OrderStatus.SHIPPED);
+        assertThrows(ProductException.class, () -> service.scheduleItem(42L, 7, 1, "x", null));
+    }
+
+    @Test
+    void aWholeOrderPickupIsRefusedWhileItemPickupsAreOpen() {
+        delivered();
+        when(itemPickups.findByOrderIdAndStatusIn(org.mockito.ArgumentMatchers.eq(42L), any()))
+                .thenReturn(List.of(new com.example.orderservice.entity.ItemReturnPickup()));
+        assertThrows(ProductException.class, () -> service.schedule(42L, "x", null));
+    }
+
+    @Test
+    void itemPickupStepsRunInOrderAndOnlyReceivedRefunds() {
+        delivered();
+        booked(5, "AWAITING_PICKUP");
+        assertThrows(ProductException.class, () -> service.markItemReceived(5));
+
+        assertEquals("PICKED_UP", service.markItemPickedUp(5).getStatus());
+        verify(orderService, never()).returnItemByStaff(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt(), any(), any(), org.mockito.ArgumentMatchers.anyLong());
+
+        assertEquals("RECEIVED", service.markItemReceived(5).getStatus());
+        verify(orderService).returnItemByStaff(42L, 7, 2, "damaged", "STORE_CREDIT", 5L);
+        assertThrows(ProductException.class, () -> service.markItemPickedUp(5));
     }
 }

@@ -1076,6 +1076,24 @@ public class OrderService {
         }
     }
 
+    /** Returns some units of one item on staff's say-so (goods received): shop-key refund, no return-window check. */
+    public Cart returnItemByStaff(long orderId, int productId, int quantity, String reason, String refundTo, long pickupId) {
+        return returnItem(orderId, productId, quantity, reason, STAFF_REFUND, "item-return-received-" + pickupId, null, null, refundTo);
+    }
+
+    /** Throws unless this many units of the product can still be returned from the order (a validity check for bookings). */
+    void requireReturnableItem(Cart cart, int productId, int quantity, int alreadyBooked) {
+        if (quantity < 1) {
+            throw new ProductException("Quantity must be at least 1");
+        }
+        OrderItem item = cart.getOrderItems().stream().filter(i -> i.getProductId() == productId).findFirst()
+                .orElseThrow(() -> new ProductException("That product is not in this order"));
+        if (quantity + alreadyBooked > item.getOutstandingQuantity()) {
+            throw new ProductException("Only " + Math.max(0, item.getOutstandingQuantity() - alreadyBooked)
+                    + " of that item can still be returned");
+        }
+    }
+
     private Cart returnItemLocked(long orderId,
                        int productId,
                        int quantity,
@@ -1095,7 +1113,9 @@ public class OrderService {
             throw new ProductException("Only items of a delivered order can be returned");
         }
         OrderItem item = itemToAdjust(cart, productId, quantity);
-        requireWithinReturnWindow(orderId);
+        if (authorization != STAFF_REFUND) {
+            requireWithinReturnWindow(orderId);
+        }
         double share = itemShare(cart, item, quantity);
         double refundAmount = partialRefundAmount(cart, item, quantity);
         boolean lastUnits = isLastOutstanding(cart, quantity);
