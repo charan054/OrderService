@@ -76,6 +76,35 @@ public class DeliveryFailureService {
         }
     }
 
+    /** Tells the customer a shipped order will be late, with the new date. Can be repeated if it slips again. */
+    public Cart markDelayed(long orderId, java.time.LocalDate expectedDate, String reason) {
+        if (expectedDate == null) {
+            throw new ProductException("Give the new expected delivery date");
+        }
+        if (expectedDate.isBefore(java.time.LocalDate.now(clock))) {
+            throw new ProductException("The new expected date cannot be in the past");
+        }
+        String clean = reason == null ? "" : reason.trim();
+        if (clean.isEmpty()) {
+            throw new ProductException("Say why the order is delayed");
+        }
+        if (clean.length() > MAX_NOTE) {
+            throw new ProductException("The reason must be at most " + MAX_NOTE + " characters");
+        }
+        synchronized (orderService.orderLock(orderId)) {
+            Cart cart = load(orderId);
+            if (cart.getStatus() != OrderStatus.SHIPPED) {
+                throw new ProductException("Only a shipped order can be marked delayed");
+            }
+            cart.setExpectedDeliveryDate(expectedDate);
+            cart.setDelayReason(clean);
+            Cart saved = orders.save(cart);
+            tell(saved, "Your order #" + orderId + " is running late",
+                    "Sorry - your order #" + orderId + " is delayed: " + clean + ".\nWe now expect to deliver it by " + expectedDate + ".");
+            return saved;
+        }
+    }
+
     /** Gives up on a shipped order that failed to deliver: it is cancelled, put back in stock and refunded. */
     public Cart returnToStock(long orderId, String note) {
         synchronized (orderService.orderLock(orderId)) {

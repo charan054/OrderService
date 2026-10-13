@@ -2164,6 +2164,7 @@
             <strong>Order #${order.orderId}</strong>
             <span class="meta">${escapeHtml(order.status)} &middot; ${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : order.status === "CANCELLED" ? "" : " (unpaid)") : ""}</span>
             ${orderStepperHtml(order.status)}
+            ${order.status === "SHIPPED" && order.expectedDeliveryDate ? `<span class="meta">Running late &mdash; now expected by ${escapeHtml(order.expectedDeliveryDate)}${order.delayReason ? " (" + escapeHtml(order.delayReason) + ")" : ""}</span>` : ""}
             ${order.giftWrap || order.giftMessage ? `<span class="meta">Gift${order.giftWrap ? ", wrapped" : ""}${order.giftMessage ? ": &ldquo;" + escapeHtml(order.giftMessage) + "&rdquo;" : ""}</span>` : ""}
             ${order.carrier || order.trackingNumber ? `<span class="meta">Shipped${order.carrier ? " via " + escapeHtml(order.carrier) : ""}${order.trackingNumber ? ", tracking " + escapeHtml(order.trackingNumber) : ""}</span>` : ""}
           </div>
