@@ -1760,6 +1760,30 @@ class OrderServiceTest {
         verify(productClient).updateProductStock(SERVICE_KEY, 1, 2);
     }
 
+    @Test
+    void cancelUndeliveredSendsAShippedCashOrderBackToStock() {
+        Cart cart = placedOrder(42L, 0, item(1, 2));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setPaymentTransactionId(null);
+        cart.setStatus(OrderStatus.SHIPPED);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart result = service.cancelUndelivered(42L, "Could not be delivered");
+
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+        verify(productClient).updateProductStock(SERVICE_KEY, 1, 2);
+    }
+
+    @Test
+    void cancelUndeliveredRefusesAnOrderThatHasNotShipped() {
+        Cart cart = placedOrder(42L, 0, item(1, 2));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.cancelUndelivered(42L, null));
+        verify(productClient, never()).updateProductStock(any(), any(), any());
+    }
+
     // A broken notification channel must never turn a completed cancellation into an error.
     @Test
     void cancelKafkaFailureDoesNotFailTheCancellation() {

@@ -744,7 +744,14 @@ public class OrderService {
                        String note,
                        String refundTo) {
         synchronized (orderLock(orderId)) {
-            return cancelLocked(orderId, authorization, idempotencyKey, payerPhno, payerPin, reason, note, refundTo);
+            return cancelLocked(orderId, authorization, idempotencyKey, payerPhno, payerPin, reason, note, refundTo, false);
+        }
+    }
+
+    /** A shipped order that could not be delivered goes back to stock and is refunded with the shop's own key. */
+    public Cart cancelUndelivered(long orderId, String note) {
+        synchronized (orderLock(orderId)) {
+            return cancelLocked(orderId, STAFF_REFUND, "undelivered-" + orderId, null, null, "OTHER", note, null, true);
         }
     }
 
@@ -755,7 +762,8 @@ public class OrderService {
                        String payerPin,
                        String reason,
                        String note,
-                       String refundTo) {
+                       String refundTo,
+                       boolean undelivered) {
         int creditPercent = creditPercentOf(refundTo);
         String reasonCode = reason == null || reason.isBlank() ? null : reason.trim().toUpperCase(java.util.Locale.ROOT);
         if (reasonCode != null && !CANCEL_REASONS.contains(reasonCode)) {
@@ -770,8 +778,8 @@ public class OrderService {
         if (cart.getStatus() == OrderStatus.CANCELLED) {
             throw new ProductException("This order is already cancelled");
         }
-        if (cart.getStatus() != OrderStatus.PLACED) {
-            throw new ProductException("Only a placed order can be cancelled");
+        if (cart.getStatus() != (undelivered ? OrderStatus.SHIPPED : OrderStatus.PLACED)) {
+            throw new ProductException(undelivered ? "Only a shipped order can be sent back to stock" : "Only a placed order can be cancelled");
         }
         // A CASH order was never charged through PhonepayService, so it has no paymentTransactionId to refund -
         // that's expected, not the "this order cannot be cancelled" guard below (which instead catches a PHONEPE
