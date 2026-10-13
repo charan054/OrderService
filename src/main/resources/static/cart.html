@@ -437,6 +437,22 @@
     </section>
 
     <section class="grid">
+        <div class="card wide" id="card-exchanges">
+            <div class="card-header">
+                <div class="title-wrap">
+                    <h2>Exchange Requests</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Customers swapping a delivered item for another product at the same price or lower. Approve sets the replacement aside in stock; "Received" puts the old item back in stock. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadExchanges()">Refresh</button>
+            </div>
+            <div id="exchangesWrap"></div>
+        </div>
+    </section>
+
+    <section class="grid">
         <div class="card wide" id="card-couponreport">
             <div class="card-header">
                 <div class="icon">&#127903;</div>
@@ -2253,6 +2269,28 @@
               ? `<button onclick="stepItemPickup(${r.id}, 'pickedup')">Mark picked up</button>`
               : `<button onclick="stepItemPickup(${r.id}, 'received')">Mark received &amp; refund</button>`}</td></tr>`).join("")}</tbody></table>` : "";
       showStatus(`${rows.length} return(s) and ${Array.isArray(items) ? items.length : 0} item(s) on their way back.`, "success");
+    }
+
+    async function loadExchanges() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const rows = await apiCall("http://localhost:8083/cart/exchanges/open", { headers: { "X-Service-Key": serviceKey } });
+      document.getElementById("exchangesWrap").innerHTML = Array.isArray(rows) && rows.length
+        ? `<table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Item</th><th>Qty</th><th>Swap for</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>#${r.orderId}</td><td>${r.customerPhno}</td><td>#${r.productId}</td><td>${r.quantity}</td><td>#${r.replacementProductId}</td>
+            <td style="white-space:normal;">${escapeHtml(r.reason || "")}</td><td>${escapeHtml(r.status)}</td>
+            <td>${r.status === "REQUESTED"
+              ? `<button onclick="stepExchange(${r.id}, 'approve')">Approve</button> <button onclick="stepExchange(${r.id}, 'reject')">Reject</button>`
+              : `<button onclick="stepExchange(${r.id}, 'received')">Mark received</button>`}</td></tr>`).join("")}</tbody></table>`
+        : `<p>No exchanges waiting.</p>`;
+    }
+
+    async function stepExchange(id, step) {
+      if (step === "received" && !confirm("Original item is back? It goes back into stock now.")) return;
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      await apiCall(`http://localhost:8083/cart/exchanges/${id}/${step}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      await loadExchanges();
     }
 
     async function stepItemPickup(id, step) {

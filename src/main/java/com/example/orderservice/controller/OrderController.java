@@ -70,6 +70,8 @@ public class OrderController {
     @Autowired
     private com.example.orderservice.service.ReturnPickupService returnPickupService;
     @Autowired
+    private com.example.orderservice.service.ExchangeService exchangeService;
+    @Autowired
     private ReorderSuggestionService reorderSuggestionService;
 
     @Autowired
@@ -628,6 +630,48 @@ public class OrderController {
     @PostMapping("/returns/item-pickups/{id}/received")
     public com.example.orderservice.entity.ItemReturnPickup itemReceived(@PathVariable long id) {
         return returnPickupService.markItemReceived(id);
+    }
+
+    // Exchange a delivered item for another product at the same price or lower (no money moves). The customer asks and
+    // may withdraw while it waits; staff approve/reject and mark it received (service key).
+    @PostMapping("/{orderId}/exchange")
+    public com.example.orderservice.entity.ExchangeRequest requestExchange(@PathVariable long orderId, @RequestParam int productId,
+                                                                           @RequestParam int quantity, @RequestParam int replacementProductId,
+                                                                           @RequestParam String reason) {
+        requireOrderAccess(orderId);
+        return exchangeService.request(orderId, productId, quantity, replacementProductId, reason);
+    }
+
+    @GetMapping("/{orderId}/exchanges")
+    public List<com.example.orderservice.entity.ExchangeRequest> orderExchanges(@PathVariable long orderId) {
+        requireOrderAccess(orderId);
+        return exchangeService.forOrder(orderId);
+    }
+
+    @PostMapping("/exchanges/{id}/withdraw")
+    public com.example.orderservice.entity.ExchangeRequest withdrawExchange(@PathVariable long id) {
+        requireOrderAccess(exchangeService.find(id).getOrderId());
+        return exchangeService.cancel(id);
+    }
+
+    @GetMapping("/exchanges/open")
+    public List<com.example.orderservice.entity.ExchangeRequest> openExchanges() {
+        return exchangeService.open();
+    }
+
+    @PostMapping("/exchanges/{id}/approve")
+    public com.example.orderservice.entity.ExchangeRequest approveExchange(@PathVariable long id) {
+        return exchangeService.approve(id);
+    }
+
+    @PostMapping("/exchanges/{id}/reject")
+    public com.example.orderservice.entity.ExchangeRequest rejectExchange(@PathVariable long id, @RequestParam(required = false) String note) {
+        return exchangeService.reject(id, note);
+    }
+
+    @PostMapping("/exchanges/{id}/received")
+    public com.example.orderservice.entity.ExchangeRequest exchangeReceived(@PathVariable long id) {
+        return exchangeService.markReceived(id);
     }
 
     @GetMapping("/returns/pickups")

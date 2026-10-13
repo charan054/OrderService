@@ -90,13 +90,13 @@ public class SecurityConfig {
                         // number is taken from the session.
                         .requestMatchers(HttpMethod.GET, "/customer/account/delete/preview").hasRole("CUSTOMER")
                         .requestMatchers(HttpMethod.POST, "/customer/account/delete/request", "/customer/account/delete/confirm").hasRole("CUSTOMER")
-                        .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/history", "/cart/recommendations", "/cart/notifications", "/cart/*/invoice", "/cart/*/invoice.pdf", "/cart/*/refunds", "/cart/*/timeline", "/cart/*/paymentstatus",
+                        .requestMatchers(HttpMethod.GET, "/cart/byphno", "/cart/history", "/cart/recommendations", "/cart/notifications", "/cart/*/invoice", "/cart/*/invoice.pdf", "/cart/*/refunds", "/cart/*/exchanges", "/cart/*/timeline", "/cart/*/paymentstatus",
                                 "/wishlist/byphno", "/wishlist/pricedrops", "/wishlist/share", "/waitlist/byphno", "/searchwatch/byphno", "/addresses/byphno",
                                 "/loyalty/byphno", "/loyalty/history", "/customer/profile", "/customer/export", "/coupons/available", "/referral/mine", "/questions/mine", "/savedcart", "/feedback/mine", "/prefs/mine", "/customer/cod", "/storecredit/byphno", "/support/tickets/mine", "/subscriptions/mine").hasAnyRole("CUSTOMER", "SERVICE")
                         // checkout/cancel/return still also need the buyer's own PhonePe credentials for anything
                         // that moves money (see OrderController) - the session only proves who the customer is.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/*/return/request", "/cart/reviews", "/cart/reviews/photo", "/cart/reviews/flag", "/cart/*/cancel", "/cart/*/return",
-                                "/cart/*/items/*/cancel", "/cart/*/items/*/return", "/cart/*/items/add", "/cart/*/invoice/email",
+                                "/cart/*/items/*/cancel", "/cart/*/items/*/return", "/cart/*/exchange", "/cart/exchanges/*/withdraw", "/cart/*/items/add", "/cart/*/invoice/email",
                                 "/wishlist/self/add", "/wishlist/share", "/waitlist/self/add", "/searchwatch/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask", "/feedback/submit", "/support/tickets", "/support/tickets/*/reply", "/giftcards/redeem", "/subscriptions").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.PUT, "/savedcart", "/addresses/self/default", "/cart/*/delivery", "/cart/*/address", "/prefs/mine", "/subscriptions/*/pause", "/subscriptions/*/resume", "/subscriptions/*/skip").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.DELETE, "/wishlist/self/remove", "/wishlist/share", "/waitlist/self/remove", "/searchwatch/self/remove", "/addresses/self/remove", "/subscriptions/*").hasAnyRole("CUSTOMER", "SERVICE")

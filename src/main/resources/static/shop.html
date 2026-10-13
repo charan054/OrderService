@@ -2257,6 +2257,10 @@
         if (i.cancelledQuantity) notes.push(`${i.cancelledQuantity} cancelled`);
         if (i.returnedQuantity) notes.push(`${i.returnedQuantity} returned`);
         let action = "";
+        let exchange = "";
+        if (perItemPossible && i.outstandingQuantity > 0 && order.status === "DELIVERED") {
+          exchange = `<button class="link-button" onclick="exchangeMyItem(${order.orderId}, ${i.productId}, ${i.outstandingQuantity}, ${i.unitPrice})">Exchange</button>`;
+        }
         // With only one unit left in the whole order, the order-level button does the same thing.
         if (perItemPossible && i.outstandingQuantity > 0 && totalOutstanding > 1) {
           if (order.status === "PLACED") {
@@ -2265,8 +2269,33 @@
             action = `<button class="link-button" onclick="changeMyItem('return', ${order.orderId}, ${i.productId}, ${i.outstandingQuantity}, '${order.paymentMethod}')">Return item</button>`;
           }
         }
-        return `<div class="order-item-line"><span>${i.productQuantity} × ${name}${notes.length ? ` <span class="meta">(${notes.join(", ")})</span>` : ""}</span>${action}</div>`;
+        return `<div class="order-item-line"><span>${i.productQuantity} × ${name}${notes.length ? ` <span class="meta">(${notes.join(", ")})</span>` : ""}</span><span>${action} ${exchange}</span></div>`;
       }).join("")}</div>`;
+    }
+
+    // Swap a delivered item for another one that costs the same or less (no money moves; staff approve it first).
+    async function exchangeMyItem(orderId, productId, outstanding, unitPrice) {
+      const options = products.filter(p => p.productStock > 0 && p.productPrice <= unitPrice + 0.005).slice(0, 12);
+      if (!options.length) { alert("Nothing in stock at that price or lower right now."); return; }
+      const pick = prompt("Exchange for which product? Type its number:
+" +
+        options.map(p => `${p.productId}: ${p.productName} (Rs. ${Number(p.productPrice).toFixed(2)})`).join("
+"));
+      if (pick === null) return;
+      const replacementProductId = Number(pick);
+      if (!options.some(p => p.productId === replacementProductId)) { alert("Pick one of the numbers listed."); return; }
+      let quantity = 1;
+      if (outstanding > 1) {
+        quantity = Number(prompt(`How many to exchange? (1-${outstanding})`, "1"));
+        if (!Number.isInteger(quantity) || quantity < 1 || quantity > outstanding) { alert(`Enter a whole number from 1 to ${outstanding}.`); return; }
+      }
+      const reason = prompt("Why are you exchanging this item?");
+      if (!reason) return;
+      const params = new URLSearchParams({ productId, quantity, replacementProductId, reason });
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/exchange?${params}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Could not request the exchange."); return; }
+      alert("Exchange requested. We'll email you once it's approved.");
+      loadAccountView();
     }
 
     async function changeMyItem(kind, orderId, productId, outstanding, paymentMethod) {
