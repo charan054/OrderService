@@ -1558,10 +1558,14 @@
       const toCredit = confirm("Refund to your Charan Mart store credit instead of PhonePe?\n\n"
         + "OK = store credit (instant, no PIN needed)\nCancel = back to your PhonePe account");
       if (toCredit) return { refundTo: "STORE_CREDIT" };
-      if (noPin) return {};
+      // Optionally send part of it to store credit and the rest back to PhonePe.
+      const split = prompt("Send part of the refund to store credit and the rest to PhonePe?\nEnter the percent for store credit (1-99), or leave blank for all to PhonePe:", "");
+      const percent = split === null ? 0 : Number(split.trim());
+      const refundTo = Number.isInteger(percent) && percent >= 1 && percent <= 99 ? { refundTo: "SPLIT:" + percent } : {};
+      if (noPin) return refundTo;
       const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
       if (!pin) return null;
-      return { payerPhno: customerPhno, payerPin: pin };
+      return { payerPhno: customerPhno, payerPin: pin, ...refundTo };
     }
 
     async function loadLoyaltyBalance() {

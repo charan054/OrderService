@@ -3818,6 +3818,45 @@ class OrderServiceTest {
     }
 
     @Test
+    void aSplitRefundSendsThePhonepePartFirstAndTheRestToStoreCredit() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 400));
+        cart.setTotalPrice(400);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(paymentResponse(100001));
+
+        Cart result = service.cancel(42L, AUTH, "k", null, null, null, null, "SPLIT:25");
+
+        verify(phonepeClient).refund(AUTH, 100000L, new RefundRequest("k", new BigDecimal("300.00")));
+        verify(storeCreditService).credit(CUSTOMER, 100.0, StoreCreditTransaction.Type.REFUND, 42L, "Part of the refund for order #42");
+        assertEquals("SPLIT:100.0", result.getRefundDestination());
+        assertEquals(OrderStatus.CANCELLED, result.getStatus());
+    }
+
+    @Test
+    void aFailedPhonepePartOfASplitRefundCreditsNothing() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 400));
+        cart.setTotalPrice(400);
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(phonepeClient.refund(eq(AUTH), eq(100000L), any(RefundRequest.class))).thenReturn(
+                paymentResponse(100001, "FAILED"));
+
+        assertThrows(RuntimeException.class, () -> service.cancel(42L, AUTH, "k", null, null, null, null, "SPLIT:25"));
+
+        verify(storeCreditService, never()).credit(anyLong(), anyDouble(), any(), any(), any());
+        verify(orderRepository, never()).save(any(Cart.class));
+    }
+
+    @Test
+    void aBadSplitIsRejectedBeforeAnythingMoves() {
+        Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 400));
+        for (String bad : new String[]{"SPLIT:0", "SPLIT:100", "SPLIT:x", "SPLIT:-5", "half"}) {
+            assertThrows(ProductException.class, () -> service.cancel(42L, AUTH, "k", null, null, null, null, bad));
+        }
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
     void cancellingToStoreCreditSkipsPhonepeAndCreditsWhatWasPaidPlusTheCreditUsed() {
         Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 500));
         cart.setTotalPrice(380);
