@@ -713,8 +713,20 @@ public class OrderController {
     // Staff: packing slips + one combined pick list for placed (default) or shipped orders, or for chosen order ids.
     @GetMapping("/packing-slips")
     public com.example.orderservice.dto.PackingSlips packingSlips(@RequestParam(required = false) com.example.orderservice.entity.OrderStatus status,
-                                                                  @RequestParam(required = false) List<Long> orderIds) {
-        return packingSlipService.build(status, orderIds);
+                                                                  @RequestParam(required = false) List<Long> orderIds,
+                                                                  @RequestParam(defaultValue = "false") boolean includePacked) {
+        return packingSlipService.build(status, orderIds, includePacked);
+    }
+
+    // Staff: tick printed orders off as packed (they leave the pick list), or put one back.
+    @PostMapping("/packed")
+    public java.util.Map<String, Integer> markPacked(@RequestParam List<Long> orderIds) {
+        return java.util.Map.of("marked", packingSlipService.markPacked(orderIds));
+    }
+
+    @PostMapping("/{orderId}/unpack")
+    public Cart unpack(@PathVariable long orderId) {
+        return packingSlipService.unpack(orderId);
     }
 
     @GetMapping("/returns/pickups")
