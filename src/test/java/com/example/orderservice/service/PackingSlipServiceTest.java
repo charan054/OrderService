@@ -121,4 +121,23 @@ class PackingSlipServiceTest {
         assertTrue(service.build(null, List.of(7L)).slips().isEmpty());
         assertThrows(ProductException.class, () -> service.build(OrderStatus.DELIVERED, null));
     }
+
+    @Test
+    void giftReceiptHasTheMessageAndUnitsButNoPrices() {
+        Cart gift = order(9, PaymentMethod.PHONEPE, item(1, 3, 1), item(2, 1, 1));
+        gift.setGiftMessage("Enjoy");
+        when(orders.findById(9L)).thenReturn(Optional.of(gift));
+
+        PackingSlips.GiftReceipt receipt = service.giftReceipt(9L);
+
+        assertEquals("Enjoy", receipt.giftMessage());
+        assertEquals(1, receipt.lines().size());
+        assertEquals(2, receipt.lines().get(0).quantity());
+    }
+
+    @Test
+    void giftReceiptRefusesAnOrderThatIsNotAGift() {
+        when(orders.findById(9L)).thenReturn(Optional.of(order(9, PaymentMethod.PHONEPE, item(1, 1, 0))));
+        assertThrows(ProductException.class, () -> service.giftReceipt(9L));
+    }
 }

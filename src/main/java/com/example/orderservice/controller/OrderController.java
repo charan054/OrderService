@@ -690,6 +690,13 @@ public class OrderController {
         return deliveryFailureService.returnToStock(orderId, note);
     }
 
+    // A price-free receipt for a gift order (its owner, or staff).
+    @GetMapping("/{orderId}/gift-receipt")
+    public com.example.orderservice.dto.PackingSlips.GiftReceipt giftReceipt(@PathVariable long orderId) {
+        requireOrderAccess(orderId);
+        return packingSlipService.giftReceipt(orderId);
+    }
+
     @GetMapping("/{orderId}/delivery-attempts")
     public List<com.example.orderservice.entity.DeliveryAttempt> deliveryAttempts(@PathVariable long orderId) {
         requireOrderAccess(orderId);
