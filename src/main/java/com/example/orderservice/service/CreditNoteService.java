@@ -120,6 +120,57 @@ public class CreditNoteService {
         return Optional.of(creditNotes.save(note));
     }
 
+    /**
+     * A credit note for a price reduction on goods the customer keeps (an exchange for a cheaper item): the invoice's
+     * tax on the product's own line, taken out of the given tax-inclusive amount at that line's rate. Nothing if the
+     * order has no invoice or the amount is not positive.
+     */
+    @Transactional
+    public Optional<CreditNote> issueValueReduction(Cart order, int productId, int quantity, double amountInclusive, String reason) {
+        if (order.getInvoiceNumber() == null || order.getOrderId() == null || amountInclusive <= 0) {
+            return Optional.empty();
+        }
+        OrderItem item = order.getOrderItems().stream().filter(i -> i.getProductId() == productId).findFirst().orElse(null);
+        if (item == null) {
+            return Optional.empty();
+        }
+        Facts f = lookup(item);
+        String placeOfSupply = placeOfSupply(order);
+        boolean interState = GstCalculator.isInterState(storeState, placeOfSupply);
+        double taxable = round(amountInclusive / (1 + f.rate() / 100.0));
+        double tax = round(amountInclusive - taxable);
+        CreditNoteLine line = new CreditNoteLine();
+        line.setProductId(productId);
+        line.setProductName(f.name());
+        line.setHsnCode(f.hsnCode());
+        line.setGstRate(f.rate());
+        line.setQuantity(quantity);
+        line.setTaxableValue(taxable);
+        if (interState) {
+            line.setIgst(tax);
+        } else {
+            double half = round(tax / 2);
+            line.setCgst(half);
+            line.setSgst(round(tax - half));
+        }
+        line.setTotal(round(amountInclusive));
+        CreditNote note = new CreditNote();
+        note.getLines().add(line);
+        note.setTaxableValue(line.getTaxableValue());
+        note.setCgst(line.getCgst());
+        note.setSgst(line.getSgst());
+        note.setIgst(line.getIgst());
+        note.setTotal(line.getTotal());
+        note.setNumber(numbers.nextCreditNoteNumber());
+        note.setOrderId(order.getOrderId());
+        note.setInvoiceNumber(order.getInvoiceNumber());
+        note.setIssuedAt(clock.instant());
+        note.setReason(reason);
+        note.setInterState(interState);
+        note.setPlaceOfSupply(placeOfSupply);
+        return Optional.of(creditNotes.save(note));
+    }
+
     @Transactional(readOnly = true)
     public List<CreditNoteView> forOrder(long orderId) {
         return creditNotes.findByOrderIdOrderByIdAsc(orderId).stream().map(CreditNoteView::of).toList();

@@ -43,11 +43,12 @@ public class ExchangeService {
     private final ProductClient productClient;
     private final CustomerNotifier notifier;
     private final StoreCreditService storeCredit;
+    private final CreditNoteService creditNotes;
     private final Clock clock;
     private final String serviceApiKey;
 
     public ExchangeService(ExchangeRequestRepository exchanges, CartRepository orders, OrderService orderService,
-                           ProductClient productClient, CustomerNotifier notifier, StoreCreditService storeCredit, Clock clock,
+                           ProductClient productClient, CustomerNotifier notifier, StoreCreditService storeCredit, CreditNoteService creditNotes, Clock clock,
                            @Value("${internal.service.api-key}") String serviceApiKey) {
         this.exchanges = exchanges;
         this.orders = orders;
@@ -55,6 +56,7 @@ public class ExchangeService {
         this.productClient = productClient;
         this.notifier = notifier;
         this.storeCredit = storeCredit;
+        this.creditNotes = creditNotes;
         this.clock = clock;
         this.serviceApiKey = serviceApiKey;
     }
@@ -187,6 +189,7 @@ public class ExchangeService {
             if (r.getPriceDifference() < 0) {
                 storeCredit.credit(r.getCustomerPhno(), -r.getPriceDifference(), StoreCreditTransaction.Type.REFUND,
                         r.getOrderId(), "Exchange for a cheaper item, order #" + r.getOrderId());
+                issueCreditNote(r);
             }
             r.setStatus(RECEIVED);
             r.setUpdatedAt(clock.instant());
@@ -217,6 +220,17 @@ public class ExchangeService {
 
     public boolean hasExchange(long orderId) {
         return !exchanges.findByOrderIdAndStatusIn(orderId, COUNTING).isEmpty();
+    }
+
+    // The price reduction is a GST credit note on the original invoice (a dearer swap would need a supplementary
+    // invoice, which is not built). A failure here never undoes the exchange; it is logged for the books.
+    private void issueCreditNote(ExchangeRequest r) {
+        try {
+            creditNotes.issueValueReduction(load(r.getOrderId()), r.getProductId(), r.getQuantity(), -r.getPriceDifference(), "EXCHANGE");
+        } catch (RuntimeException e) {
+            org.slf4j.LoggerFactory.getLogger(ExchangeService.class).error(
+                    "Could not issue a GST credit note for the exchange on order {}", r.getOrderId(), e);
+        }
     }
 
     private Product replacement(int productId) {
