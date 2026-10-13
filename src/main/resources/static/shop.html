@@ -665,6 +665,28 @@
         .skeleton-card .sk-line { height: 12px; border-radius: 6px; }
         .skeleton-card .sk-line.short { width: 55%; }
         @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+        /* ---- toasts and in-page dialogs (replace the browser's alert / confirm / prompt) ---- */
+        #toastBox { position: fixed; right: 16px; bottom: 16px; z-index: 300; display: grid; gap: 10px; width: min(380px, calc(100vw - 32px)); pointer-events: none; }
+        .toast {
+          pointer-events: auto; cursor: pointer; padding: 12px 14px; border-radius: 12px; font-size: 14px; line-height: 1.4;
+          background: var(--surface); color: var(--dark); border: 1px solid var(--border); border-left: 4px solid var(--primary);
+          box-shadow: var(--shadow); white-space: pre-wrap; animation: toastIn 0.25s ease both;
+        }
+        .toast.error { border-left-color: var(--red); }
+        .toast.ok { border-left-color: var(--green); }
+        @keyframes toastIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+        .dlg-overlay { position: fixed; inset: 0; z-index: 310; background: rgba(15, 23, 42, 0.55); display: flex; align-items: center; justify-content: center; padding: 16px; }
+        .dlg-box { width: min(440px, 100%); background: var(--surface); color: var(--dark); border: 1px solid var(--border); border-radius: 18px; box-shadow: var(--shadow); padding: 20px; animation: toastIn 0.2s ease both; }
+        .dlg-box .dlg-msg { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; font-size: 15px; margin-bottom: 14px; max-height: 50vh; overflow: auto; }
+        .dlg-box input { width: 100%; margin-bottom: 14px; }
+        .dlg-actions { display: flex; gap: 10px; justify-content: flex-end; }
+        .dlg-actions button { width: auto; min-width: 90px; }
+        @media (max-width: 600px) {
+          #toastBox { right: 12px; left: 12px; width: auto; bottom: 12px; }
+          .dlg-overlay { align-items: flex-end; padding: 0; }
+          .dlg-box { border-radius: 20px 20px 0 0; }
+        }
+        @media (prefers-reduced-motion: reduce) { .toast, .dlg-box { animation: none; } }
         .free-bar { margin: 10px 0 6px; }
         .free-bar-text { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
         .free-bar.done .free-bar-text { color: var(--green); }
@@ -1073,6 +1095,61 @@
     // endpoint holding one customer's own data requires it, so a 401 back means the session expired or was
     // revoked - drop it and ask the customer to sign in again.
     let customerToken = null;
+
+    // ---- toasts and in-page dialogs ----
+    // alert() becomes a non-blocking toast; the browser's confirm and prompt become askConfirm()/askText(), which return promises
+    // (callers await them) and show a themed dialog instead of the browser's.
+    function showToast(message, kind) {
+      let box = document.getElementById("toastBox");
+      if (!box) { box = document.createElement("div"); box.id = "toastBox"; box.setAttribute("aria-live", "polite"); document.body.appendChild(box); }
+      const text = String(message == null ? "" : message);
+      const type = kind || (/could not|couldn.t|cannot|can.t|failed|error|invalid|not valid|enter a|please enter|only \d|expired|blocked|refused|wrong/i.test(text) ? "error"
+        : /placed|saved|sent|thanks|added|removed|requested|withdrawn|copied|done|success|booked|updated/i.test(text) ? "ok" : "");
+      const toast = document.createElement("div");
+      toast.className = "toast" + (type ? " " + type : "");
+      toast.setAttribute("role", "status");
+      toast.textContent = text;
+      const close = () => { if (toast.parentNode) toast.parentNode.removeChild(toast); };
+      toast.addEventListener("click", close);
+      box.appendChild(toast);
+      setTimeout(close, Math.min(10000, 3500 + text.length * 40));
+    }
+    window.alert = function (message) { showToast(message); };
+
+    let dialogQueue = Promise.resolve();
+    function openDialog(message, withInput, defaultValue, okLabel) {
+      const run = () => new Promise(resolve => {
+        const overlay = document.createElement("div");
+        overlay.className = "dlg-overlay";
+        overlay.innerHTML = `<div class="dlg-box" role="dialog" aria-modal="true"><div class="dlg-msg"></div>
+          ${withInput ? `<input type="text" class="dlg-input" />` : ""}
+          <div class="dlg-actions"><button type="button" class="secondary dlg-cancel">Cancel</button><button type="button" class="dlg-ok"></button></div></div>`;
+        overlay.querySelector(".dlg-msg").textContent = String(message);
+        overlay.querySelector(".dlg-ok").textContent = okLabel;
+        const input = overlay.querySelector(".dlg-input");
+        if (input) input.value = defaultValue == null ? "" : String(defaultValue);
+        const previous = document.activeElement;
+        const finish = value => { document.removeEventListener("keydown", onKey, true); overlay.remove(); if (previous && previous.focus) { try { previous.focus(); } catch (e) {} } resolve(value); };
+        const accept = () => finish(withInput ? input.value : true);
+        const cancel = () => finish(withInput ? null : false);
+        function onKey(e) {
+          if (e.key === "Escape") { e.preventDefault(); cancel(); }
+          else if (e.key === "Enter" && (withInput || e.target === overlay.querySelector(".dlg-ok") || !e.target.matches("button"))) { e.preventDefault(); accept(); }
+        }
+        overlay.querySelector(".dlg-ok").addEventListener("click", accept);
+        overlay.querySelector(".dlg-cancel").addEventListener("click", cancel);
+        overlay.addEventListener("mousedown", e => { if (e.target === overlay) cancel(); });
+        document.addEventListener("keydown", onKey, true);
+        document.body.appendChild(overlay);
+        (input || overlay.querySelector(".dlg-ok")).focus();
+        if (input) input.select();
+      });
+      const next = dialogQueue.then(run);
+      dialogQueue = next.catch(() => {});
+      return next;
+    }
+    function askConfirm(message) { return openDialog(message, false, null, "OK"); }
+    function askText(message, defaultValue) { return openDialog(message, true, defaultValue, "OK"); }
 
     async function authFetch(url, options = {}) {
       const headers = new Headers(options.headers || {});
@@ -1610,16 +1687,16 @@
     // For an online order: refund to store credit (instant, no PIN) or back to PhonePe (needs the PIN). Returns
     // the extra query params to send, or null if the customer backed out.
     // noPin: the refund is paid by the shop when the goods are received, so only the destination is asked.
-    function refundChoiceParams(noPin) {
-      const toCredit = confirm("Refund to your Charan Mart store credit instead of PhonePe?\n\n"
+    async function refundChoiceParams(noPin) {
+      const toCredit = await askConfirm("Refund to your Charan Mart store credit instead of PhonePe?\n\n"
         + "OK = store credit (instant, no PIN needed)\nCancel = back to your PhonePe account");
       if (toCredit) return { refundTo: "STORE_CREDIT" };
       // Optionally send part of it to store credit and the rest back to PhonePe.
-      const split = prompt("Send part of the refund to store credit and the rest to PhonePe?\nEnter the percent for store credit (1-99), or leave blank for all to PhonePe:", "");
+      const split = await askText("Send part of the refund to store credit and the rest to PhonePe?\nEnter the percent for store credit (1-99), or leave blank for all to PhonePe:", "");
       const percent = split === null ? 0 : Number(split.trim());
       const refundTo = Number.isInteger(percent) && percent >= 1 && percent <= 99 ? { refundTo: "SPLIT:" + percent } : {};
       if (noPin) return refundTo;
-      const pin = prompt("Enter your PhonePe PIN to confirm the refund:");
+      const pin = await askText("Enter your PhonePe PIN to confirm the refund:");
       if (!pin) return null;
       return { payerPhno: customerPhno, payerPin: pin, ...refundTo };
     }
@@ -2117,7 +2194,7 @@
         await navigator.clipboard.writeText(code);
         alert("Code copied: " + code);
       } catch {
-        prompt("Copy your referral code:", code);
+        await askText("Copy your referral code:", code);
       }
     }
 
@@ -2363,7 +2440,7 @@
     }
 
     async function withdrawMyExchange(id) {
-      if (!confirm("Withdraw this exchange request?")) return;
+      if (!await askConfirm("Withdraw this exchange request?")) return;
       const response = await authFetch(`${BASE_URL}/cart/exchanges/${encodeURIComponent(id)}/withdraw`, { method: "POST" });
       if (!response.ok) { alert((await response.text()) || "Could not withdraw the exchange."); return; }
       loadAccountView();
@@ -2407,17 +2484,17 @@
         const d = p.productPrice - unitPrice;
         return Math.abs(d) < 0.005 ? "" : d > 0 ? ` - Rs. ${d.toFixed(2)} more per unit, from store credit` : ` - Rs. ${(-d).toFixed(2)} back per unit as store credit`;
       };
-      const pick = prompt("Exchange for which product? Type its number:\n" +
+      const pick = await askText("Exchange for which product? Type its number:\n" +
         options.map(p => `${p.productId}: ${p.productName} (Rs. ${Number(p.productPrice).toFixed(2)})${diffNote(p)}`).join("\n"));
       if (pick === null) return;
       const replacementProductId = Number(pick);
       if (!options.some(p => p.productId === replacementProductId)) { alert("Pick one of the numbers listed."); return; }
       let quantity = 1;
       if (outstanding > 1) {
-        quantity = Number(prompt(`How many to exchange? (1-${outstanding})`, "1"));
+        quantity = Number(await askText(`How many to exchange? (1-${outstanding})`, "1"));
         if (!Number.isInteger(quantity) || quantity < 1 || quantity > outstanding) { alert(`Enter a whole number from 1 to ${outstanding}.`); return; }
       }
-      const reason = prompt("Why are you exchanging this item?");
+      const reason = await askText("Why are you exchanging this item?");
       if (!reason) return;
       const params = new URLSearchParams({ productId, quantity, replacementProductId, reason });
       const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/exchange?${params}`, { method: "POST" });
@@ -2429,7 +2506,7 @@
     async function changeMyItem(kind, orderId, productId, outstanding, paymentMethod) {
       let quantity = 1;
       if (outstanding > 1) {
-        const answer = prompt(`How many to ${kind}? (1-${outstanding})`, "1");
+        const answer = await askText(`How many to ${kind}? (1-${outstanding})`, "1");
         if (answer === null) return;
         quantity = Number(answer);
         if (!Number.isInteger(quantity) || quantity < 1 || quantity > outstanding) {
@@ -2439,14 +2516,14 @@
       }
       const params = new URLSearchParams({ quantity: String(quantity) });
       if (kind === "return") {
-        const reason = prompt("Why are you returning this item?");
+        const reason = await askText("Why are you returning this item?");
         if (!reason) return;
         params.set("reason", reason);
-      } else if (!confirm(`Cancel ${quantity} of this item? This can't be undone.`)) {
+      } else if (!await askConfirm(`Cancel ${quantity} of this item? This can't be undone.`)) {
         return;
       }
       if (paymentMethod !== "CASH") {
-        const choice = refundChoiceParams(kind === "return" && returnPolicy.pickup);
+        const choice = await refundChoiceParams(kind === "return" && returnPolicy.pickup);
         if (!choice) return;
         Object.entries(choice).forEach(([k, v]) => params.set(k, v));
       }
@@ -2489,7 +2566,7 @@
       const forfeits = [];
       if (preview.loyaltyPoints > 0) forfeits.push(`${preview.loyaltyPoints} loyalty point(s)`);
       if (preview.storeCredit > 0) forfeits.push(`store credit of ₹${preview.storeCredit.toFixed(2)}`);
-      if (!confirm("Delete your account?\n\n"
+      if (!await askConfirm("Delete your account?\n\n"
           + "This permanently erases your saved addresses, wishlist, stock alerts, saved cart"
           + (preview.activeSubscriptions > 0 ? `, ${preview.activeSubscriptions} subscription(s)` : "") + " and support requests, and unlinks " + preview.email + ".\n"
           + "Your past orders are kept for invoices, without your name or phone number.\n"
@@ -2497,7 +2574,7 @@
           + "\nWe will email a confirmation code to " + preview.email + ". This cannot be undone.")) return;
       const requestResponse = await authFetch(`${BASE_URL}/customer/account/delete/request`, { method: "POST" });
       if (!requestResponse.ok) { alert((await requestResponse.text()) || "Couldn't send the code. Please try again."); return; }
-      const code = prompt(`We emailed a 6-digit code to ${preview.email}. Enter it to permanently delete your account:`);
+      const code = await askText(`We emailed a 6-digit code to ${preview.email}. Enter it to permanently delete your account:`);
       if (code === null || !code.trim()) return;
       const confirmResponse = await authFetch(`${BASE_URL}/customer/account/delete/confirm`, {
         method: "POST",
@@ -2523,14 +2600,14 @@
     // "Report a problem" on an order: what kind, which item (optional), what happened, and an optional photo link.
     async function reportProblem(orderId) {
       const order = accountOrders.find(o => o.orderId === orderId);
-      const choice = prompt("What's the problem? (Many answers are in the Help tab.) Enter a number:\n" + SUPPORT_CATEGORIES.map((c, i) => `${i + 1}. ${c[1]}`).join("\n"));
+      const choice = await askText("What's the problem? (Many answers are in the Help tab.) Enter a number:\n" + SUPPORT_CATEGORIES.map((c, i) => `${i + 1}. ${c[1]}`).join("\n"));
       if (choice === null) return;
       const category = SUPPORT_CATEGORIES[Number(choice) - 1];
       if (!category) { alert("Please enter one of the numbers shown."); return; }
       let productId = null;
       if (order && order.orderItems && order.orderItems.length > 1) {
         const nameById = new Map(products.map(p => [p.productId, p.productName]));
-        const pick = prompt("Which item is it about? Enter a number, or leave blank for the whole order:\n"
+        const pick = await askText("Which item is it about? Enter a number, or leave blank for the whole order:\n"
           + order.orderItems.map((it, i) => `${i + 1}. ${nameById.get(it.productId) || "Product #" + it.productId}`).join("\n"));
         if (pick === null) return;
         if (pick.trim()) {
@@ -2541,9 +2618,9 @@
       } else if (order && order.orderItems && order.orderItems.length === 1) {
         productId = order.orderItems[0].productId;
       }
-      const message = prompt("Tell us what happened (at least 5 characters):");
+      const message = await askText("Tell us what happened (at least 5 characters):");
       if (message === null) return;
-      const photoUrl = prompt("Optional: a link to a photo of the problem (leave blank to skip):", "");
+      const photoUrl = await askText("Optional: a link to a photo of the problem (leave blank to skip):", "");
       if (photoUrl === null) return;
       const response = await authFetch(`${BASE_URL}/support/tickets`, {
         method: "POST",
@@ -2572,7 +2649,7 @@
     }
 
     async function replyToTicket(ticketId) {
-      const message = prompt("Your message:");
+      const message = await askText("Your message:");
       if (!message) return;
       const response = await authFetch(`${BASE_URL}/support/tickets/${ticketId}/reply?phno=${encodeURIComponent(customerPhno)}`, {
         method: "POST",
@@ -2631,12 +2708,12 @@
     let ratedOrderIds = new Set();
 
     async function rateMyOrder(orderId) {
-      const rating = Number(prompt("How would you rate this order overall? (1 = poor, 5 = excellent)"));
+      const rating = Number(await askText("How would you rate this order overall? (1 = poor, 5 = excellent)"));
       if (!rating) return;
       if (!Number.isInteger(rating) || rating < 1 || rating > 5) { alert("Please enter a whole number from 1 to 5."); return; }
-      const deliveryAnswer = prompt("How was the delivery? (1-5, or leave blank to skip)");
+      const deliveryAnswer = await askText("How was the delivery? (1-5, or leave blank to skip)");
       if (deliveryAnswer === null) return;
-      const comment = prompt("Anything else you'd like to tell us? (optional)");
+      const comment = await askText("Anything else you'd like to tell us? (optional)");
       if (comment === null) return;
       let query = `phno=${encodeURIComponent(customerPhno)}&orderId=${orderId}&rating=${rating}`;
       if (deliveryAnswer.trim()) query += `&deliveryRating=${encodeURIComponent(deliveryAnswer.trim())}`;
@@ -2652,9 +2729,9 @@
     // Changes the delivery window and/or instructions of an order that hasn't shipped yet.
     async function changeDelivery(orderId) {
       const slots = ["MORNING", "AFTERNOON", "EVENING"];
-      const slotAnswer = prompt("New delivery window? Enter 1 = Morning (9-12), 2 = Afternoon (12-4), 3 = Evening (4-8), 0 = any time.\nLeave blank to keep the current one.");
+      const slotAnswer = await askText("New delivery window? Enter 1 = Morning (9-12), 2 = Afternoon (12-4), 3 = Evening (4-8), 0 = any time.\nLeave blank to keep the current one.");
       if (slotAnswer === null) return;
-      const note = prompt("New delivery instructions? Leave blank to keep the current ones, or type - to clear them.");
+      const note = await askText("New delivery instructions? Leave blank to keep the current ones, or type - to clear them.");
       if (note === null) return;
       const params = [];
       if (slotAnswer.trim() !== "") {
@@ -2674,7 +2751,7 @@
       const response = await authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`);
       const list = response.ok ? await response.json() : [];
       if (!list.length) { alert("You have no saved addresses yet - add one under My account first."); return; }
-      const n = Number(prompt("Deliver this order to which address?\n" + list.map((a, i) =>
+      const n = Number(await askText("Deliver this order to which address?\n" + list.map((a, i) =>
         `${i + 1}. ${a.label ? a.label + ": " : ""}${a.line1}, ${a.city} ${a.pincode}`).join("\n")));
       if (!Number.isInteger(n) || n < 1 || n > list.length) return;
       const result = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/address?addressId=${list[n - 1].id}`, { method: "PUT" });
@@ -2684,17 +2761,17 @@
 
     // Adds units of an in-stock product to a not-yet-shipped cash order. Picks the product by name from the loaded catalog.
     async function addItemToMyOrder(orderId) {
-      const term = prompt("Which product do you want to add? Type part of its name.");
+      const term = await askText("Which product do you want to add? Type part of its name.");
       if (!term || !term.trim()) return;
       const matches = products.filter(p => p.productStock > 0 && p.productName.toLowerCase().includes(term.trim().toLowerCase())).slice(0, 8);
       if (!matches.length) { alert("No in-stock product matches that."); return; }
       let pick = matches[0];
       if (matches.length > 1) {
-        const n = Number(prompt("Which one?\n" + matches.map((p, i) => `${i + 1}. ${p.productName} - \u20b9${p.productPrice}`).join("\n")));
+        const n = Number(await askText("Which one?\n" + matches.map((p, i) => `${i + 1}. ${p.productName} - \u20b9${p.productPrice}`).join("\n")));
         if (!Number.isInteger(n) || n < 1 || n > matches.length) return;
         pick = matches[n - 1];
       }
-      const qty = Number(prompt(`How many of ${pick.productName} (\u20b9${pick.productPrice} each, ${pick.productStock} in stock)?`, "1"));
+      const qty = Number(await askText(`How many of ${pick.productName} (\u20b9${pick.productPrice} each, ${pick.productStock} in stock)?`, "1"));
       if (!Number.isInteger(qty) || qty < 1) return;
       const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/items/add?productId=${pick.productId}&quantity=${qty}`, { method: "POST" });
       if (!response.ok) { alert((await response.text()) || "Couldn't add that item."); return; }
@@ -2723,15 +2800,15 @@
     }
 
     async function cancelMyOrder(orderId, paymentMethod) {
-      if (!confirm(`Cancel order #${orderId}? This can't be undone.${cancelPolicyText()}`)) return;
-      const choice = prompt("Why are you cancelling? Enter a number (or leave blank to skip):\n"
+      if (!await askConfirm(`Cancel order #${orderId}? This can't be undone.${cancelPolicyText()}`)) return;
+      const choice = await askText("Why are you cancelling? Enter a number (or leave blank to skip):\n"
         + CANCEL_REASONS.map((r, i) => `${i + 1}. ${r[1]}`).join("\n"));
       if (choice === null) return;
       const picked = CANCEL_REASONS[Number(choice) - 1];
 
       let query = "";
       if (paymentMethod !== "CASH") {
-        const choice = refundChoiceParams();
+        const choice = await refundChoiceParams();
         if (!choice) return;
         query = "?" + new URLSearchParams(choice);
       }
@@ -2770,7 +2847,7 @@
     }
 
     async function requestMyReturn(orderId) {
-      const reason = prompt("Why do you want to return this order?");
+      const reason = await askText("Why do you want to return this order?");
       if (!reason) return;
       const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/return/request?reason=${encodeURIComponent(reason)}`, { method: "POST" });
       if (!response.ok) {
@@ -2781,12 +2858,12 @@
     }
 
     async function returnMyOrder(orderId, paymentMethod) {
-      const reason = prompt("Why are you returning this order?");
+      const reason = await askText("Why are you returning this order?");
       if (!reason) return;
 
       let query = `?reason=${encodeURIComponent(reason)}`;
       if (paymentMethod !== "CASH") {
-        const choice = refundChoiceParams(returnPolicy.pickup);
+        const choice = await refundChoiceParams(returnPolicy.pickup);
         if (!choice) return;
         query += "&" + new URLSearchParams(choice);
       }
@@ -3390,7 +3467,7 @@
     }
 
     async function subscriptionAction(id, action) {
-      if (action === "cancel" && !confirm("Cancel this subscription?")) return;
+      if (action === "cancel" && !await askConfirm("Cancel this subscription?")) return;
       const url = `${BASE_URL}/subscriptions/${id}` + (action === "cancel" ? "" : "/" + action) + `?phno=${encodeURIComponent(customerPhno)}`;
       const response = await authFetch(url, { method: action === "cancel" ? "DELETE" : "PUT" });
       if (!response.ok) { alert((await response.text()) || "Couldn't update the subscription."); return; }
@@ -3509,7 +3586,7 @@
 
     // A report only queues the review for an admin to look at (the review stays visible until they hide it).
     async function reportReview(reviewId) {
-      const reason = prompt("Why are you reporting this review? (optional)");
+      const reason = await askText("Why are you reporting this review? (optional)");
       if (reason === null) return;
       const response = await authFetch(`${BASE_URL}/cart/reviews/flag?productId=${modalProductId}&reviewId=${reviewId}`
         + (reason.trim() ? `&reason=${encodeURIComponent(reason.trim())}` : ""), { method: "POST" });
