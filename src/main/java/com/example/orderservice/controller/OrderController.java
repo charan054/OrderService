@@ -74,6 +74,8 @@ public class OrderController {
     @Autowired
     private com.example.orderservice.service.DeliveryFailureService deliveryFailureService;
     @Autowired
+    private com.example.orderservice.service.PackingSlipService packingSlipService;
+    @Autowired
     private ReorderSuggestionService reorderSuggestionService;
 
     @Autowired
@@ -692,6 +694,13 @@ public class OrderController {
     public List<com.example.orderservice.entity.DeliveryAttempt> deliveryAttempts(@PathVariable long orderId) {
         requireOrderAccess(orderId);
         return deliveryFailureService.forOrder(orderId);
+    }
+
+    // Staff: packing slips + one combined pick list for placed (default) or shipped orders, or for chosen order ids.
+    @GetMapping("/packing-slips")
+    public com.example.orderservice.dto.PackingSlips packingSlips(@RequestParam(required = false) com.example.orderservice.entity.OrderStatus status,
+                                                                  @RequestParam(required = false) List<Long> orderIds) {
+        return packingSlipService.build(status, orderIds);
     }
 
     @GetMapping("/returns/pickups")
