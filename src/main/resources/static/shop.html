@@ -2280,10 +2280,8 @@
     async function exchangeMyItem(orderId, productId, outstanding, unitPrice) {
       const options = products.filter(p => p.productStock > 0 && p.productPrice <= unitPrice + 0.005).slice(0, 12);
       if (!options.length) { alert("Nothing in stock at that price or lower right now."); return; }
-      const pick = prompt("Exchange for which product? Type its number:
-" +
-        options.map(p => `${p.productId}: ${p.productName} (Rs. ${Number(p.productPrice).toFixed(2)})`).join("
-"));
+      const pick = prompt("Exchange for which product? Type its number:\n" +
+        options.map(p => `${p.productId}: ${p.productName} (Rs. ${Number(p.productPrice).toFixed(2)})`).join("\n"));
       if (pick === null) return;
       const replacementProductId = Number(pick);
       if (!options.some(p => p.productId === replacementProductId)) { alert("Pick one of the numbers listed."); return; }
