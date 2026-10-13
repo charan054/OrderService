@@ -204,6 +204,17 @@ public class CustomerNotifier {
         if ("STORE_CREDIT".equals(order.getRefundDestination())) {
             return "Rs. " + formatted + " has been added to your Charan Mart store credit.";
         }
+        String destination = order.getRefundDestination();
+        if (destination != null && destination.startsWith("SPLIT:")) {
+            try {
+                double credit = Double.parseDouble(destination.substring("SPLIT:".length()));
+                return "Of the Rs. " + formatted + " refund, Rs. " + String.format(Locale.ROOT, "%.2f", credit)
+                        + " has been added to your Charan Mart store credit and Rs. " + String.format(Locale.ROOT, "%.2f", amount - credit)
+                        + " has been refunded to your PhonePe account.";
+            } catch (NumberFormatException e) {
+                // fall back to the plain wording below
+            }
+        }
         boolean cash = order.getPaymentMethod() != null && order.getPaymentMethod().name().equals("CASH");
         return cash ? "Rs. " + formatted + " is no longer due." : "Rs. " + formatted + " has been refunded to your PhonePe account.";
     }

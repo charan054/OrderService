@@ -721,7 +721,7 @@ public class OrderService {
                        String reason,
                        String note,
                        String refundTo) {
-        boolean toStoreCredit = refundsToStoreCredit(refundTo);
+        int creditPercent = creditPercentOf(refundTo);
         String reasonCode = reason == null || reason.isBlank() ? null : reason.trim().toUpperCase(java.util.Locale.ROOT);
         if (reasonCode != null && !CANCEL_REASONS.contains(reasonCode)) {
             throw new ProductException("Unknown cancellation reason. Choose one of: " + String.join(", ", CANCEL_REASONS));
@@ -748,7 +748,7 @@ public class OrderService {
         double refundedNow = remainingRefundable(cart);
         // No amount for a PhonePe refund: PhonepayService refunds whatever is still unrefunded, i.e. everything
         // minus any per-item cancellations already paid back.
-        String destination = payBack(cart, refundedNow, null, toStoreCredit, authorization, idempotencyKey, payerPhno, payerPin);
+        String destination = payBack(cart, refundedNow, null, creditPercent, authorization, idempotencyKey, payerPhno, payerPin);
         restoreStoreCreditUsed(cart, null);
         List<CreditNoteService.Change> taxChanges = closeOutstanding(cart, false);
         cart.setRefundedAmount(cart.getTotalPrice());
@@ -937,7 +937,7 @@ public class OrderService {
                        Long payerPhno,
                        String payerPin,
                        String refundTo) {
-        boolean toStoreCredit = refundsToStoreCredit(refundTo);
+        int creditPercent = creditPercentOf(refundTo);
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A return reason is required");
         }
@@ -956,7 +956,7 @@ public class OrderService {
         }
 
         double refundedNow = remainingRefundable(cart);
-        String destination = payBack(cart, refundedNow, null, toStoreCredit, authorization, idempotencyKey, payerPhno, payerPin);
+        String destination = payBack(cart, refundedNow, null, creditPercent, authorization, idempotencyKey, payerPhno, payerPin);
         restoreStoreCreditUsed(cart, null);
         List<CreditNoteService.Change> taxChanges = closeOutstanding(cart, true);
         cart.setRefundedAmount(cart.getTotalPrice());
@@ -1017,7 +1017,7 @@ public class OrderService {
                        Long payerPhno,
                        String payerPin,
                        String refundTo) {
-        boolean toStoreCredit = refundsToStoreCredit(refundTo);
+        int creditPercent = creditPercentOf(refundTo);
         Cart cart = orderRepository.findById(orderId)
                 .orElseThrow(() -> new OrderNotFoundException("Order not found"));
         if (cart.getStatus() != OrderStatus.PLACED) {
@@ -1027,7 +1027,7 @@ public class OrderService {
         double refundAmount = partialRefundAmount(cart, item, quantity);
         Double creditShare = isLastOutstanding(cart, quantity) ? null : itemShare(cart, item, quantity);
         String destination = refundPartOfOrder(cart, refundAmount, authorization, idempotencyKey, payerPhno, payerPin,
-                "cancelled", toStoreCredit);
+                "cancelled", creditPercent);
         restoreStoreCreditUsed(cart, creditShare);
 
         int keptBefore = item.getOutstandingQuantity();
@@ -1103,7 +1103,7 @@ public class OrderService {
                        Long payerPhno,
                        String payerPin,
                        String refundTo) {
-        boolean toStoreCredit = refundsToStoreCredit(refundTo);
+        int creditPercent = creditPercentOf(refundTo);
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A return reason is required");
         }
@@ -1120,7 +1120,7 @@ public class OrderService {
         double refundAmount = partialRefundAmount(cart, item, quantity);
         boolean lastUnits = isLastOutstanding(cart, quantity);
         String destination = refundPartOfOrder(cart, refundAmount, authorization, idempotencyKey, payerPhno, payerPin,
-                "returned", toStoreCredit);
+                "returned", creditPercent);
         restoreStoreCreditUsed(cart, lastUnits ? null : share);
 
         int keptBefore = item.getOutstandingQuantity();
@@ -1194,14 +1194,14 @@ public class OrderService {
 
     // A per-item refund of `amount` (see payBack for where it goes). Returns the destination, as payBack does.
     private String refundPartOfOrder(Cart cart, double amount, String authorization, String idempotencyKey,
-                                     Long payerPhno, String payerPin, String what, boolean toStoreCredit) {
+                                     Long payerPhno, String payerPin, String what, int creditPercent) {
         if (amount <= 0) {
             return null;
         }
-        if (cart.getPaymentMethod() != PaymentMethod.CASH && !toStoreCredit && cart.getPaymentTransactionId() == null) {
+        if (cart.getPaymentMethod() != PaymentMethod.CASH && creditPercent < 100 && cart.getPaymentTransactionId() == null) {
             throw new ProductException("This item cannot be " + what);
         }
-        return payBack(cart, amount, BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP), toStoreCredit,
+        return payBack(cart, amount, BigDecimal.valueOf(amount).setScale(2, RoundingMode.HALF_UP), creditPercent,
                 authorization, idempotencyKey, payerPhno, payerPin);
     }
 
@@ -1213,7 +1213,7 @@ public class OrderService {
     //  - online order, customer chose store credit: straight into their store credit, no PhonePe call;
     //  - otherwise a PhonePe refund (phonepeAmount null = everything still unrefunded on the payment).
     // Returns STORE_CREDIT when the money went to store credit, null otherwise.
-    private String payBack(Cart cart, double amount, BigDecimal phonepeAmount, boolean toStoreCredit,
+    private String payBack(Cart cart, double amount, BigDecimal phonepeAmount, int creditPercent,
                            String authorization, String idempotencyKey, Long payerPhno, String payerPin) {
         if (cart.getPaymentMethod() == PaymentMethod.CASH) {
             if (amount > 0 && cart.isPaid() && cashRefundsToStoreCredit) {
@@ -1223,7 +1223,7 @@ public class OrderService {
             }
             return null;
         }
-        if (toStoreCredit) {
+        if (creditPercent >= 100) {
             if (amount > 0) {
                 storeCreditService.credit(cart.getCustomerPhno(), amount, StoreCreditTransaction.Type.REFUND,
                         cart.getOrderId(), "Refund for order #" + cart.getOrderId());
@@ -1234,12 +1234,23 @@ public class OrderService {
         if (paidWithoutCharge(cart)) {
             return null;
         }
+        // A split: the PhonePe part is refunded first (it can fail; nothing has moved yet), then the rest goes to store credit.
+        double creditPart = 0;
+        if (creditPercent > 0 && amount > 0) {
+            creditPart = roundMoney(amount * creditPercent / 100.0);
+            phonepeAmount = BigDecimal.valueOf(roundMoney(amount - creditPart)).setScale(2, RoundingMode.HALF_UP);
+        }
         if (authorization == STAFF_REFUND) {
             merchantRefund(cart.getPaymentTransactionId(), phonepeAmount, idempotencyKey);
-            return null;
+        } else {
+            String token = resolveBuyerToken(authorization, payerPhno, payerPin);
+            refund(token, cart.getPaymentTransactionId(), phonepeAmount, idempotencyKey);
         }
-        String token = resolveBuyerToken(authorization, payerPhno, payerPin);
-        refund(token, cart.getPaymentTransactionId(), phonepeAmount, idempotencyKey);
+        if (creditPart > 0) {
+            storeCreditService.credit(cart.getCustomerPhno(), creditPart, StoreCreditTransaction.Type.REFUND,
+                    cart.getOrderId(), "Part of the refund for order #" + cart.getOrderId());
+            return SPLIT_PREFIX + creditPart;
+        }
         return null;
     }
 
@@ -1272,18 +1283,32 @@ public class OrderService {
         return cart.getOrderItems().stream().mapToInt(OrderItem::getOutstandingQuantity).sum() - quantity == 0;
     }
 
-    private static boolean refundsToStoreCredit(String refundTo) {
+    static final String SPLIT_PREFIX = "SPLIT:";
+
+    // Share of a refund that goes to store credit, in percent: 0 = all back to the original payment, 100 = all to
+    // store credit, in between = "SPLIT:<percent>" (1-99, the rest goes back to the original payment).
+    private static int creditPercentOf(String refundTo) {
         if (refundTo == null || refundTo.isBlank()) {
-            return false;
+            return 0;
         }
         String value = refundTo.trim().toUpperCase(java.util.Locale.ROOT);
         if (value.equals(STORE_CREDIT)) {
-            return true;
+            return 100;
         }
         if (value.equals("ORIGINAL")) {
-            return false;
+            return 0;
         }
-        throw new ProductException("refundTo must be STORE_CREDIT or ORIGINAL");
+        if (value.startsWith(SPLIT_PREFIX)) {
+            try {
+                int percent = Integer.parseInt(value.substring(SPLIT_PREFIX.length()).trim());
+                if (percent >= 1 && percent <= 99) {
+                    return percent;
+                }
+            } catch (NumberFormatException e) {
+                // falls through to the error below
+            }
+        }
+        throw new ProductException("refundTo must be STORE_CREDIT, ORIGINAL or SPLIT:<1-99> (percent to store credit)");
     }
 
     // Whole-order cancel/return: puts back in stock only what earlier per-item changes haven't already, and
