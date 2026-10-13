@@ -156,6 +156,9 @@ public class OrderController {
                             @RequestParam(required = false) String note,
                             @RequestParam(required = false) String refundTo){
         requireOrderAccess(orderId);
+        if (!CustomerAccess.isService()) {
+            orderService.assertCustomerMayCancel(orderId, reason);
+        }
         return orderService.cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin, reason, note, refundTo);
     }
     // The order's owner (signed-in session) or the service key: change delivery slot/instructions while still PLACED.
@@ -214,6 +217,9 @@ public class OrderController {
                            @RequestParam(required = false) String payerPin,
                            @RequestParam(required = false) String refundTo){
         requireOrderAccess(orderId);
+        if (!CustomerAccess.isService()) {
+            orderService.assertCustomerMayCancel(orderId, "item");   // items carry no reason; only the lock applies in practice
+        }
         return orderService.cancelItem(orderId, productId, quantity, authorization, idempotencyKey, payerPhno, payerPin, refundTo);
     }
     @PostMapping("/{orderId}/items/{productId}/return")
@@ -626,6 +632,12 @@ public class OrderController {
     }
 
     // Whether the storefront should offer "Request return" and wait for approval first.
+    // How long a customer may cancel freely / at all (public; shown in the storefront's cancel prompt).
+    @GetMapping("/cancelpolicy")
+    public java.util.Map<String, Integer> cancelPolicy() {
+        return orderService.getCancelPolicy();
+    }
+
     @GetMapping("/returnpolicy")
     public java.util.Map<String, Boolean> returnPolicy() {
         return java.util.Map.of("approvalRequired", returnApprovalService.isRequired(), "pickup", returnPickupService.isEnabled());
