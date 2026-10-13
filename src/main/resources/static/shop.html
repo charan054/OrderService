@@ -665,6 +665,13 @@
         .skeleton-card .sk-line { height: 12px; border-radius: 6px; }
         .skeleton-card .sk-line.short { width: 55%; }
         @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+        .free-bar { margin: 10px 0 6px; }
+        .free-bar-text { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+        .free-bar.done .free-bar-text { color: var(--green); }
+        .free-bar-track { height: 8px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+        .free-bar-fill { height: 100%; width: 0; border-radius: 999px; background: linear-gradient(90deg, var(--primary), var(--accent)); transition: width 0.4s ease; }
+        .free-bar.done .free-bar-fill { background: linear-gradient(90deg, #22c55e, #16a34a); }
+        @media (prefers-reduced-motion: reduce) { .free-bar-fill { transition: none; } }
         .gift-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; font-size: 14px; color: var(--muted); cursor: pointer; }
         .gift-row input { width: auto; margin: 0; }
         .filter-row select { flex: 1 1 150px; }
@@ -777,6 +784,10 @@
                 <div id="cartLines"><p style="color:var(--muted); font-size:14px;">Your cart is empty.</p></div>
                 <div id="laterBox"></div>
                 <div id="cartShare" class="hidden" style="margin-top:8px;"><button class="secondary" style="width:auto;" onclick="shareCart()">Share cart</button> <span id="cartShareMsg" style="font-size:12px; color:var(--muted);"></span></div>
+                <div id="freeDeliveryBar" class="free-bar hidden" aria-live="polite">
+                    <div class="free-bar-text" id="freeDeliveryText"></div>
+                    <div class="free-bar-track"><div class="free-bar-fill" id="freeDeliveryFill"></div></div>
+                </div>
                 <div class="total-row hidden" id="cartDeliveryRow"><span id="cartDeliveryLabel">Delivery</span><span id="cartDelivery">₹0</span></div>
                 <div class="total-row"><span>Total</span><span id="cartTotal">₹0</span></div>
 
@@ -3867,6 +3878,22 @@
         : "";
     }
 
+    // "Add Rs. X more for free delivery": only when a fee exists, the customer's threshold is a real amount and the cart is not empty.
+    function freeDeliveryProgress(goods, baseFee, freeAbove, hasItems) {
+      if (!hasItems || !(baseFee > 0) || !(freeAbove > 0)) return null;
+      if (goods >= freeAbove) return { done: true, percent: 100, text: "You have unlocked free delivery" };
+      const more = Math.ceil((freeAbove - goods) * 100) / 100;
+      return { done: false, percent: Math.max(4, Math.round(goods / freeAbove * 100)), text: `Add Rs. ${more.toFixed(2)} more for free delivery` };
+    }
+    function renderFreeDeliveryBar(goods, baseFee, freeAbove) {
+      const bar = document.getElementById("freeDeliveryBar");
+      const progress = freeDeliveryProgress(goods, baseFee, freeAbove, cart.length > 0);
+      bar.classList.toggle("hidden", !progress);
+      if (!progress) return;
+      bar.classList.toggle("done", progress.done);
+      document.getElementById("freeDeliveryText").textContent = progress.text;
+      document.getElementById("freeDeliveryFill").style.width = progress.percent + "%";
+    }
     function renderCart() {
       const linesBox = document.getElementById("cartLines");
       if (!cart.length) {
@@ -3897,6 +3924,7 @@
       document.getElementById("cartDeliveryLabel").textContent = fee > 0 && freeAbove > 0
         ? `Delivery (free from ₹${freeAbove.toFixed(0)}${myTier !== "BRONZE" && freeAbove < deliveryTerms.freeAbove ? " for " + myTier.toLowerCase() + " members" : ""})` : "Delivery";
       document.getElementById("cartTotal").textContent = `₹${(goods + fee).toFixed(2)}`;
+      renderFreeDeliveryBar(goods, baseFee, freeAbove);
       renderCouponSuggestions();
       saveCart();
     }
