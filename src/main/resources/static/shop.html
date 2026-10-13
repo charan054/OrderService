@@ -2165,6 +2165,7 @@
             ${order.carrier || order.trackingNumber ? `<span class="meta">Shipped${order.carrier ? " via " + escapeHtml(order.carrier) : ""}${order.trackingNumber ? ", tracking " + escapeHtml(order.trackingNumber) : ""}</span>` : ""}
           </div>
           <div class="price">₹${order.totalPrice.toFixed(2)}${order.refundedAmount > 0 ? `<span class="meta">₹${order.refundedAmount.toFixed(2)} ${order.paymentMethod === "CASH" ? "taken off" : "refunded"}</span>` : ""}</div>
+          <button class="secondary" style="width:auto;" onclick="toggleOrderTimeline(${order.orderId}, this)">Timeline</button>
           ${order.refundedAmount > 0 || order.status === "CANCELLED" || order.status === "RETURNED" ? `<button class="secondary" style="width:auto;" onclick="showRefundStatus(${order.orderId})">Refund status</button>` : ""}
           <button class="secondary" style="width:auto;" onclick="showInvoice(${order.orderId})">Invoice</button>
           <button class="secondary" style="width:auto;" onclick="downloadInvoicePdf(${order.orderId})">Download PDF</button>
@@ -3446,6 +3447,22 @@
     // Opens a print-friendly receipt for one of the logged-in customer's own orders in a new window (Print / Save
     // as PDF via the browser). Data comes from GET /cart/{id}/invoice, which checks the phone number matches.
     // Where this order's refund went - the server's own summary sentence plus when the order was last cancelled/returned.
+    // Inline story of one order (GET /cart/{id}/timeline), shown under its row; pressing the button again hides it.
+    async function toggleOrderTimeline(orderId, button) {
+      const row = button.closest(".order-row");
+      const existing = row.nextElementSibling;
+      if (existing && existing.classList.contains("order-timeline")) { existing.remove(); return; }
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/timeline?phno=${encodeURIComponent(customerPhno)}`);
+      if (!response.ok) { alert("Couldn't load the timeline for order #" + orderId + "."); return; }
+      const steps = await response.json();
+      const box = document.createElement("div");
+      box.className = "order-timeline";
+      box.style.cssText = "margin:-4px 0 12px 12px; padding:8px 12px; border-left:3px solid var(--border); font-size:13px;";
+      box.innerHTML = steps.length ? steps.map(s => `<div style="margin:4px 0;"><strong>${escapeHtml(s.title)}</strong>
+          <span class="meta">${new Date(s.at).toLocaleString()}</span></div>`).join("") : `<span class="meta">Nothing recorded yet.</span>`;
+      row.after(box);
+    }
+
     async function showRefundStatus(orderId) {
       const response = await authFetch(`${BASE_URL}/cart/${orderId}/refunds?phno=${encodeURIComponent(customerPhno)}`);
       if (!response.ok) { alert("Couldn't load the refund details for order #" + orderId + "."); return; }

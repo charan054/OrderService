@@ -1,0 +1,99 @@
+package com.example.orderservice.service;
+
+import com.example.orderservice.dto.TimelineEntry;
+import com.example.orderservice.entity.Cart;
+import com.example.orderservice.entity.NotificationLog;
+import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.StoreCreditTransaction;
+import com.example.orderservice.entity.TrackingEvent;
+import com.example.orderservice.exception.OrderNotFoundException;
+import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.repository.NotificationLogRepository;
+import com.example.orderservice.repository.StoreCreditTransactionRepository;
+import com.example.orderservice.repository.TrackingEventRepository;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+class OrderTimelineServiceTest {
+    private static final long PHNO = 9000000001L;
+    private static final Instant T0 = Instant.parse("2026-10-10T10:00:00Z");
+
+    private CartRepository orders;
+    private TrackingEventRepository tracking;
+    private NotificationLogRepository notifications;
+    private StoreCreditTransactionRepository credits;
+    private OrderTimelineService service;
+    private Cart order;
+
+    @BeforeEach
+    void setUp() {
+        orders = mock(CartRepository.class);
+        tracking = mock(TrackingEventRepository.class);
+        notifications = mock(NotificationLogRepository.class);
+        credits = mock(StoreCreditTransactionRepository.class);
+        service = new OrderTimelineService(orders, tracking, notifications, credits);
+        order = new Cart();
+        order.setOrderId(42L);
+        order.setCustomerPhno(PHNO);
+        order.setStatus(OrderStatus.RETURNED);
+        order.setCarrier("Delhivery");
+        when(orders.findById(42L)).thenReturn(Optional.of(order));
+        when(tracking.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        when(notifications.findByOrderIdOrderBySentAtAsc(42L)).thenReturn(List.of());
+        when(credits.findByOrderIdAndTypeOrderByIdAsc(42L, StoreCreditTransaction.Type.REFUND)).thenReturn(List.of());
+    }
+
+    private TrackingEvent event(OrderStatus status, long minutes) {
+        TrackingEvent e = new TrackingEvent();
+        e.setOrderId(42L);
+        e.setStatus(status);
+        e.setTimestamp(T0.plusSeconds(minutes * 60));
+        return e;
+    }
+
+    private NotificationLog note(OrderStatus type, String message, long minutes) {
+        NotificationLog n = new NotificationLog();
+        n.setOrderId(42L);
+        n.setEventType(type);
+        n.setMessage(message);
+        n.setSentAt(T0.plusSeconds(minutes * 60));
+        return n;
+    }
+
+    @Test
+    void mergesStatusStepsUpdatesAndRefundsInOrderWithoutDuplicatingStatusMessages() {
+        when(tracking.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of(
+                event(OrderStatus.PLACED, 0), event(OrderStatus.SHIPPED, 60), event(OrderStatus.DELIVERED, 120), event(OrderStatus.RETURNED, 300)));
+        when(notifications.findByOrderIdOrderBySentAtAsc(42L)).thenReturn(List.of(
+                note(OrderStatus.PLACED, "Your order #42 is confirmed", 0),                 // same as the tracking step
+                note(OrderStatus.DELIVERED, "Your order #42 has shipped", 60),               // wrong type for the text: kept as an update
+                note(OrderStatus.DELIVERED, "Pickup booked for your return of order #42", 200),
+                note(OrderStatus.DELIVERED, "Your return for order #42 was picked up", 250),
+                note(OrderStatus.RETURNED, "Your return for order #42 is complete", 300)));  // same as the tracking step
+        StoreCreditTransaction credit = new StoreCreditTransaction();
+        credit.setAmount(45);
+        credit.setCreatedAt(T0.plusSeconds(301 * 60));
+        when(credits.findByOrderIdAndTypeOrderByIdAsc(42L, StoreCreditTransaction.Type.REFUND)).thenReturn(List.of(credit));
+
+        List<TimelineEntry> steps = service.timeline(42L, PHNO);
+
+        assertEquals(List.of("Order placed", "Shipped via Delhivery", "Your order #42 has shipped", "Delivered",
+                "Pickup booked for your return of order #42", "Your return for order #42 was picked up", "Return complete",
+                "Rs. 45.00 added to your store credit"), steps.stream().map(TimelineEntry::title).toList());
+        assertEquals("REFUND", steps.get(steps.size() - 1).kind());
+    }
+
+    @Test
+    void anotherCustomersOrderLooksLikeItDoesNotExist() {
+        assertThrows(OrderNotFoundException.class, () -> service.timeline(42L, PHNO + 1));
+    }
+}

@@ -64,6 +64,8 @@ import java.util.List;
 @RequestMapping("/cart")
 public class OrderController {
     @Autowired
+    private com.example.orderservice.service.OrderTimelineService orderTimelineService;
+    @Autowired
     private com.example.orderservice.service.ReturnApprovalService returnApprovalService;
     @Autowired
     private com.example.orderservice.service.ReturnPickupService returnPickupService;
@@ -314,6 +316,13 @@ public class OrderController {
     public com.example.orderservice.dto.RefundStatus getRefundStatus(@PathVariable long orderId, @RequestParam long phno){
         CustomerAccess.requireSelfOrService(phno);
         return refundStatusService.statusOf(orderId, phno);
+    }
+    // The order's whole story for the customer: status changes, order/return/pickup updates and refunds, oldest first.
+    // Signed-in customer (own order only) or service, like the refund status.
+    @GetMapping("/{orderId}/timeline")
+    public List<com.example.orderservice.dto.TimelineEntry> getTimeline(@PathVariable long orderId, @RequestParam long phno){
+        CustomerAccess.requireSelfOrService(phno);
+        return orderTimelineService.timeline(orderId, phno);
     }
     // Emails the invoice to the customer's VERIFIED address (the caller can't choose one); rate-limited per order.
     @PostMapping("/{orderId}/invoice/email")
