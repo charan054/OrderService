@@ -225,6 +225,7 @@ public class OrderService {
         sanitizeNewOrder(cart);
         cart.setSubscriptionId(subscription == null ? null : subscription.subscriptionId());
         normalizeDeliveryNote(cart);
+        normalizeGiftMessage(cart);
         normalizeDeliverySlot(cart);
         requireSlotRoom(cart.getDeliverySlot());
         if (cart.getPaymentMethod() == null) {
@@ -1420,6 +1421,22 @@ public class OrderService {
     // deactivated, must fail loudly rather than silently charging full price (a buyer trusting a "10% off"
     // banner should never find out only after being charged in full).
     static final int MAX_DELIVERY_NOTE_LENGTH = 200;
+
+    static final int MAX_GIFT_MESSAGE_LENGTH = 200;
+
+    // Same rule as the delivery note: blank -> none, too long -> rejected before any payment.
+    private void normalizeGiftMessage(Cart cart) {
+        String message = cart.getGiftMessage();
+        if (message == null || message.isBlank()) {
+            cart.setGiftMessage(null);
+            return;
+        }
+        message = message.trim();
+        if (message.length() > MAX_GIFT_MESSAGE_LENGTH) {
+            throw new ProductException("The gift message must be at most " + MAX_GIFT_MESSAGE_LENGTH + " characters");
+        }
+        cart.setGiftMessage(message);
+    }
 
     // Blank -> null; anything longer than the limit is rejected up front (before any payment), not truncated.
     private void normalizeDeliveryNote(Cart cart) {

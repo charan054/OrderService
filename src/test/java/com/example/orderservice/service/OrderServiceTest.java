@@ -3036,6 +3036,37 @@ class OrderServiceTest {
     }
 
     @Test
+    void orderRejectsAnOverlongGiftMessageBeforeAnyPayment() {
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setGiftMessage("x".repeat(201));
+
+        assertThrows(ProductException.class, () -> service.order(cart, "Bearer t", "key"));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void orderKeepsTheGiftOptionsTrimmedAndDropsABlankMessage() {
+        Cart gift = cart(CUSTOMER, item(1, 1));
+        gift.setPaymentMethod(PaymentMethod.CASH);
+        gift.setGiftWrap(true);
+        gift.setGiftMessage("  Happy birthday!  ");
+        Cart blank = cart(CUSTOMER, item(1, 1));
+        blank.setPaymentMethod(PaymentMethod.CASH);
+        blank.setGiftMessage("  ");
+        when(productClient.getProductById(1)).thenReturn(product(1, 10.0, 5));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(inv -> {
+            Cart saved = inv.getArgument(0);
+            saved.setOrderId(1L);
+            return saved;
+        });
+
+        Cart result = service.order(gift, null, "k1");
+        assertEquals("Happy birthday!", result.getGiftMessage());
+        assertTrue(result.isGiftWrap());
+        assertNull(service.order(blank, null, "k2").getGiftMessage());
+    }
+
+    @Test
     void exportOrdersCsvIncludesTheDeliveryNote() {
         Cart order = adminOrder(7, CUSTOMER, OrderStatus.PLACED, PaymentMethod.CASH, "Ann");
         order.setDeliveryNote("Call, don't ring"); order.setDeliverySlot("EVENING");

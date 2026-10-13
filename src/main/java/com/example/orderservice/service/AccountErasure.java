@@ -37,7 +37,7 @@ public class AccountErasure {
     public AccountDeletionResult erase(long phno, int reviewsAnonymised) {
         // Orders first: they decide which addresses must be kept (reduced) rather than deleted.
         int orders = em.createQuery("update Cart c set c.customerName = :n, c.customerPhno = 0, c.upiId = null, "
-                        + "c.deliveryNote = null, c.cancelNote = null where c.customerPhno = :p")
+                        + "c.deliveryNote = null, c.giftMessage = null, c.cancelNote = null where c.customerPhno = :p")
                 .setParameter("n", PLACEHOLDER_NAME).setParameter("p", phno).executeUpdate();
         // An address an order shipped to keeps only its state (place of supply for GST); every other one is deleted.
         run("update ShippingAddress a set a.customerPhno = 0, a.label = null, a.line1 = 'Address erased', a.line2 = null, "

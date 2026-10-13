@@ -749,6 +749,8 @@
                     <option value="EVENING">Evening (4pm-8pm)</option>
                 </select>
                 <input type="text" id="deliveryNote" maxlength="200" placeholder="Delivery instructions (optional)" />
+                <label style="display:flex; gap:8px; align-items:center; margin:6px 0; font-size:14px;"><input type="checkbox" id="giftWrap" /> This is a gift - wrap it (free)</label>
+                <input type="text" id="giftMessage" maxlength="200" placeholder="Gift message for the card (optional)" />
                 <input type="text" id="couponCode" placeholder="Coupon code (optional)" oninput="couponAutoApplyOff = true; renderCouponSuggestions()" />
                 <div id="couponSuggestions" class="coupon-chips"></div>
                 <input type="number" id="pointsRedeemed" min="0" placeholder="Loyalty points to redeem (optional)" />
@@ -2162,6 +2164,7 @@
             <strong>Order #${order.orderId}</strong>
             <span class="meta">${escapeHtml(order.status)} &middot; ${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : order.status === "CANCELLED" ? "" : " (unpaid)") : ""}</span>
             ${orderStepperHtml(order.status)}
+            ${order.giftWrap || order.giftMessage ? `<span class="meta">Gift${order.giftWrap ? ", wrapped" : ""}${order.giftMessage ? ": &ldquo;" + escapeHtml(order.giftMessage) + "&rdquo;" : ""}</span>` : ""}
             ${order.carrier || order.trackingNumber ? `<span class="meta">Shipped${order.carrier ? " via " + escapeHtml(order.carrier) : ""}${order.trackingNumber ? ", tracking " + escapeHtml(order.trackingNumber) : ""}</span>` : ""}
           </div>
           <div class="price">₹${order.totalPrice.toFixed(2)}${order.refundedAmount > 0 ? `<span class="meta">₹${order.refundedAmount.toFixed(2)} ${order.paymentMethod === "CASH" ? "taken off" : "refunded"}</span>` : ""}</div>
@@ -3955,6 +3958,8 @@
         storeCreditUsed: document.getElementById("storeCreditToUse").value.trim() ? Number(document.getElementById("storeCreditToUse").value) : null,
         shippingAddressId: shippingAddressId ? Number(shippingAddressId) : null,
         deliveryNote: document.getElementById("deliveryNote").value.trim() || null,
+        giftWrap: document.getElementById("giftWrap").checked,
+        giftMessage: document.getElementById("giftMessage").value.trim() || null,
         deliverySlot: document.getElementById("deliverySlot").value || null
       };
 
@@ -3991,6 +3996,8 @@
         couponAutoApplied = null;
         loadCouponSuggestions(); // usage limits may have changed with this order
         document.getElementById("deliveryNote").value = "";
+        document.getElementById("giftWrap").checked = false;
+        document.getElementById("giftMessage").value = "";
         document.getElementById("deliverySlot").value = "";
         document.getElementById("pointsRedeemed").value = "";
         document.getElementById("storeCreditToUse").value = "";
