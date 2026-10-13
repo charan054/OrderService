@@ -640,6 +640,48 @@
         @media (max-width: 360px) {
           .product-grid { grid-template-columns: 1fr; }
         }
+
+        /* ---- polish: placeholder tiles, loading skeletons, entrance motion, tidier small screens ---- */
+        .product-image { position: relative; overflow: hidden; }
+        .product-image.placeholder {
+          flex-direction: column; gap: 6px; color: #fff; text-align: center; padding: 8px;
+          background: linear-gradient(135deg, hsl(var(--ph-h, 262) 62% 46%), hsl(calc(var(--ph-h, 262) + 38) 66% 36%));
+        }
+        .product-image .ph-glyph { font-size: 34px; line-height: 1; filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35)); }
+        .product-image .ph-name { font-size: 12px; font-weight: 700; letter-spacing: 0.02em; opacity: 0.92; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .product-card { animation: cardIn 0.35s ease both; }
+        .product-card:nth-child(2) { animation-delay: 0.04s; }
+        .product-card:nth-child(3) { animation-delay: 0.08s; }
+        .product-card:nth-child(4) { animation-delay: 0.12s; }
+        .product-card:nth-child(n+5) { animation-delay: 0.16s; }
+        @keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+        .skeleton-card { border-radius: 16px; border: 1px solid var(--border); overflow: hidden; background: var(--surface); }
+        .skeleton-card .sk-img, .skeleton-card .sk-line {
+          background: linear-gradient(90deg, var(--surface-2) 25%, var(--surface-3) 50%, var(--surface-2) 75%);
+          background-size: 200% 100%; animation: shimmer 1.2s linear infinite;
+        }
+        .skeleton-card .sk-img { height: 120px; }
+        .skeleton-card .sk-body { padding: 14px; display: grid; gap: 10px; }
+        .skeleton-card .sk-line { height: 12px; border-radius: 6px; }
+        .skeleton-card .sk-line.short { width: 55%; }
+        @keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+        .gift-row { display: flex; align-items: center; gap: 8px; margin: 6px 0 10px; font-size: 14px; color: var(--muted); cursor: pointer; }
+        .gift-row input { width: auto; margin: 0; }
+        .filter-row select { flex: 1 1 150px; }
+        .filter-row input[type=number] { flex: 1 1 90px; min-width: 80px; max-width: 130px; }
+        @media (prefers-reduced-motion: reduce) {
+          .product-card { animation: none; }
+          .skeleton-card .sk-img, .skeleton-card .sk-line { animation: none; }
+        }
+        @media (max-width: 600px) {
+          header.topbar { align-items: flex-start; }
+          header.topbar .tagline { display: none; }
+          .topbar-actions { width: 100%; justify-content: space-between; flex-direction: row-reverse; }
+          #accountInfo { flex: 1; justify-content: flex-start; flex-wrap: nowrap; gap: 6px; }
+          #accountInfo .signed-in { display: none; }
+          #accountInfo button { min-height: 34px; padding: 6px 12px; font-size: 13px; }
+          .filter-row select { flex: 1 1 100%; max-width: none; }
+        }
     </style>
 </head>
 <body>
@@ -653,7 +695,7 @@
         </div>
     </div>
     <div class="topbar-actions">
-        <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Switch between light and dark theme" title="Switch theme">&#9790;</button>
+        <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Switch between light and dark theme" title="Switch theme">&#127769;</button>
         <div id="accountInfo"></div>
     </div>
 </header>
@@ -749,7 +791,7 @@
                     <option value="EVENING">Evening (4pm-8pm)</option>
                 </select>
                 <input type="text" id="deliveryNote" maxlength="200" placeholder="Delivery instructions (optional)" />
-                <label style="display:flex; gap:8px; align-items:center; margin:6px 0; font-size:14px;"><input type="checkbox" id="giftWrap" /> This is a gift - wrap it (free)</label>
+                <label class="gift-row"><input type="checkbox" id="giftWrap" /> This is a gift - wrap it (free)</label>
                 <input type="text" id="giftMessage" maxlength="200" placeholder="Gift message for the card (optional)" />
                 <input type="text" id="couponCode" placeholder="Coupon code (optional)" oninput="couponAutoApplyOff = true; renderCouponSuggestions()" />
                 <div id="couponSuggestions" class="coupon-chips"></div>
@@ -1040,7 +1082,7 @@
           + `Wallet ₹${storeCreditBalance.toFixed(2)}${walletPoints === null ? "" : " · " + walletPoints + " pts"}</button>`
         : "";
       document.getElementById("accountInfo").innerHTML = customerPhno
-        ? `Signed in as ${customerPhno}${wallet} <button class="secondary" onclick="logout()">Log out</button>`
+        ? `<span class="signed-in">Signed in as ${customerPhno}</span>${wallet} <button class="secondary" onclick="logout()">Log out</button>`
         : "";
     }
 
@@ -1482,7 +1524,7 @@
 
     function updateThemeIcon() {
       const btn = document.getElementById("themeToggle");
-      if (btn) btn.innerHTML = currentTheme() === "dark" ? "&#9728;" : "&#9790;";
+      if (btn) btn.innerHTML = currentTheme() === "dark" ? "&#9728;&#65039;" : "&#127769;";
     }
 
     function toggleTheme() {
@@ -1607,6 +1649,42 @@
       } catch (e) { /* no fee preview - the server still charges it */ }
     }
 
+    // Until the first catalog response arrives the grid shows shimmering placeholders, not "no products".
+    let catalogLoaded = false;
+    function skeletonCardsHtml(n) {
+      return Array.from({ length: n }, () => `<div class="skeleton-card" aria-hidden="true"><div class="sk-img"></div>
+        <div class="sk-body"><div class="sk-line"></div><div class="sk-line short"></div><div class="sk-line"></div></div></div>`).join("");
+    }
+
+    // A friendly tile for a product with no usable photo: an emoji for what it looks like plus a colour taken from its
+    // category, so a catalog without pictures still reads as a shop and not a list of "No image" boxes.
+    function placeholderGlyph(name, category) {
+      const t = `${name || ""} ${category || ""}`.toLowerCase();
+      const rules = [[/soap|shampoo|face|wash|cream|lotion|skin|hair|cetaphil|dove|cinthol/, "&#129524;"], [/dal|rice|atta|flour|grain|pulse|moong|wheat/, "&#127806;"],
+        [/chip|snack|kurkure|biscuit|cookie|namkeen/, "&#127871;"], [/laptop|phone|gadget|book|realme|tv|camera/, "&#128187;"],
+        [/water|bottle|drink|juice|tea|coffee/, "&#128167;"], [/mango|fruit|apple|banana|jelly/, "&#127823;"]];
+      const hit = rules.find(([re]) => re.test(t));
+      return hit ? hit[1] : "&#128717;";
+    }
+    function placeholderTileHtml(name, category) {
+      let h = 0;
+      for (const ch of String(category || name || "x")) h = (h * 31 + ch.charCodeAt(0)) % 360;
+      return `<span class="ph-glyph" style="--ph-h:${h}">${placeholderGlyph(name, category)}</span><span class="ph-name">${escapeHtml(name || "")}</span>`;
+    }
+    // Used by <img onerror/onload>: a broken link, or a 1x1 stand-in picture, becomes the placeholder tile.
+    function imageFallback(img) {
+      const box = img.parentElement;
+      if (!box || box.classList.contains("placeholder")) return;
+      let h = 0;
+      for (const ch of String(img.dataset.cat || img.dataset.name || "x")) h = (h * 31 + ch.charCodeAt(0)) % 360;
+      box.classList.add("placeholder");
+      box.style.setProperty("--ph-h", h);
+      box.innerHTML = `<span class="ph-glyph">${placeholderGlyph(img.dataset.name, img.dataset.cat)}</span><span class="ph-name">${escapeHtml(img.dataset.name || "")}</span>`;
+    }
+    function imageLoaded(img) {
+      if (img.naturalWidth < 16 || img.naturalHeight < 16) imageFallback(img);
+    }
+
     async function loadProducts() {
       const name = document.getElementById("searchName").value.trim();
       const category = document.getElementById("searchCategory").value;
@@ -1616,6 +1694,7 @@
 
       const response = await authFetch(`${BASE_URL}/cart/search?${query.toString()}`);
       products = response.ok ? await response.json() : [];
+      catalogLoaded = true;
       currentPage = 1;
       renderProducts();
 
@@ -2951,7 +3030,9 @@
           ? `<p style="color:var(--muted);">No products viewed yet - open a product's details to see it here.</p>`
           : document.getElementById("searchName").value.trim()
           ? noSearchResultsHtml()
-          : `<p style="color:var(--muted);">No products available right now.</p>`;
+          : catalogLoaded
+          ? `<p style="color:var(--muted);">No products available right now.</p>`
+          : skeletonCardsHtml(8);
         renderPager(0);
         return;
       }
@@ -2972,10 +3053,10 @@
         <div class="product-card">
           <button class="wishlist-btn ${isWishlisted ? "active" : ""}" onclick="toggleWishlist(${p.productId})"
                   aria-label="${isWishlisted ? "Remove from wishlist" : "Add to wishlist"}">${isWishlisted ? "&#9829;" : "&#9825;"}</button>
-          <div class="product-image">
+          <div class="product-image ${p.productImageUrl ? "" : "placeholder"}" ${p.productImageUrl ? "" : `style="--ph-h:${(Array.from(String(p.productCategory || p.productName)).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 0))}"`}>
             ${p.productImageUrl
-              ? `<img src="${escapeHtml(p.productImageUrl)}" alt="${escapeHtml(p.productName)}" onerror="this.parentElement.textContent='No image'" />`
-              : "No image"}
+              ? `<img src="${escapeHtml(p.productImageUrl)}" alt="${escapeHtml(p.productName)}" loading="lazy" data-name="${escapeHtml(p.productName)}" data-cat="${escapeHtml(p.productCategory || "")}" onerror="imageFallback(this)" onload="imageLoaded(this)" />`
+              : placeholderTileHtml(p.productName, p.productCategory)}
           </div>
           <div class="product-body">
             <h3>${escapeHtml(cardTitle(item))}${isNewProduct(p) ? `<span class="new-badge">New</span>` : ""}</h3>
