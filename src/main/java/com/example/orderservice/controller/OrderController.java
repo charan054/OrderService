@@ -685,6 +685,13 @@ public class OrderController {
         return deliveryFailureService.record(orderId, reason, note);
     }
 
+    // Staff: a shipped order is running late - sets the new expected date and tells the customer.
+    @PostMapping("/{orderId}/delay")
+    public Cart delayOrder(@PathVariable long orderId, @RequestParam @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate expectedDate,
+                           @RequestParam String reason) {
+        return deliveryFailureService.markDelayed(orderId, expectedDate, reason);
+    }
+
     @PostMapping("/{orderId}/delivery-failed/return-to-stock")
     public Cart returnUndelivered(@PathVariable long orderId, @RequestParam(required = false) String note) {
         return deliveryFailureService.returnToStock(orderId, note);

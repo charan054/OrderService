@@ -89,4 +89,26 @@ class DeliveryFailureServiceTest {
         service.returnToStock(9L, null);
         verify(orderService).cancelUndelivered(9L, "Could not be delivered");
     }
+
+    @Test
+    void markDelayedStoresTheNewDateAndTellsTheCustomer() {
+        when(orders.save(any(Cart.class))).thenAnswer(i -> i.getArgument(0));
+
+        Cart result = service.markDelayed(9L, java.time.LocalDate.parse("2026-10-20"), " courier backlog ");
+
+        assertEquals(java.time.LocalDate.parse("2026-10-20"), result.getExpectedDeliveryDate());
+        assertEquals("courier backlog", result.getDelayReason());
+        verify(notifier).notifyOrderUpdate(any(Cart.class), any(), any());
+    }
+
+    @Test
+    void markDelayedNeedsAShippedOrderAFutureDateAndAReason() {
+        java.time.LocalDate ok = java.time.LocalDate.parse("2026-10-20");
+        assertThrows(ProductException.class, () -> service.markDelayed(9L, java.time.LocalDate.parse("2026-10-01"), "x"));
+        assertThrows(ProductException.class, () -> service.markDelayed(9L, ok, " "));
+        assertThrows(ProductException.class, () -> service.markDelayed(9L, null, "x"));
+        cart.setStatus(OrderStatus.PLACED);
+        assertThrows(ProductException.class, () -> service.markDelayed(9L, ok, "x"));
+        verify(orders, never()).save(any(Cart.class));
+    }
 }

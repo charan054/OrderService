@@ -80,6 +80,11 @@ public class Cart {
     // Gift options chosen at checkout: wrap the order, and/or a short message for the card. Free - no price change.
     // Cleared of anything over MAX_GIFT_MESSAGE_LENGTH by OrderService.order(); shown on the packing slip.
     private boolean giftWrap;
+    // Set by staff when a shipped order is running late (DeliveryFailureService.markDelayed): the new date promised to the
+    // customer and why. Null on an order that is on time.
+    private java.time.LocalDate expectedDeliveryDate;
+    @Column(length = 200)
+    private String delayReason;
     @Column(length = 200)
     private String giftMessage;
     // Optional preferred delivery window (a key of OrderService.DELIVERY_SLOTS: MORNING/AFTERNOON/EVENING). A

@@ -474,6 +474,8 @@
                 <button onclick="recordDeliveryFailure()">Record failed attempt</button>
                 <button class="red" onclick="returnUndelivered()">Send back to stock</button>
                 <button onclick="showDeliveryAttempts()">Show attempts</button>
+                <input id="dfExpected" type="date" title="New expected delivery date">
+                <button onclick="markOrderDelayed()">Mark delayed</button>
             </div>
             <div id="dfWrap"></div>
         </div>
@@ -2388,6 +2390,16 @@
       const data = await apiCall(`http://localhost:8083/cart/${id}/delivery-failed?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
       if (data && data.giveUpAdvised) showStatus(`Attempt ${data.attemptsSoFar} of ${data.maxAttempts} failed - time to send it back to stock.`, "error");
       await showDeliveryAttempts();
+    }
+
+    async function markOrderDelayed() {
+      const id = dfOrderId(); const serviceKey = requireServiceKey();
+      if (!id || !serviceKey) return;
+      const date = document.getElementById("dfExpected").value;
+      const reason = document.getElementById("dfNote").value.trim();
+      if (!date || !reason) { showStatus("Pick the new expected date and write the reason in the note box.", "error"); return; }
+      const params = new URLSearchParams({ expectedDate: date, reason });
+      await apiCall(`http://localhost:8083/cart/${id}/delay?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
     }
 
     async function returnUndelivered() {
