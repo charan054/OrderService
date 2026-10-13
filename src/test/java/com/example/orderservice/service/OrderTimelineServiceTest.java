@@ -31,6 +31,7 @@ class OrderTimelineServiceTest {
     private TrackingEventRepository tracking;
     private NotificationLogRepository notifications;
     private StoreCreditTransactionRepository credits;
+    private com.example.orderservice.repository.DeliveryAttemptRepository deliveryAttempts;
     private OrderTimelineService service;
     private Cart order;
 
@@ -40,7 +41,8 @@ class OrderTimelineServiceTest {
         tracking = mock(TrackingEventRepository.class);
         notifications = mock(NotificationLogRepository.class);
         credits = mock(StoreCreditTransactionRepository.class);
-        service = new OrderTimelineService(orders, tracking, notifications, credits);
+        deliveryAttempts = mock(com.example.orderservice.repository.DeliveryAttemptRepository.class);
+        service = new OrderTimelineService(orders, tracking, notifications, credits, deliveryAttempts);
         order = new Cart();
         order.setOrderId(42L);
         order.setCustomerPhno(PHNO);
@@ -95,5 +97,24 @@ class OrderTimelineServiceTest {
     @Test
     void anotherCustomersOrderLooksLikeItDoesNotExist() {
         assertThrows(OrderNotFoundException.class, () -> service.timeline(42L, PHNO + 1));
+    }
+
+    @Test
+    void failedDeliveryAttemptsAppearOnceAndTheirEmailIsNotRepeated() {
+        order.setStatus(OrderStatus.SHIPPED);
+        when(tracking.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of(event(OrderStatus.SHIPPED, 60)));
+        when(notifications.findByOrderIdOrderBySentAtAsc(42L)).thenReturn(List.of(
+                note(OrderStatus.SHIPPED, "We could not deliver order #42", 100)));
+        com.example.orderservice.entity.DeliveryAttempt attempt = new com.example.orderservice.entity.DeliveryAttempt();
+        attempt.setAttemptNo(1);
+        attempt.setReason("CUSTOMER_UNAVAILABLE");
+        attempt.setCreatedAt(T0.plusSeconds(100 * 60));
+        when(deliveryAttempts.findByOrderIdOrderByAttemptNoAsc(42L)).thenReturn(List.of(attempt));
+
+        List<TimelineEntry> steps = service.timeline(42L, PHNO);
+
+        assertEquals(List.of("Shipped via Delhivery", "Delivery attempt 1 failed: customer unavailable"),
+                steps.stream().map(TimelineEntry::title).toList());
+        assertEquals("DELIVERY", steps.get(1).kind());
     }
 }
