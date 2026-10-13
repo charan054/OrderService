@@ -48,6 +48,7 @@ public class AccountErasure {
         run("update ProductQuestion q set q.askerPhno = 0 where q.askerPhno = :p", phno);
         run("update OrderFeedback f set f.customerPhno = 0, f.comment = null where f.customerPhno = :p", phno);
         run("update GiftCard g set g.redeemedBy = 0 where g.redeemedBy = :p", phno);
+        run("update ExchangeRequest x set x.customerPhno = 0 where x.customerPhno = :p", phno);
 
         int wishlist = run("delete from Wishlist w where w.customerPhno = :p", phno);
         run("delete from WishlistShare s where s.customerPhno = :p", phno);
