@@ -247,4 +247,27 @@ class ExchangeServiceTest {
         assertEquals(0.0, service.request(7L, 1, 1, 8, "x").getPriceDifference());
         assertEquals(20.0, service.request(7L, 1, 1, 7, "x").getPriceDifference());
     }
+
+    @Test
+    void approvingADearerExchangeIssuesASupplementaryInvoiceForTheExtra() {
+        ExchangeRequest r = stored("REQUESTED");
+        r.setPriceDifference(40);
+        r.setCustomerPhno(9000000001L);
+        replacement(9, 120, 5);
+
+        service.approve(5L);
+
+        verify(creditNotes).issueSupplementary(any(Cart.class), eq(9), eq(2), eq(40.0), eq("EXCHANGE"));
+    }
+
+    @Test
+    void aSamePriceExchangeIssuesNoSupplementaryInvoice() {
+        stored("REQUESTED");
+        replacement(9, 100, 5);
+
+        service.approve(5L);
+
+        verify(creditNotes, never()).issueSupplementary(any(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyDouble(), any());
+    }
 }

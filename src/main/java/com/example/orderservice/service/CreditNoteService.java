@@ -134,7 +134,39 @@ public class CreditNoteService {
         if (item == null) {
             return Optional.empty();
         }
-        Facts f = lookup(item);
+        return Optional.of(valueNote(order, productId, quantity, amountInclusive, reason, lookup(item), "CREDIT_NOTE",
+                numbers.nextCreditNoteNumber()));
+    }
+
+    /**
+     * A supplementary invoice for extra value supplied after the invoice (an exchange for a dearer item): the tax inside
+     * the given tax-inclusive amount at the replacement product's own GST rate and HSN. Numbered from the normal invoice
+     * series. Nothing if the order has no invoice or the amount is not positive.
+     */
+    @Transactional
+    public Optional<CreditNote> issueSupplementary(Cart order, int replacementProductId, int quantity, double amountInclusive, String reason) {
+        if (order.getInvoiceNumber() == null || order.getOrderId() == null || amountInclusive <= 0) {
+            return Optional.empty();
+        }
+        String name = "Product #" + replacementProductId;
+        String hsn = null;
+        double rate = defaultRate;
+        try {
+            Product p = productClient.getProductById(replacementProductId);
+            if (p != null) {
+                name = p.getProductName();
+                hsn = p.getHsnCode();
+                rate = p.getGstRate() != null ? p.getGstRate() : defaultRate;
+            }
+        } catch (FeignException e) {
+            // removed from the catalog - the fallback name and store default rate are used
+        }
+        return Optional.of(valueNote(order, replacementProductId, quantity, amountInclusive, reason,
+                new Facts(name, hsn, rate, 0), "SUPPLEMENTARY_INVOICE", numbers.nextInvoiceNumber()));
+    }
+
+    private CreditNote valueNote(Cart order, int productId, int quantity, double amountInclusive, String reason, Facts f,
+                                 String kind, String number) {
         String placeOfSupply = placeOfSupply(order);
         boolean interState = GstCalculator.isInterState(storeState, placeOfSupply);
         double taxable = round(amountInclusive / (1 + f.rate() / 100.0));
@@ -161,14 +193,15 @@ public class CreditNoteService {
         note.setSgst(line.getSgst());
         note.setIgst(line.getIgst());
         note.setTotal(line.getTotal());
-        note.setNumber(numbers.nextCreditNoteNumber());
+        note.setNumber(number);
+        note.setKind(kind);
         note.setOrderId(order.getOrderId());
         note.setInvoiceNumber(order.getInvoiceNumber());
         note.setIssuedAt(clock.instant());
         note.setReason(reason);
         note.setInterState(interState);
         note.setPlaceOfSupply(placeOfSupply);
-        return Optional.of(creditNotes.save(note));
+        return creditNotes.save(note);
     }
 
     @Transactional(readOnly = true)

@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import com.example.orderservice.dto.CreditNoteView;
 import java.util.Locale;
 import java.util.Map;
 
@@ -160,9 +161,9 @@ public class InvoiceEmailService {
             }
         }
         if (inv.creditNotes() != null && !inv.creditNotes().isEmpty()) {
-            b.append("\nGST credit notes (tax reversed for cancelled or returned items):\n");
+            b.append("\nGST credit notes and supplementary invoices (tax changes after the invoice):\n");
             for (var note : inv.creditNotes()) {
-                b.append("  ").append(note.number()).append(" - ").append("RETURNED".equals(note.reason()) ? "returned" : "cancelled")
+                b.append("  ").append(note.number()).append(" - ").append(CreditNoteView.label(note).toLowerCase(Locale.ROOT))
                         .append(", Rs. ").append(money(note.total())).append(" of which GST Rs. ")
                         .append(money(note.cgst() + note.sgst() + note.igst())).append('\n');
             }

@@ -223,4 +223,21 @@ class GstReportServiceTest {
         assertThat(lines).anySatisfy(l -> assertThat(l).startsWith("TOTAL,TOTAL_CREDIT_NOTES,,,0,0.0"));
         assertThat(lines[lines.length - 1]).startsWith("TOTAL,NET,,,,100.0");
     }
+
+    @Test
+    void aSupplementaryInvoiceCountsAsAnInvoiceNotACreditNote() {
+        Cart order = invoiced("2026-10-08T05:00:00Z", null, 0, item(1, 1, 118, 18.0));
+        CreditNote extra = note(order.getOrderId(), "2026-10-09T05:00:00Z", "Karnataka", 18, 50, 4.5, 4.5, 0);
+        extra.setKind("SUPPLEMENTARY_INVOICE");
+        extra.setReason("EXCHANGE");
+        notes.save(extra);
+
+        GstReportService.Report r = service.report(FROM, TO);
+
+        assertThat(r.invoices()).isEqualTo(2);
+        assertThat(r.creditNotes()).isEqualTo(0);
+        assertThat(r.invoiceTotals().totalTax()).isEqualTo(18.0 + 9.0);
+        assertThat(r.creditNoteTotals().totalTax()).isEqualTo(0.0);
+        assertThat(r.net().taxableValue()).isEqualTo(150.0);
+    }
 }

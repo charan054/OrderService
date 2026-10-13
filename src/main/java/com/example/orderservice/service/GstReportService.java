@@ -41,6 +41,7 @@ public class GstReportService {
     static final int MAX_DAYS = 400;
     public static final String INVOICE = "INVOICE";
     public static final String CREDIT_NOTE = "CREDIT_NOTE";
+    static final String SUPPLEMENTARY = "SUPPLEMENTARY_INVOICE";
 
     public record Row(String month, String type, String placeOfSupply, double gstRate, int documents,
                       double taxableValue, double cgst, double sgst, double igst, double totalTax, double value) {
@@ -129,13 +130,17 @@ public class GstReportService {
             }
         }
 
-        List<CreditNote> notes = creditNotes.findByIssuedAtGreaterThanEqualAndIssuedAtLessThanOrderByIdAsc(start, end);
-        for (CreditNote note : notes) {
+        List<CreditNote> allNotes = creditNotes.findByIssuedAtGreaterThanEqualAndIssuedAtLessThanOrderByIdAsc(start, end);
+        // Supplementary invoices (extra value supplied after the invoice) are invoices, not reversals.
+        List<CreditNote> notes = allNotes.stream().filter(n -> !SUPPLEMENTARY.equals(n.getKind())).toList();
+        int supplementary = allNotes.size() - notes.size();
+        for (CreditNote note : allNotes) {
+            boolean extra = SUPPLEMENTARY.equals(note.getKind());
             YearMonth month = YearMonth.from(note.getIssuedAt().atZone(zone));
             String place = note.getPlaceOfSupply() == null || note.getPlaceOfSupply().isBlank() ? storeState : note.getPlaceOfSupply();
             for (var line : note.getLines()) {
-                Acc acc = groups.computeIfAbsent(new Key(month, CREDIT_NOTE, place, line.getGstRate()), k -> new Acc());
-                acc.documents.add(note.getId());
+                Acc acc = groups.computeIfAbsent(new Key(month, extra ? INVOICE : CREDIT_NOTE, place, line.getGstRate()), k -> new Acc());
+                acc.documents.add(extra ? "SI" + note.getId() : (Object) note.getId());
                 acc.taxable += line.getTaxableValue();
                 acc.cgst += line.getCgst();
                 acc.sgst += line.getSgst();
@@ -163,7 +168,7 @@ public class GstReportService {
                 round(invoiceTotals.cgst() - creditTotals.cgst()), round(invoiceTotals.sgst() - creditTotals.sgst()),
                 round(invoiceTotals.igst() - creditTotals.igst()), round(invoiceTotals.totalTax() - creditTotals.totalTax()),
                 round(invoiceTotals.value() - creditTotals.value()));
-        return new Report(from, to, invoiced.size(), notes.size(), rows, invoiceTotals, creditTotals, net);
+        return new Report(from, to, invoiced.size() + supplementary, notes.size(), rows, invoiceTotals, creditTotals, net);
     }
 
     @Transactional(readOnly = true)

@@ -44,7 +44,7 @@ class InvoicePdfServiceTest {
                 25.42, 2.29, 2.29, 0, 4.58);
         CreditNoteView note = new CreditNoteView("CN/2026-27/000003", NOW, "CANCELLED", "CM/2026-27/000042", false,
                 25.42, 2.29, 2.29, 0, 30,
-                List.of(new CreditNoteView.Line(1, "Soap", "3401", 18, 1, 25.42, 2.29, 2.29, 0, 30)));
+                List.of(new CreditNoteView.Line(1, "Soap", "3401", 18, 1, 25.42, 2.29, 2.29, 0, 30)), "CREDIT_NOTE");
 
         byte[] pdf = service.render(invoice(tax, List.of(note), "CM/2026-27/000042", "Asha"));
 
