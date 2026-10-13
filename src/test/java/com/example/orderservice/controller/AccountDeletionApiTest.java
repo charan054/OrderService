@@ -116,6 +116,7 @@ class AccountDeletionApiTest {
     @Autowired private CouponRedemptionRepository couponRedemptions;
     @Autowired private CodOverrideRepository codOverrides;
     @Autowired private GiftCardRepository giftCards;
+    @Autowired private com.example.orderservice.repository.ExchangeRequestRepository exchangeRequests;
 
     @MockitoBean private ProductClient productClient;
     @MockitoBean private PhonepeClient phonepeClient;
@@ -245,6 +246,9 @@ class AccountDeletionApiTest {
         CodOverride cod = new CodOverride(); cod.setPhno(phno); cod.setMode(CodOverride.Mode.ALLOW); cod.setUpdatedAt(Instant.now()); codOverrides.save(cod);
         GiftCard card = new GiftCard(); card.setCodeHash("hash-" + phno); card.setAmount(50); card.setRedeemedBy(phno);
         card.setRedeemedAt(Instant.now()); card.setCreatedAt(Instant.now()); giftCards.save(card);
+        com.example.orderservice.entity.ExchangeRequest exchange = new com.example.orderservice.entity.ExchangeRequest();
+        exchange.setCustomerPhno(phno); exchange.setOrderId(1); exchange.setProductId(1); exchange.setReplacementProductId(2); exchange.setQuantity(1); exchange.setStatus("REQUESTED");
+        exchangeRequests.save(exchange);
         when(productClient.anonymiseReviews(VALID_KEY, phno)).thenReturn(3);
 
         mockMvc.perform(get("/customer/account/delete/preview").header("X-Customer-Token", token))
@@ -325,6 +329,7 @@ class AccountDeletionApiTest {
         assertEquals(5, keptFeedback.getRating());
         assertNull(keptFeedback.getComment());
         assertEquals(0L, giftCards.findById(card.getId()).orElseThrow().getRedeemedBy());
+        assertEquals(0L, exchangeRequests.findById(exchange.getId()).orElseThrow().getCustomerPhno());
 
         // ...and nobody else was touched.
         assertTrue(accounts.findById(other).isPresent());
