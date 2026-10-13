@@ -480,6 +480,26 @@
     </section>
 
     <section class="grid">
+        <div class="card wide" id="card-packingslips">
+            <div class="card-header">
+                <div class="title-wrap">
+                    <h2>Packing Slips &amp; Pick List</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Print one slip per order (address, delivery window, gift message, cash to collect) plus a combined pick list for the whole batch. Leave the order IDs empty for every placed order, or list some separated by commas. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <input id="psOrderIds" type="text" placeholder="Order IDs, e.g. 61,62 (optional)" style="width:240px;">
+                <select id="psStatus">
+                    <option value="PLACED">Placed orders</option>
+                    <option value="SHIPPED">Shipped orders (reprint)</option>
+                </select>
+                <button onclick="printPackingSlips()">Open printable slips</button>
+            </div>
+        </div>
+    </section>
+
+    <section class="grid">
         <div class="card wide" id="card-couponreport">
             <div class="card-header">
                 <div class="icon">&#127903;</div>
@@ -2310,6 +2330,39 @@
               ? `<button onclick="stepExchange(${r.id}, 'approve')">Approve</button> <button onclick="stepExchange(${r.id}, 'reject')">Reject</button>`
               : `<button onclick="stepExchange(${r.id}, 'received')">Mark received</button>`}</td></tr>`).join("")}</tbody></table>`
         : `<p>No exchanges waiting.</p>`;
+    }
+
+    async function printPackingSlips() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const ids = document.getElementById("psOrderIds").value.split(",").map(x => x.trim()).filter(Boolean);
+      if (ids.some(x => !/^\d+$/.test(x))) { showStatus("Order IDs must be numbers separated by commas.", "error"); return; }
+      const params = new URLSearchParams();
+      if (ids.length) ids.forEach(id => params.append("orderIds", id)); else params.set("status", document.getElementById("psStatus").value);
+      const data = await apiCall(`http://localhost:8083/cart/packing-slips?${params}`, { headers: { "X-Service-Key": serviceKey } });
+      if (!data || !Array.isArray(data.slips)) return;
+      if (!data.slips.length) { showStatus("No orders to pack.", "success"); return; }
+      const e = escapeHtml;
+      const pick = `<section class="slip"><h2>Pick list &mdash; ${data.slips.length} order(s)</h2><table><tr><th>Product</th><th>Units</th><th>Orders</th></tr>${data.pickList.map(l =>
+        `<tr><td>${e(l.name)} (#${l.productId})</td><td><strong>${l.quantity}</strong></td><td>${l.orders}</td></tr>`).join("")}</table></section>`;
+      const slips = data.slips.map(s => `<section class="slip">
+          <h2>Order #${s.orderId}</h2>
+          <p><strong>${e(s.customerName || "")}</strong> &middot; ${e(String(s.customerPhno))}<br>${e(s.address || "No address on file")}</p>
+          ${s.deliverySlot ? `<p>Delivery window: ${e(s.deliverySlot)}</p>` : ""}
+          ${s.deliveryNote ? `<p>Instructions: ${e(s.deliveryNote)}</p>` : ""}
+          ${s.giftWrap || s.giftMessage ? `<p class="gift">GIFT${s.giftWrap ? " &mdash; wrap it" : ""}${s.giftMessage ? `<br>Card: &ldquo;${e(s.giftMessage)}&rdquo;` : ""}</p>` : ""}
+          <table><tr><th>Item</th><th>Qty</th></tr>${s.lines.map(l => `<tr><td>${e(l.name)} (#${l.productId})</td><td>${l.quantity}</td></tr>`).join("")}</table>
+          ${s.amountToCollect > 0 ? `<p class="cash">Collect cash: &#8377;${Number(s.amountToCollect).toFixed(2)}</p>` : `<p>${e(s.paymentMethod)} &mdash; nothing to collect</p>`}
+        </section>`).join("");
+      const w = window.open("about:blank", "_blank");
+      if (!w) { alert("New tab blocked. Please allow popups/tabs for this page."); return; }
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Packing slips</title><style>
+        body{font-family:Arial,sans-serif;margin:0;padding:16px;color:#111}
+        .slip{border:1px solid #999;padding:14px;margin-bottom:16px;page-break-after:always;break-inside:avoid}
+        table{border-collapse:collapse;width:100%} th,td{border-bottom:1px solid #ccc;text-align:left;padding:4px 6px}
+        .gift{border:2px dashed #333;padding:6px;font-weight:bold} .cash{font-size:18px;font-weight:bold}
+        @media print{.slip{border:none}}</style></head><body>${pick}${slips}<script>window.onload=function(){window.print()}<\/script></body></html>`);
+      w.document.close();
     }
 
     function dfOrderId() {
