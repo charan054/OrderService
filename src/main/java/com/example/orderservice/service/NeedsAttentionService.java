@@ -35,6 +35,7 @@ public class NeedsAttentionService {
     private static final Logger log = LoggerFactory.getLogger(NeedsAttentionService.class);
     static final int FLAGGED_LIMIT = 200;
     static final int MAX_ORDER_IDS = 10;
+    static final int PACK_STALE_HOURS = 24;
     static final Duration NOTIFICATION_WINDOW = Duration.ofDays(7);
 
     private final SupportTicketRepository tickets;
@@ -45,11 +46,13 @@ public class NeedsAttentionService {
     private final OrderService orderService;
     private final Clock clock;
     private final CodCollectionService codCollection;
+    private final PackingSlipService packing;
 
     public NeedsAttentionService(SupportTicketRepository tickets, ProductQuestionRepository questions,
                                  CartRepository carts, NotificationLogRepository notifications,
                                  RefundFailureRepository refundFailures, OrderService orderService, Clock clock,
-                                 CodCollectionService codCollection) {
+                                 CodCollectionService codCollection, PackingSlipService packing) {
+        this.packing = packing;
         this.tickets = tickets;
         this.questions = questions;
         this.carts = carts;
@@ -100,6 +103,12 @@ public class NeedsAttentionService {
         items.add(new Item("codOverdue", "Delivered cash orders not marked collected", overdueCash.size(), false, false,
                 "Delivered more than " + codCollection.overdueDays() + " day(s) ago and still shown as unpaid - collect the cash, then mark them paid.",
                 overdueCash.stream().limit(MAX_ORDER_IDS).toList()));
+
+        PackingSlipService.PackingStatus pack = packing.status(PACK_STALE_HOURS);
+        items.add(new Item("unpacked", "Placed orders still waiting to be packed", pack.staleUnpacked().size(), false, false,
+                "Placed more than " + PACK_STALE_HOURS + " hours ago and not ticked off as packed (" + pack.unpacked()
+                        + " unpacked in all, " + pack.packedWaiting() + " packed and waiting to ship) - print the packing slips.",
+                pack.staleUnpacked().stream().limit(MAX_ORDER_IDS).toList()));
 
         int total = items.stream().filter(i -> i.count() != null).mapToInt(Item::count).sum();
         return new NeedsAttention(now, total, items);

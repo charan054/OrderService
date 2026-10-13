@@ -8,7 +8,9 @@ import com.example.orderservice.entity.OrderItem;
 import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.ShippingAddress;
 import com.example.orderservice.exception.ProductException;
+import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.repository.CartRepository;
+import com.example.orderservice.repository.TrackingEventRepository;
 import com.example.orderservice.repository.ShippingAddressRepository;
 import feign.FeignException;
 import org.springframework.stereotype.Service;
@@ -36,9 +38,11 @@ public class PackingSlipService {
     private final ShippingAddressRepository addresses;
     private final ProductClient productClient;
     private final java.time.Clock clock;
+    private final TrackingEventRepository tracking;
 
     public PackingSlipService(CartRepository orders, ShippingAddressRepository addresses, ProductClient productClient,
-                              java.time.Clock clock) {
+                              java.time.Clock clock, TrackingEventRepository tracking) {
+        this.tracking = tracking;
         this.clock = clock;
         this.orders = orders;
         this.addresses = addresses;
@@ -104,6 +108,39 @@ public class PackingSlipService {
                 .sorted(Comparator.comparing(PackingSlips.PickLine::name, String.CASE_INSENSITIVE_ORDER))
                 .collect(Collectors.toList());
         return new PackingSlips(slips, pick);
+    }
+
+    /** Placed orders by packing state: not yet packed, packed and waiting to ship, and which unpacked ones have waited too long. */
+    public record PackingStatus(int unpacked, int packedWaiting, int staleHours, List<Long> staleUnpacked) {
+    }
+
+    public PackingStatus status(int staleHours) {
+        java.time.Instant staleBefore = clock.instant().minus(java.time.Duration.ofHours(staleHours));
+        Map<Long, java.time.Instant> placedAt = new HashMap<>();
+        List<Cart> placed = orders.findByStatus(OrderStatus.PLACED);
+        Set<Long> ids = placed.stream().map(Cart::getOrderId).collect(Collectors.toSet());
+        for (TrackingEvent e : tracking.findAll()) {
+            if (e.getTimestamp() != null && ids.contains(e.getOrderId())) {
+                placedAt.merge(e.getOrderId(), e.getTimestamp(), (a, b) -> a.isBefore(b) ? a : b);
+            }
+        }
+        int unpacked = 0;
+        int packedWaiting = 0;
+        List<Cart> stale = new ArrayList<>();
+        for (Cart o : placed) {
+            if (o.getPackedAt() != null) {
+                packedWaiting++;
+                continue;
+            }
+            unpacked++;
+            java.time.Instant at = placedAt.get(o.getOrderId());
+            if (at != null && at.isBefore(staleBefore)) {
+                stale.add(o);
+            }
+        }
+        List<Long> staleIds = stale.stream().sorted(Comparator.comparing(o -> placedAt.get(o.getOrderId())))
+                .map(Cart::getOrderId).toList();
+        return new PackingStatus(unpacked, packedWaiting, staleHours, staleIds);
     }
 
     /** Ticks placed orders off as packed; they stop appearing in the pick list. Returns how many were newly marked. */

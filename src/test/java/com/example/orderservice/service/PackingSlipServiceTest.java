@@ -35,13 +35,15 @@ class PackingSlipServiceTest {
     private ShippingAddressRepository addresses;
     @Mock
     private ProductClient productClient;
+    @Mock
+    private com.example.orderservice.repository.TrackingEventRepository tracking;
 
     private PackingSlipService service;
 
     @BeforeEach
     void setUp() {
         service = new PackingSlipService(orders, addresses, productClient,
-                java.time.Clock.fixed(java.time.Instant.parse("2026-10-13T10:00:00Z"), java.time.ZoneOffset.UTC));
+                java.time.Clock.fixed(java.time.Instant.parse("2026-10-13T10:00:00Z"), java.time.ZoneOffset.UTC), tracking);
         lenient().when(productClient.getProductById(1)).thenReturn(product(1, "Soap"));
         lenient().when(productClient.getProductById(2)).thenReturn(product(2, "Dal"));
     }
@@ -170,5 +172,32 @@ class PackingSlipServiceTest {
         when(orders.findById(1L)).thenReturn(Optional.of(a));
         when(orders.save(a)).thenReturn(a);
         assertEquals(null, service.unpack(1L).getPackedAt());
+    }
+
+    @Test
+    void statusCountsPackedAndUnpackedAndListsTheStaleUnpackedOldestFirst() {
+        Cart packed = order(1, PaymentMethod.CASH, item(1, 1, 0));
+        packed.setPackedAt(java.time.Instant.parse("2026-10-13T09:00:00Z"));
+        Cart oldest = order(2, PaymentMethod.CASH, item(1, 1, 0));
+        Cart old = order(3, PaymentMethod.CASH, item(1, 1, 0));
+        Cart fresh = order(4, PaymentMethod.CASH, item(1, 1, 0));
+        when(orders.findByStatus(OrderStatus.PLACED)).thenReturn(List.of(packed, old, oldest, fresh));
+        when(tracking.findAll()).thenReturn(List.of(
+                placedEvent(1, "2026-10-01T00:00:00Z"), placedEvent(2, "2026-10-10T00:00:00Z"),
+                placedEvent(3, "2026-10-11T00:00:00Z"), placedEvent(4, "2026-10-13T08:00:00Z")));
+
+        PackingSlipService.PackingStatus st = service.status(24);
+
+        assertEquals(3, st.unpacked());
+        assertEquals(1, st.packedWaiting());
+        assertEquals(List.of(2L, 3L), st.staleUnpacked());
+    }
+
+    private static com.example.orderservice.entity.TrackingEvent placedEvent(long orderId, String at) {
+        com.example.orderservice.entity.TrackingEvent e = new com.example.orderservice.entity.TrackingEvent();
+        e.setOrderId(orderId);
+        e.setStatus(OrderStatus.PLACED);
+        e.setTimestamp(java.time.Instant.parse(at));
+        return e;
     }
 }
