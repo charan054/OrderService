@@ -2283,7 +2283,7 @@
         return;
       }
       if (paymentMethod !== "CASH") {
-        const choice = refundChoiceParams();
+        const choice = refundChoiceParams(kind === "return" && returnPolicy.pickup);
         if (!choice) return;
         Object.entries(choice).forEach(([k, v]) => params.set(k, v));
       }
@@ -2294,6 +2294,7 @@
         alert((await response.text()) || `Could not ${kind} this item.`);
         return;
       }
+      if (kind === "return" && returnPolicy.pickup) alert("Pickup booked. We'll refund you once the item reaches us.");
       loadAccountView();
     }
 
