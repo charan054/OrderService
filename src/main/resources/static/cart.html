@@ -2566,6 +2566,7 @@
       flaggedReviews: { card: "card-moderation", open: () => loadFlaggedReviews() },
       lowStock: { card: "card-lowstock", open: () => getLowStockReport() },
       stuckPayments: { card: "card-orders", open: () => { document.getElementById("ordersStatus").value = "PENDING_PAYMENT"; return loadOrdersTable(); } },
+      unpacked: { card: "card-packingslips", open: () => {} },
       failedRefunds: { card: "card-refundfailures", open: () => loadRefundFailures() },
       failedNotifications: { card: "card-notifications", open: (item) => {
         if (item.orderIds && item.orderIds.length) { document.getElementById("notificationsOrderId").value = item.orderIds[0]; return viewNotifications(); }
@@ -2622,6 +2623,7 @@
         <ul>
           <li>Waiting over ${a.staleHours}h to ship: ${ids(a.unshipped)}</li>
           <li>Delivered cash orders not marked paid: ${ids(a.cashDeliveredUnpaid)}</li>
+          <li>Placed orders: ${a.unpacked} not yet packed, ${a.packedWaiting} packed and waiting to ship</li>
           <li>UPI payments still pending: ${a.pendingPayments}</li>
           <li>Unanswered customer questions: ${a.unansweredQuestions}</li>
         </ul>`;

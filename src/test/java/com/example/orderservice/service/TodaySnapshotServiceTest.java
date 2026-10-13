@@ -135,4 +135,21 @@ class TodaySnapshotServiceTest {
         assertThrows(ProductException.class, () -> service.snapshot(null, 0));
         assertThrows(ProductException.class, () -> service.snapshot(null, 721));
     }
+
+    @Test
+    void countsPlacedOrdersByPackingState() {
+        Cart packed = order(1, OrderStatus.PLACED, PaymentMethod.CASH, false, 100, 0);
+        packed.setPackedAt(Instant.parse("2026-10-07T09:00:00Z"));
+        when(orders.findAll()).thenReturn(List.of(packed,
+                order(2, OrderStatus.PLACED, PaymentMethod.CASH, false, 100, 0),
+                order(3, OrderStatus.PLACED, PaymentMethod.CASH, false, 100, 0),
+                order(4, OrderStatus.SHIPPED, PaymentMethod.CASH, false, 100, 0)));
+        when(tracking.findAll()).thenReturn(List.of());
+        when(questions.findByAnswerIsNullOrderByIdAsc()).thenReturn(List.of());
+
+        TodaySnapshot s = service.snapshot(null, 24);
+
+        assertEquals(2, s.attention().unpacked());
+        assertEquals(1, s.attention().packedWaiting());
+    }
 }

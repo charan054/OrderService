@@ -43,6 +43,7 @@ class NeedsAttentionServiceTest {
     private com.example.orderservice.repository.RefundFailureRepository refundFailures;
 
     private CodCollectionService codCollection;
+    private PackingSlipService packing;
 
     @BeforeEach
     void setUp() {
@@ -53,9 +54,11 @@ class NeedsAttentionServiceTest {
         orderService = mock(OrderService.class);
         refundFailures = mock(com.example.orderservice.repository.RefundFailureRepository.class);
         codCollection = mock(CodCollectionService.class);
+        packing = mock(PackingSlipService.class);
+        when(packing.status(org.mockito.ArgumentMatchers.anyInt())).thenReturn(new PackingSlipService.PackingStatus(0, 0, 24, List.of()));
         when(codCollection.overdueOrderIds()).thenReturn(List.of());
         service = new NeedsAttentionService(tickets, questions, carts, notifications, refundFailures, orderService,
-                Clock.fixed(NOW, ZoneOffset.UTC), codCollection);
+                Clock.fixed(NOW, ZoneOffset.UTC), codCollection, packing);
         when(refundFailures.findByResolvedAtIsNullOrderByIdAsc()).thenReturn(List.of());
         when(carts.findByStatusAndPaymentDeadlineBeforeOrderByPaymentDeadlineAsc(any(), any())).thenReturn(List.of());
         when(notifications.findByEmailedFalseAndSentAtAfterOrderBySentAtDesc(any())).thenReturn(List.of());
@@ -86,7 +89,7 @@ class NeedsAttentionServiceTest {
         assertEquals(0, result.total());
         assertEquals(NOW, result.generatedAt());
         assertEquals(List.of("supportTickets", "unansweredQuestions", "flaggedReviews", "lowStock", "stuckPayments",
-                "failedNotifications", "failedRefunds", "codOverdue"), result.items().stream().map(NeedsAttention.Item::key).toList());
+                "failedNotifications", "failedRefunds", "codOverdue", "unpacked"), result.items().stream().map(NeedsAttention.Item::key).toList());
         assertTrue(result.items().stream().allMatch(i -> i.count() == 0 && !i.unavailable()));
     }
 
@@ -168,5 +171,15 @@ class NeedsAttentionServiceTest {
         // The rows that do not depend on ProductService are still there, and total ignores the unknown ones.
         assertEquals(4, item(result, "supportTickets").count());
         assertEquals(4, result.total());
+    }
+
+    @Test
+    void reportsPlacedOrdersThatHaveWaitedTooLongToBePacked() {
+        when(packing.status(org.mockito.ArgumentMatchers.anyInt())).thenReturn(new PackingSlipService.PackingStatus(5, 2, 24, List.of(7L, 9L)));
+
+        NeedsAttention.Item item = service.get().items().stream().filter(i -> i.key().equals("unpacked")).findFirst().orElseThrow();
+
+        assertEquals(2, item.count());
+        assertEquals(List.of(7L, 9L), item.orderIds());
     }
 }

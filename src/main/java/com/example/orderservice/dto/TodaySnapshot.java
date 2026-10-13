@@ -11,7 +11,8 @@ public record TodaySnapshot(LocalDate date, String zone, int ordersPlaced, doubl
     // unshipped: PLACED orders waiting longer than staleHours to ship (ids, oldest first, at most 20);
     // cashDeliveredUnpaid: delivered cash-on-delivery orders whose payment hasn't been recorded as collected;
     // pendingPayments: UPI orders still waiting for the buyer; unansweredQuestions: product questions awaiting an answer.
+    // unpacked / packedWaiting: PLACED orders not yet ticked off as packed, and packed ones still waiting to ship.
     public record Attention(int staleHours, List<Long> unshipped, List<Long> cashDeliveredUnpaid,
-                            int pendingPayments, int unansweredQuestions) {
+                            int pendingPayments, int unansweredQuestions, int unpacked, int packedWaiting) {
     }
 }

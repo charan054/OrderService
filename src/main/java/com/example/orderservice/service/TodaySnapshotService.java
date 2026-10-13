@@ -77,6 +77,8 @@ public class TodaySnapshotService {
         int placedToday = 0;
         double revenue = 0;
         int pendingPayments = 0;
+        int unpacked = 0;
+        int packedWaiting = 0;
         Instant staleBefore = now.minus(Duration.ofHours(staleHours));
         List<Cart> stale = new ArrayList<>();
         List<Long> cashUnpaid = new ArrayList<>();
@@ -92,6 +94,13 @@ public class TodaySnapshotService {
             }
             if (status == OrderStatus.PENDING_PAYMENT) {
                 pendingPayments++;
+            }
+            if (status == OrderStatus.PLACED) {
+                if (order.getPackedAt() == null) {
+                    unpacked++;
+                } else {
+                    packedWaiting++;
+                }
             }
             if (status == OrderStatus.PLACED && placed != null && placed.isBefore(staleBefore)) {
                 stale.add(order);
@@ -109,6 +118,6 @@ public class TodaySnapshotService {
         return new TodaySnapshot(today, zoneId.getId(), placedToday, Math.round(revenue * 100) / 100.0,
                 deliveredToday, cancelledToday,
                 new TodaySnapshot.Attention(staleHours, staleIds, List.copyOf(cashIds), pendingPayments,
-                        questions.findByAnswerIsNullOrderByIdAsc().size()));
+                        questions.findByAnswerIsNullOrderByIdAsc().size(), unpacked, packedWaiting));
     }
 }
