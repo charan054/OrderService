@@ -94,6 +94,23 @@ public class PackingSlipService {
         return new PackingSlips(slips, pick);
     }
 
+    /** The no-prices receipt a gift recipient can be handed; only for an order marked as a gift. */
+    public PackingSlips.GiftReceipt giftReceipt(long orderId) {
+        Cart order = orders.findById(orderId).orElseThrow(() -> new com.example.orderservice.exception.OrderNotFoundException("Order not found"));
+        if (!order.isGiftWrap() && (order.getGiftMessage() == null || order.getGiftMessage().isBlank())) {
+            throw new ProductException("This order was not placed as a gift");
+        }
+        Map<Integer, String> names = new HashMap<>();
+        List<PackingSlips.Line> lines = new ArrayList<>();
+        for (OrderItem item : order.getOrderItems() == null ? List.<OrderItem>of() : order.getOrderItems()) {
+            if (item.getOutstandingQuantity() > 0) {
+                lines.add(new PackingSlips.Line(item.getProductId(), names.computeIfAbsent(item.getProductId(), this::nameOf),
+                        item.getOutstandingQuantity()));
+            }
+        }
+        return new PackingSlips.GiftReceipt(orderId, order.getGiftMessage(), order.isGiftWrap(), lines);
+    }
+
     private String addressOf(Cart order) {
         if (order.getShippingAddressId() == null) {
             return null;

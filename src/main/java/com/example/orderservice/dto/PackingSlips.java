@@ -9,6 +9,10 @@ public record PackingSlips(List<Slip> slips, List<PickLine> pickList) {
                        List<Line> lines) {
     }
 
+    // A gift order's receipt: what was bought and the card message, with no prices.
+    public record GiftReceipt(long orderId, String giftMessage, boolean giftWrap, List<Line> lines) {
+    }
+
     public record Line(int productId, String name, int quantity) {
     }
 

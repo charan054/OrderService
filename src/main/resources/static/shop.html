@@ -2173,6 +2173,7 @@
           <button class="secondary" style="width:auto;" onclick="showInvoice(${order.orderId})">Invoice</button>
           <button class="secondary" style="width:auto;" onclick="downloadInvoicePdf(${order.orderId})">Download PDF</button>
           <button class="secondary" style="width:auto;" onclick="emailInvoice(${order.orderId})">Email invoice</button>
+          ${order.giftWrap || order.giftMessage ? `<button class="secondary" style="width:auto;" onclick="printGiftReceipt(${order.orderId})">Gift receipt</button>` : ""}
           <button class="secondary" style="width:auto;" onclick="reorderMyOrder(${order.orderId})">Buy again</button>
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeDelivery(${order.orderId})">Change delivery</button>` : ""}
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeOrderAddressTo(${order.orderId})">Change address</button>` : ""}
@@ -3554,6 +3555,26 @@
       a.click();
       a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
+
+    // A receipt with no prices, to hand over with a gift.
+    async function printGiftReceipt(orderId) {
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/gift-receipt`);
+      if (!response.ok) { alert((await response.text()) || "Could not prepare the gift receipt."); return; }
+      const g = await response.json();
+      const w = window.open("about:blank", "_blank");
+      if (!w) { alert("New tab blocked. Please allow popups for this page."); return; }
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Gift receipt</title><style>
+        body{font-family:Georgia,serif;max-width:480px;margin:32px auto;color:#111;text-align:center}
+        .card{border:2px dashed #555;padding:16px;margin:16px 0;font-style:italic;font-size:18px}
+        ul{list-style:none;padding:0;text-align:left} li{padding:4px 0;border-bottom:1px solid #ddd}</style></head><body>
+        <h1>A gift for you</h1>
+        ${g.giftMessage ? `<div class="card">&ldquo;${escapeHtml(g.giftMessage)}&rdquo;</div>` : ""}
+        <ul>${g.lines.map(l => `<li>${l.quantity} &times; ${escapeHtml(l.name)}</li>`).join("")}</ul>
+        <p>Order #${g.orderId}</p></body></html>`);
+      w.document.close();
+      w.focus();
+      w.print();
     }
 
     async function emailInvoice(orderId) {
