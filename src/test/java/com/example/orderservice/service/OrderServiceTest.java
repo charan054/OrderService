@@ -4409,6 +4409,24 @@ class OrderServiceTest {
     }
 
     @Test
+    void orderHistoryFiltersByProductName() {
+        Cart withMug = adminOrder(1, CUSTOMER, OrderStatus.DELIVERED, PaymentMethod.CASH, "A");
+        withMug.setOrderItems(List.of(item(7, 1)));
+        Cart withOther = adminOrder(2, CUSTOMER, OrderStatus.DELIVERED, PaymentMethod.CASH, "A");
+        withOther.setOrderItems(List.of(item(8, 1)));
+        when(orderRepository.findBycustomerPhno(CUSTOMER)).thenReturn(List.of(withMug, withOther));
+        Product mug = new Product();
+        mug.setProductId(7);
+        when(productClient.search("mug", null, 0, 200)).thenReturn(new ProductSearchResult(List.of(mug)));
+
+        OrderHistoryPage hit = service.getOrderHistory(CUSTOMER, null, null, null, " mug ", 0, 10);
+        assertEquals(List.of(1L), hit.orders().stream().map(Cart::getOrderId).toList());
+
+        when(productClient.search("zzz", null, 0, 200)).thenReturn(new ProductSearchResult(List.of()));
+        assertTrue(service.getOrderHistory(CUSTOMER, null, null, null, "zzz", 0, 10).orders().isEmpty());
+    }
+
+    @Test
     void orderHistoryRejectsBadArguments() {
         assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, null, null, null, -1, 10));
         assertThrows(ProductException.class, () -> service.getOrderHistory(CUSTOMER, null, null, null, 0, 0));

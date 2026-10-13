@@ -2270,7 +2270,7 @@
     }
 
     // Order-history filter/paging state; the server does the filtering (GET /cart/history).
-    let orderFilter = { status: "", from: "", to: "", page: 0 };
+    let orderFilter = { status: "", from: "", to: "", product: "", page: 0 };
     const ORDER_PAGE_SIZE = 10;
 
     function setOrderFilter(change) {
@@ -2283,6 +2283,7 @@
       if (orderFilter.status) q += `&status=${encodeURIComponent(orderFilter.status)}`;
       if (orderFilter.from) q += `&from=${orderFilter.from}`;
       if (orderFilter.to) q += `&to=${orderFilter.to}`;
+      if (orderFilter.product) q += `&product=${encodeURIComponent(orderFilter.product)}`;
       return q;
     }
 
@@ -2302,7 +2303,8 @@
           </select>
           <label class="meta">From <input type="date" value="${f.from}" onchange="setOrderFilter({from: this.value})" style="width:auto;" /></label>
           <label class="meta">To <input type="date" value="${f.to}" onchange="setOrderFilter({to: this.value})" style="width:auto;" /></label>
-          ${f.status || f.from || f.to ? `<button class="secondary" style="width:auto;" onclick="setOrderFilter({status: '', from: '', to: ''})">Clear</button>` : ""}
+          <input type="search" placeholder="Search by product" value="${escapeHtml(f.product)}" aria-label="Search orders by product" onchange="setOrderFilter({product: this.value.trim()})" style="width:auto;" />
+          ${f.status || f.from || f.to || f.product ? `<button class="secondary" style="width:auto;" onclick="setOrderFilter({status: '', from: '', to: '', product: ''})">Clear</button>` : ""}
           ${historyPage ? `<span class="meta">${historyPage.totalElements} order(s)</span>` : ""}
         </div>
         ${pager}`;
