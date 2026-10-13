@@ -125,6 +125,35 @@ class CreditNoteServiceTest {
     }
 
     @Test
+    void aPriceReductionNoteTakesTheTaxOutOfTheGivenAmountAtTheLinesRate() {
+        OrderItem soap = item(1, 2, 118, 18.0);
+        Cart order = invoicedOrder("Karnataka", 0, soap);
+
+        CreditNote note = service.issueValueReduction(order, 1, 1, 59.0, "EXCHANGE").orElseThrow();
+
+        assertThat(note.getReason()).isEqualTo("EXCHANGE");
+        assertThat(note.getTaxableValue()).isEqualTo(50.0);
+        assertThat(note.getCgst()).isEqualTo(4.5);
+        assertThat(note.getSgst()).isEqualTo(4.5);
+        assertThat(note.getTotal()).isEqualTo(59.0);
+        assertThat(note.getLines()).singleElement().satisfies(l -> assertThat(l.getProductName()).isEqualTo("Soap"));
+    }
+
+    @Test
+    void aPriceReductionNoteGoesInterStateAsIgstAndNeedsAnInvoiceAndAnAmount() {
+        OrderItem soap = item(1, 2, 118, 18.0);
+        Cart order = invoicedOrder("Maharashtra", 0, soap);
+
+        CreditNote note = service.issueValueReduction(order, 1, 1, 118.0, "EXCHANGE").orElseThrow();
+        assertThat(note.getIgst()).isEqualTo(18.0);
+        assertThat(note.getCgst()).isEqualTo(0.0);
+
+        assertThat(service.issueValueReduction(order, 1, 1, 0, "EXCHANGE")).isEmpty();
+        order.setInvoiceNumber(null);
+        assertThat(service.issueValueReduction(order, 1, 1, 50, "EXCHANGE")).isEmpty();
+    }
+
+    @Test
     void anotherStateGetsIgstAndNumbersKeepCounting() {
         OrderItem soap = item(1, 2, 118, 18.0);
         Cart order = invoicedOrder("Maharashtra", 0, soap);

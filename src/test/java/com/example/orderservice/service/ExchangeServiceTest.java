@@ -42,12 +42,14 @@ class ExchangeServiceTest {
     private CustomerNotifier notifier;
     @Mock
     private StoreCreditService storeCredit;
+    @Mock
+    private CreditNoteService creditNotes;
 
     private ExchangeService service;
 
     @BeforeEach
     void setUp() {
-        service = new ExchangeService(exchanges, orders, orderService, productClient, notifier, storeCredit,
+        service = new ExchangeService(exchanges, orders, orderService, productClient, notifier, storeCredit, creditNotes,
                 java.time.Clock.fixed(java.time.Instant.parse("2026-10-13T10:00:00Z"), java.time.ZoneOffset.UTC), "key");
         lenient().when(orderService.orderLock(anyLong())).thenReturn(new Object());
         lenient().when(exchanges.save(any(ExchangeRequest.class))).thenAnswer(i -> i.getArgument(0));
@@ -208,6 +210,29 @@ class ExchangeServiceTest {
         service.markReceived(5L);
 
         verify(storeCredit).credit(eq(9000000001L), eq(30.0), eq(com.example.orderservice.entity.StoreCreditTransaction.Type.REFUND), eq(7L), any());
+        verify(creditNotes).issueValueReduction(any(Cart.class), eq(1), eq(2), eq(30.0), eq("EXCHANGE"));
+    }
+
+    @Test
+    void aFailingCreditNoteDoesNotUndoTheExchange() {
+        ExchangeRequest r = stored("APPROVED");
+        r.setPriceDifference(-30);
+        r.setCustomerPhno(9000000001L);
+        when(creditNotes.issueValueReduction(any(Cart.class), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyDouble(), any())).thenThrow(new IllegalStateException("db"));
+
+        assertEquals("RECEIVED", service.markReceived(5L).getStatus());
+    }
+
+    @Test
+    void noCreditNoteForADearerOrSamePriceSwap() {
+        ExchangeRequest r = stored("APPROVED");
+        r.setPriceDifference(25);
+
+        service.markReceived(5L);
+
+        verify(creditNotes, never()).issueValueReduction(any(), org.mockito.ArgumentMatchers.anyInt(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyDouble(), any());
     }
 
     @Test
