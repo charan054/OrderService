@@ -94,7 +94,10 @@ public class OrderTimelineService {
 
     // The email a failed delivery attempt sent (DeliveryFailureService); the attempt itself is shown instead.
     private static boolean isDeliveryAttemptMessage(NotificationLog n) {
-        return n.getMessage().startsWith("We could not deliver order #");
+        return n.getMessage().startsWith("We could not deliver order #")
+                // the emails an exchange sent (ExchangeService); the exchange's own entries are shown instead
+                || n.getMessage().startsWith("Exchange requested for order #")
+                || n.getMessage().startsWith("Your exchange for order #");
     }
 
     // A notification the status change already produced (same wording the notifier used), so the tracking event stands for it.
