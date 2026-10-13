@@ -453,6 +453,33 @@
     </section>
 
     <section class="grid">
+        <div class="card wide" id="card-deliveryfailed">
+            <div class="card-header">
+                <div class="title-wrap">
+                    <h2>Failed Delivery</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Record that a delivery attempt on a shipped order failed - the customer is told which attempt it was. Once you have recorded at least one, "Send back to stock" cancels the order, restocks it and refunds it. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <input id="dfOrderId" type="number" placeholder="Order ID" style="width:110px;">
+                <select id="dfReason">
+                    <option value="CUSTOMER_UNAVAILABLE">Customer unavailable</option>
+                    <option value="ADDRESS_ISSUE">Address issue</option>
+                    <option value="REFUSED">Refused</option>
+                    <option value="PAYMENT_NOT_READY">Cash not ready</option>
+                    <option value="OTHER">Other</option>
+                </select>
+                <input id="dfNote" type="text" maxlength="200" placeholder="Note (optional)">
+                <button onclick="recordDeliveryFailure()">Record failed attempt</button>
+                <button class="red" onclick="returnUndelivered()">Send back to stock</button>
+                <button onclick="showDeliveryAttempts()">Show attempts</button>
+            </div>
+            <div id="dfWrap"></div>
+        </div>
+    </section>
+
+    <section class="grid">
         <div class="card wide" id="card-couponreport">
             <div class="card-header">
                 <div class="icon">&#127903;</div>
@@ -2283,6 +2310,38 @@
               ? `<button onclick="stepExchange(${r.id}, 'approve')">Approve</button> <button onclick="stepExchange(${r.id}, 'reject')">Reject</button>`
               : `<button onclick="stepExchange(${r.id}, 'received')">Mark received</button>`}</td></tr>`).join("")}</tbody></table>`
         : `<p>No exchanges waiting.</p>`;
+    }
+
+    function dfOrderId() {
+      const id = Number(document.getElementById("dfOrderId").value);
+      if (!Number.isInteger(id) || id < 1) { showStatus("Enter an order ID.", "error"); return null; }
+      return id;
+    }
+
+    async function showDeliveryAttempts() {
+      const id = dfOrderId(); const serviceKey = requireServiceKey();
+      if (!id || !serviceKey) return;
+      const rows = await apiCall(`http://localhost:8083/cart/${id}/delivery-attempts`, { headers: { "X-Service-Key": serviceKey } });
+      document.getElementById("dfWrap").innerHTML = Array.isArray(rows) && rows.length
+        ? `<table class="orders-table"><thead><tr><th>Attempt</th><th>Reason</th><th>Note</th><th>When</th></tr></thead><tbody>${rows.map(a => `
+            <tr><td>${a.attemptNo}</td><td>${escapeHtml(a.reason)}</td><td style="white-space:normal;">${escapeHtml(a.note || "")}</td><td>${escapeHtml(String(a.createdAt))}</td></tr>`).join("")}</tbody></table>`
+        : `<p>No failed attempts on order #${id}.</p>`;
+    }
+
+    async function recordDeliveryFailure() {
+      const id = dfOrderId(); const serviceKey = requireServiceKey();
+      if (!id || !serviceKey) return;
+      const params = new URLSearchParams({ reason: document.getElementById("dfReason").value, note: document.getElementById("dfNote").value });
+      const data = await apiCall(`http://localhost:8083/cart/${id}/delivery-failed?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      if (data && data.giveUpAdvised) showStatus(`Attempt ${data.attemptsSoFar} of ${data.maxAttempts} failed - time to send it back to stock.`, "error");
+      await showDeliveryAttempts();
+    }
+
+    async function returnUndelivered() {
+      const id = dfOrderId(); const serviceKey = requireServiceKey();
+      if (!id || !serviceKey) return;
+      if (!confirm(`Cancel order #${id}, put it back in stock and refund it?`)) return;
+      await apiCall(`http://localhost:8083/cart/${id}/delivery-failed/return-to-stock`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
     }
 
     async function stepExchange(id, step) {

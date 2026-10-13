@@ -72,6 +72,8 @@ public class OrderController {
     @Autowired
     private com.example.orderservice.service.ExchangeService exchangeService;
     @Autowired
+    private com.example.orderservice.service.DeliveryFailureService deliveryFailureService;
+    @Autowired
     private ReorderSuggestionService reorderSuggestionService;
 
     @Autowired
@@ -672,6 +674,24 @@ public class OrderController {
     @PostMapping("/exchanges/{id}/received")
     public com.example.orderservice.entity.ExchangeRequest exchangeReceived(@PathVariable long id) {
         return exchangeService.markReceived(id);
+    }
+
+    // Staff: a delivery attempt failed (the order stays shipped); try again, or send it back to stock (cancel + refund).
+    @PostMapping("/{orderId}/delivery-failed")
+    public com.example.orderservice.service.DeliveryFailureService.Result deliveryFailed(@PathVariable long orderId, @RequestParam String reason,
+                                                                                         @RequestParam(required = false) String note) {
+        return deliveryFailureService.record(orderId, reason, note);
+    }
+
+    @PostMapping("/{orderId}/delivery-failed/return-to-stock")
+    public Cart returnUndelivered(@PathVariable long orderId, @RequestParam(required = false) String note) {
+        return deliveryFailureService.returnToStock(orderId, note);
+    }
+
+    @GetMapping("/{orderId}/delivery-attempts")
+    public List<com.example.orderservice.entity.DeliveryAttempt> deliveryAttempts(@PathVariable long orderId) {
+        requireOrderAccess(orderId);
+        return deliveryFailureService.forOrder(orderId);
     }
 
     @GetMapping("/returns/pickups")
