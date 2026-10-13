@@ -326,6 +326,46 @@
         .rev-table th, .rev-table td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--border); }
         .rev-table th:first-child, .rev-table td:first-child { text-align: left; }
         .rev-empty { color: var(--muted); padding: 24px 0; text-align: center; }
+
+        /* ---- section finder: a sticky bar to jump to any card, plus collapsible cards ---- */
+        #adminNav {
+          position: sticky; top: 0; z-index: 60; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+          padding: 10px 20px; background: rgba(15, 23, 42, 0.88); backdrop-filter: blur(8px);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.14);
+        }
+        #adminNav .nav-title { color: #ede9fe; font-weight: 800; font-size: 14px; white-space: nowrap; }
+        #adminNav .nav-search { position: relative; flex: 1 1 260px; max-width: 520px; }
+        #adminNav input {
+          width: 100%; margin: 0; padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.22);
+          background: rgba(255, 255, 255, 0.1); color: #fff; font-size: 14px; outline: none;
+        }
+        #adminNav input::placeholder { color: #c4b5fd; }
+        #adminNav input:focus { border-color: #a78bfa; background: rgba(255, 255, 255, 0.16); }
+        #adminNav button {
+          width: auto; margin: 0; flex: 0 0 auto; padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.22); cursor: pointer;
+          background: rgba(255, 255, 255, 0.1); color: #fff; font-weight: 700; font-size: 13px; box-shadow: none;
+        }
+        #adminNav button:hover { background: rgba(255, 255, 255, 0.2); }
+        #navResults {
+          position: absolute; top: calc(100% + 6px); left: 0; right: 0; max-height: 60vh; overflow: auto; display: none;
+          background: #fff; color: var(--dark); border-radius: 12px; box-shadow: var(--shadow); padding: 6px;
+        }
+        #navResults.open { display: block; }
+        #navResults button {
+          display: block; width: 100%; text-align: left; background: transparent; color: var(--dark); border: 0;
+          border-radius: 8px; padding: 8px 10px; font-weight: 600;
+        }
+        #navResults button:hover, #navResults button.active { background: #ede9fe; }
+        #navResults .none { padding: 10px; color: var(--muted); font-size: 13px; }
+        .card .card-header h2 { cursor: pointer; user-select: none; }
+        .card .card-header h2::after { content: "\25BE"; margin-left: 8px; font-size: 14px; color: var(--muted); display: inline-block; transition: transform 0.15s; }
+        .card.collapsed .card-header h2::after { transform: rotate(-90deg); }
+        .card.collapsed > :not(.card-header) { display: none; }
+        .card.flash { animation: cardFlash 1.4s ease; }
+        @keyframes cardFlash { 0%, 100% { box-shadow: var(--shadow); } 30% { box-shadow: 0 0 0 4px #a78bfa, var(--shadow); } }
+        .card { scroll-margin-top: 70px; }
+        @media (prefers-reduced-motion: reduce) { .card.flash { animation: none; } }
+        @media (max-width: 600px) { #adminNav { padding: 8px 12px; } #adminNav .nav-title { display: none; } }
     </style>
 </head>
 <body>
@@ -3953,6 +3993,102 @@
       `);
       resultTab.document.close();
     }
+</script>
+<script>
+// Section finder for the long admin page: a sticky search box that jumps to any card, per-card collapse (remembered),
+// and Collapse all / Expand all. Built from the cards that are already on the page, so a new card shows up by itself.
+(function () {
+  var cards = Array.prototype.slice.call(document.querySelectorAll(".card")).filter(function (c) { return c.querySelector(".card-header h2"); });
+  if (!cards.length) return;
+  var STORE = "adminCollapsedCards";
+  function titleOf(c) { return c.querySelector(".card-header h2").textContent.trim(); }
+  function load() { try { return JSON.parse(localStorage.getItem(STORE) || "[]"); } catch (e) { return []; } }
+  function save(list) { try { localStorage.setItem(STORE, JSON.stringify(list)); } catch (e) {} }
+  var collapsed = load();
+  cards.forEach(function (c, i) {
+    if (!c.id) c.id = "card-auto-" + i;
+    if (collapsed.indexOf(titleOf(c)) >= 0) c.classList.add("collapsed");
+    c.querySelector(".card-header h2").addEventListener("click", function () {
+      c.classList.toggle("collapsed");
+      save(cards.filter(function (x) { return x.classList.contains("collapsed"); }).map(titleOf));
+    });
+  });
+
+  var bar = document.createElement("div");
+  bar.id = "adminNav";
+  bar.innerHTML = '<span class="nav-title">' + cards.length + ' sections</span>' +
+    '<div class="nav-search"><input id="navSearch" type="search" placeholder="Find a section... (press /)" autocomplete="off" aria-label="Find a section">' +
+    '<div id="navResults" role="listbox"></div></div>' +
+    '<button type="button" id="navCollapse">Collapse all</button><button type="button" id="navExpand">Expand all</button>' +
+    '<button type="button" id="navTop" aria-label="Back to top">&#8593; Top</button>';
+  var main = document.querySelector("main.container");
+  main.parentNode.insertBefore(bar, main);
+
+  var input = document.getElementById("navSearch");
+  var results = document.getElementById("navResults");
+  var active = -1;
+  function matches(q) {
+    q = q.trim().toLowerCase();
+    if (!q) return [];
+    return cards.filter(function (c) {
+      return titleOf(c).toLowerCase().indexOf(q) >= 0 || (c.querySelector("p") ? c.querySelector("p").textContent.toLowerCase().indexOf(q) >= 0 : false);
+    }).slice(0, 12);
+  }
+  function render() {
+    var list = matches(input.value);
+    active = list.length ? 0 : -1;
+    if (!input.value.trim()) { results.classList.remove("open"); return; }
+    results.innerHTML = list.length ? "" : '<div class="none">No section matches.</div>';
+    list.forEach(function (c, i) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.textContent = titleOf(c);
+      if (i === 0) b.className = "active";
+      b.addEventListener("click", function () { go(c); });
+      results.appendChild(b);
+    });
+    results.classList.add("open");
+  }
+  function go(c) {
+    c.classList.remove("collapsed");
+    save(cards.filter(function (x) { return x.classList.contains("collapsed"); }).map(titleOf));
+    results.classList.remove("open");
+    input.value = "";
+    c.scrollIntoView({ behavior: "smooth", block: "start" });
+    c.classList.remove("flash");
+    void c.offsetWidth;
+    c.classList.add("flash");
+  }
+  input.addEventListener("input", render);
+  input.addEventListener("keydown", function (e) {
+    var buttons = results.querySelectorAll("button");
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!buttons.length) return;
+      active = (active + (e.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
+      buttons.forEach(function (b, i) { b.className = i === active ? "active" : ""; });
+    } else if (e.key === "Enter" && buttons[active]) {
+      e.preventDefault();
+      buttons[active].click();
+    } else if (e.key === "Escape") {
+      input.value = "";
+      results.classList.remove("open");
+      input.blur();
+    }
+  });
+  document.addEventListener("click", function (e) { if (!bar.contains(e.target)) results.classList.remove("open"); });
+  document.addEventListener("keydown", function (e) {
+    var tag = (document.activeElement && document.activeElement.tagName) || "";
+    if (e.key === "/" && !/INPUT|TEXTAREA|SELECT/.test(tag)) { e.preventDefault(); input.focus(); }
+  });
+  function setAll(on) {
+    cards.forEach(function (c) { c.classList.toggle("collapsed", on); });
+    save(on ? cards.map(titleOf) : []);
+  }
+  document.getElementById("navCollapse").addEventListener("click", function () { setAll(true); });
+  document.getElementById("navExpand").addEventListener("click", function () { setAll(false); });
+  document.getElementById("navTop").addEventListener("click", function () { window.scrollTo({ top: 0, behavior: "smooth" }); });
+})();
 </script>
 </body>
 </html>
