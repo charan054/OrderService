@@ -686,6 +686,39 @@ public class OrderService {
         return cancel(orderId, authorization, idempotencyKey, payerPhno, payerPin, null, null);
     }
 
+    // Customer self-cancel rules (staff are never limited): free for cancel.free-minutes after the order was placed, then
+    // a reason is required, and after cancel.lock-minutes the customer can no longer cancel online at all. 0 = off.
+    @Value("${cancel.free-minutes:0}")
+    private int cancelFreeMinutes;
+    @Value("${cancel.lock-minutes:0}")
+    private int cancelLockMinutes;
+
+    public java.util.Map<String, Integer> getCancelPolicy() {
+        return java.util.Map.of("freeMinutes", Math.max(0, cancelFreeMinutes), "lockMinutes", Math.max(0, cancelLockMinutes));
+    }
+
+    /** Called for a customer's (not staff's) cancel of the whole order or of some items. Throws when the rules say no. */
+    public void assertCustomerMayCancel(long orderId, String reason) {
+        if (cancelFreeMinutes <= 0 && cancelLockMinutes <= 0) {
+            return;
+        }
+        // The order's age is measured from its first tracking event; one with none (very old) can't be aged and is left alone.
+        Instant placedAt = trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId).stream()
+                .map(TrackingEvent::getTimestamp).findFirst().orElse(null);
+        if (placedAt == null) {
+            return;
+        }
+        long ageMinutes = java.time.Duration.between(placedAt, Instant.now()).toMinutes();
+        if (cancelLockMinutes > 0 && ageMinutes >= cancelLockMinutes) {
+            throw new ProductException("This order is being prepared and can no longer be cancelled online - please contact support "
+                    + "(Help & support in the shop)");
+        }
+        if (cancelFreeMinutes > 0 && ageMinutes >= cancelFreeMinutes && (reason == null || reason.isBlank())) {
+            throw new ProductException("Please choose a reason for cancelling - orders are free to cancel without one only for the first "
+                    + cancelFreeMinutes + " minutes");
+        }
+    }
+
     static final java.util.List<String> CANCEL_REASONS = java.util.List.of(
             "CHANGED_MIND", "ORDERED_BY_MISTAKE", "FOUND_CHEAPER_ELSEWHERE", "DELIVERY_TOO_SLOW", "WRONG_ADDRESS", "OTHER");
     static final int MAX_CANCEL_NOTE_LENGTH = 200;

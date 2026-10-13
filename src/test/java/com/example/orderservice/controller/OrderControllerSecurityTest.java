@@ -266,6 +266,11 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void theCancelPolicyIsPublic() throws Exception {
+        mockMvc.perform(get("/cart/cancelpolicy")).andExpect(status().isOk());
+    }
+
+    @Test
     void theReturnPolicyIsPublic() throws Exception {
         mockMvc.perform(get("/cart/returnpolicy")).andExpect(status().isOk());
     }

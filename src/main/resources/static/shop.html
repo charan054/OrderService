@@ -1380,6 +1380,7 @@
       loadProducts();
       refreshNotificationBadge();
       loadDeliveryTerms();
+      loadCancelPolicy();
       loadReturnPolicy();
       loadWishlist();
       loadWaitlist();
@@ -2548,8 +2549,23 @@
       ["WRONG_ADDRESS", "Wrong delivery address"], ["OTHER", "Something else"]
     ];
 
+    let cancelPolicy = { freeMinutes: 0, lockMinutes: 0 };
+    async function loadCancelPolicy() {
+      try {
+        const response = await fetch(`${BASE_URL}/cart/cancelpolicy`);
+        if (response.ok) cancelPolicy = await response.json();
+      } catch (e) { /* no policy line */ }
+    }
+
+    function cancelPolicyText() {
+      const p = cancelPolicy;
+      if (!p.freeMinutes && !p.lockMinutes) return "";
+      return "\n\n" + (p.freeMinutes ? `Cancelling is free of questions for ${p.freeMinutes} minute(s) after you order; after that please give a reason. ` : "")
+        + (p.lockMinutes ? `After ${p.lockMinutes} minute(s) the order is being prepared and can't be cancelled online - contact support then.` : "");
+    }
+
     async function cancelMyOrder(orderId, paymentMethod) {
-      if (!confirm(`Cancel order #${orderId}? This can't be undone.`)) return;
+      if (!confirm(`Cancel order #${orderId}? This can't be undone.${cancelPolicyText()}`)) return;
       const choice = prompt("Why are you cancelling? Enter a number (or leave blank to skip):\n"
         + CANCEL_REASONS.map((r, i) => `${i + 1}. ${r[1]}`).join("\n"));
       if (choice === null) return;

@@ -3817,6 +3817,45 @@ class OrderServiceTest {
         verify(storeCreditService, never()).spend(anyLong(), anyDouble(), any(), any());
     }
 
+    private void placedMinutesAgo(long orderId, long minutes) {
+        TrackingEvent placed = new TrackingEvent();
+        placed.setOrderId(orderId);
+        placed.setStatus(OrderStatus.PLACED);
+        placed.setTimestamp(Instant.now().minus(minutes, java.time.temporal.ChronoUnit.MINUTES));
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(orderId)).thenReturn(List.of(placed));
+    }
+
+    @Test
+    void cancelRulesAreOffByDefault() {
+        service.assertCustomerMayCancel(42L, null);
+        verifyNoInteractions(trackingEventRepository);
+    }
+
+    @Test
+    void afterTheFreeWindowACustomerMustGiveAReasonAndAfterTheLockCannotCancelOnline() {
+        ReflectionTestUtils.setField(service, "cancelFreeMinutes", 10);
+        ReflectionTestUtils.setField(service, "cancelLockMinutes", 120);
+
+        placedMinutesAgo(42L, 3);
+        service.assertCustomerMayCancel(42L, null);                 // inside the free window: no reason needed
+
+        placedMinutesAgo(42L, 30);
+        assertThrows(ProductException.class, () -> service.assertCustomerMayCancel(42L, null));
+        assertThrows(ProductException.class, () -> service.assertCustomerMayCancel(42L, "  "));
+        service.assertCustomerMayCancel(42L, "CHANGED_MIND");        // a reason is enough after the free window
+
+        placedMinutesAgo(42L, 121);
+        assertThrows(ProductException.class, () -> service.assertCustomerMayCancel(42L, "CHANGED_MIND"));
+    }
+
+    @Test
+    void anOrderWithNoTrackingCannotBeAgedSoTheRulesLeaveItAlone() {
+        ReflectionTestUtils.setField(service, "cancelFreeMinutes", 10);
+        ReflectionTestUtils.setField(service, "cancelLockMinutes", 20);
+        when(trackingEventRepository.findByOrderIdOrderByTimestampAsc(42L)).thenReturn(List.of());
+        service.assertCustomerMayCancel(42L, null);
+    }
+
     @Test
     void aSplitRefundSendsThePhonepePartFirstAndTheRestToStoreCredit() {
         Cart cart = placedOrder(42L, 100000L, pricedItem(1, 1, 400));
