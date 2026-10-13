@@ -2323,8 +2323,8 @@
       if (!serviceKey) return;
       const rows = await apiCall("http://localhost:8083/cart/exchanges/open", { headers: { "X-Service-Key": serviceKey } });
       document.getElementById("exchangesWrap").innerHTML = Array.isArray(rows) && rows.length
-        ? `<table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Item</th><th>Qty</th><th>Swap for</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(r => `
-            <tr><td>#${r.orderId}</td><td>${r.customerPhno}</td><td>#${r.productId}</td><td>${r.quantity}</td><td>#${r.replacementProductId}</td>
+        ? `<table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Item</th><th>Qty</th><th>Swap for</th><th>Price diff</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>#${r.orderId}</td><td>${r.customerPhno}</td><td>#${r.productId}</td><td>${r.quantity}</td><td>#${r.replacementProductId}</td><td>${r.priceDifference ? (r.priceDifference > 0 ? "+" : "") + Number(r.priceDifference).toFixed(2) : "-"}</td>
             <td style="white-space:normal;">${escapeHtml(r.reason || "")}</td><td>${escapeHtml(r.status)}</td>
             <td>${r.status === "REQUESTED"
               ? `<button onclick="stepExchange(${r.id}, 'approve')">Approve</button> <button onclick="stepExchange(${r.id}, 'reject')">Reject</button>`

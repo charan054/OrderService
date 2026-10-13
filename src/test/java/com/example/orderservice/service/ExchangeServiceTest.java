@@ -40,12 +40,14 @@ class ExchangeServiceTest {
     private ProductClient productClient;
     @Mock
     private CustomerNotifier notifier;
+    @Mock
+    private StoreCreditService storeCredit;
 
     private ExchangeService service;
 
     @BeforeEach
     void setUp() {
-        service = new ExchangeService(exchanges, orders, orderService, productClient, notifier,
+        service = new ExchangeService(exchanges, orders, orderService, productClient, notifier, storeCredit,
                 java.time.Clock.fixed(java.time.Instant.parse("2026-10-13T10:00:00Z"), java.time.ZoneOffset.UTC), "key");
         lenient().when(orderService.orderLock(anyLong())).thenReturn(new Object());
         lenient().when(exchanges.save(any(ExchangeRequest.class))).thenAnswer(i -> i.getArgument(0));
@@ -100,10 +102,11 @@ class ExchangeServiceTest {
     }
 
     @Test
-    void requestRefusesADearerReplacementOutOfStockAndTooManyUnits() {
+    void requestRefusesAnUnaffordableDearerReplacementOutOfStockAndTooManyUnits() {
         delivered(100, 3);
         replacement(9, 120, 5);
         replacement(8, 50, 1);
+        when(storeCredit.balance(9000000001L)).thenReturn(10.0);
         assertThrows(ProductException.class, () -> service.request(7L, 1, 1, 9, "x"));
         assertThrows(ProductException.class, () -> service.request(7L, 1, 2, 8, "x"));
         replacement(7, 50, 9);
@@ -170,5 +173,53 @@ class ExchangeServiceTest {
         assertEquals("CANCELLED", service.cancel(5L).getStatus());
         r.setStatus("APPROVED");
         assertThrows(ProductException.class, () -> service.cancel(5L));
+    }
+
+    @Test
+    void aDearerReplacementIsPaidFromStoreCreditOnApproval() {
+        ExchangeRequest r = stored("REQUESTED");
+        r.setPriceDifference(40);
+        r.setCustomerPhno(9000000001L);
+        replacement(9, 120, 5);
+
+        service.approve(5L);
+
+        verify(storeCredit).spend(eq(9000000001L), eq(40.0), eq(7L), any());
+    }
+
+    @Test
+    void anApprovalThatCannotSetStockAsideGivesTheCreditBack() {
+        ExchangeRequest r = stored("REQUESTED");
+        r.setPriceDifference(40);
+        r.setCustomerPhno(9000000001L);
+        replacement(9, 120, 5);
+        when(productClient.updateProductStock(any(), any(), any())).thenThrow(new IllegalStateException("down"));
+
+        assertThrows(IllegalStateException.class, () -> service.approve(5L));
+        verify(storeCredit).credit(eq(9000000001L), eq(40.0), eq(com.example.orderservice.entity.StoreCreditTransaction.Type.REVERSED), eq(7L), any());
+    }
+
+    @Test
+    void aCheaperReplacementRefundsTheDifferenceWhenTheOldItemIsBack() {
+        ExchangeRequest r = stored("APPROVED");
+        r.setPriceDifference(-30);
+        r.setCustomerPhno(9000000001L);
+
+        service.markReceived(5L);
+
+        verify(storeCredit).credit(eq(9000000001L), eq(30.0), eq(com.example.orderservice.entity.StoreCreditTransaction.Type.REFUND), eq(7L), any());
+    }
+
+    @Test
+    void requestStoresTheSignedPriceDifference() {
+        delivered(100, 3);
+        replacement(9, 70, 5);
+        replacement(8, 100, 5);
+        replacement(7, 120, 5);
+        when(storeCredit.balance(9000000001L)).thenReturn(500.0);
+
+        assertEquals(-60.0, service.request(7L, 1, 2, 9, "x").getPriceDifference());
+        assertEquals(0.0, service.request(7L, 1, 1, 8, "x").getPriceDifference());
+        assertEquals(20.0, service.request(7L, 1, 1, 7, "x").getPriceDifference());
     }
 }

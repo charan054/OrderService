@@ -11,6 +11,7 @@ import com.example.orderservice.exception.OrderNotFoundException;
 import com.example.orderservice.exception.ProductException;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.ExchangeRequestRepository;
+import com.example.orderservice.entity.StoreCreditTransaction;
 import feign.FeignException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -21,7 +22,8 @@ import java.util.List;
 /**
  * Swap some delivered units for another product, with no money moving: the customer asks, staff approve (which sets the
  * replacement aside in stock), and when the old units are back staff mark it received (which restocks them). The
- * replacement must not cost more than what the customer paid per unit; a cheaper one is not refunded the difference.
+ * replacement may cost more or less than what the customer paid: a dearer one is paid for from the customer's store credit
+ * when staff approve (so they need the balance), a cheaper one is refunded to store credit when the old item is back.
  * Units under an open or finished exchange can no longer be returned for a refund, and the whole order cannot be
  * returned once it has one - the rest are returned item by item.
  */
@@ -40,17 +42,19 @@ public class ExchangeService {
     private final OrderService orderService;
     private final ProductClient productClient;
     private final CustomerNotifier notifier;
+    private final StoreCreditService storeCredit;
     private final Clock clock;
     private final String serviceApiKey;
 
     public ExchangeService(ExchangeRequestRepository exchanges, CartRepository orders, OrderService orderService,
-                           ProductClient productClient, CustomerNotifier notifier, Clock clock,
+                           ProductClient productClient, CustomerNotifier notifier, StoreCreditService storeCredit, Clock clock,
                            @Value("${internal.service.api-key}") String serviceApiKey) {
         this.exchanges = exchanges;
         this.orders = orders;
         this.orderService = orderService;
         this.productClient = productClient;
         this.notifier = notifier;
+        this.storeCredit = storeCredit;
         this.clock = clock;
         this.serviceApiKey = serviceApiKey;
     }
@@ -82,9 +86,10 @@ public class ExchangeService {
                 throw new ProductException("This order is too old to exchange items - ask us to return it instead");
             }
             Product replacement = replacement(replacementProductId);
-            if (replacement.getProductPrice() > item.getUnitPrice() + 0.005) {
-                throw new ProductException("The replacement costs more than you paid for this item - pick one at the same "
-                        + "price or lower");
+            double difference = Math.round((replacement.getProductPrice() - item.getUnitPrice()) * quantity * 100.0) / 100.0;
+            if (difference > 0.004 && storeCredit.balance(cart.getCustomerPhno()) + 0.0001 < difference) {
+                throw new ProductException("That replacement costs Rs. " + String.format(java.util.Locale.ROOT, "%.2f", difference)
+                        + " more, paid from your store credit - you do not have enough. Pick a cheaper one or add credit.");
             }
             if (replacement.getProductStock() < quantity) {
                 throw new ProductException("The replacement is not in stock in that quantity");
@@ -95,6 +100,7 @@ public class ExchangeService {
             r.setProductId(productId);
             r.setQuantity(quantity);
             r.setReplacementProductId(replacementProductId);
+            r.setPriceDifference(Math.abs(difference) < 0.005 ? 0 : difference);
             r.setReason(reason.trim().length() > 300 ? reason.trim().substring(0, 300) : reason.trim());
             r.setStatus(REQUESTED);
             r.setCreatedAt(clock.instant());
@@ -116,9 +122,22 @@ public class ExchangeService {
             if (replacement.getProductStock() < r.getQuantity()) {
                 throw new ProductException("The replacement is no longer in stock in that quantity");
             }
+            boolean paid = false;
+            if (r.getPriceDifference() > 0) {
+                // Fails (nothing changed yet) if the customer's balance no longer covers it.
+                storeCredit.spend(r.getCustomerPhno(), r.getPriceDifference(), r.getOrderId(),
+                        "Exchange price difference, order #" + r.getOrderId());
+                paid = true;
+            }
             try (StockMovementContext.Scope ignored = StockMovementContext.open(StockMovementContext.SALE,
                     "order " + r.getOrderId(), "Exchange replacement")) {
                 productClient.updateProductStock(serviceApiKey, r.getReplacementProductId(), -r.getQuantity());
+            } catch (RuntimeException e) {
+                if (paid) {
+                    storeCredit.credit(r.getCustomerPhno(), r.getPriceDifference(), StoreCreditTransaction.Type.REVERSED,
+                            r.getOrderId(), "Exchange could not be set aside");
+                }
+                throw e;
             }
             r.setStatus(APPROVED);
             r.setUpdatedAt(clock.instant());
@@ -164,6 +183,10 @@ public class ExchangeService {
             try (StockMovementContext.Scope ignored = StockMovementContext.open(StockMovementContext.RETURN,
                     "order " + r.getOrderId(), "Exchange returned")) {
                 productClient.updateProductStock(serviceApiKey, r.getProductId(), r.getQuantity());
+            }
+            if (r.getPriceDifference() < 0) {
+                storeCredit.credit(r.getCustomerPhno(), -r.getPriceDifference(), StoreCreditTransaction.Type.REFUND,
+                        r.getOrderId(), "Exchange for a cheaper item, order #" + r.getOrderId());
             }
             r.setStatus(RECEIVED);
             r.setUpdatedAt(clock.instant());
