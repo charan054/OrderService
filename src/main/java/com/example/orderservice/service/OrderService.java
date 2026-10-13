@@ -2035,6 +2035,11 @@ public class OrderService {
     // credit is identical to doing them one by one; an order that can't move (unknown, wrong status) is reported
     // in the result and the rest carry on.
     public BulkTransitionResult bulkTransition(String action, List<Long> orderIds) {
+        return bulkTransition(action, orderIds, null, false);
+    }
+
+    /** As above; a shipment can carry one carrier for the whole batch, and packedOnly skips orders not yet ticked off as packed. */
+    public BulkTransitionResult bulkTransition(String action, List<Long> orderIds, String carrier, boolean packedOnly) {
         if (!"ship".equals(action) && !"deliver".equals(action)) {
             throw new ProductException("Unknown bulk action: " + action);
         }
@@ -2052,8 +2057,14 @@ public class OrderService {
         int succeeded = 0;
         for (Long id : distinct) {
             try {
+                if (packedOnly && "ship".equals(action)) {
+                    Cart candidate = orderRepository.findById(id).orElseThrow(() -> new OrderNotFoundException("Order not found"));
+                    if (candidate.getStatus() == OrderStatus.PLACED && candidate.getPackedAt() == null) {
+                        throw new ProductException("Not packed yet - tick it off as packed first");
+                    }
+                }
                 if ("ship".equals(action)) {
-                    ship(id);
+                    ship(id, carrier, null);
                 } else {
                     deliver(id);
                 }

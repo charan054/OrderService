@@ -263,8 +263,10 @@ public class OrderController {
     }
     // Service-key only like ship/deliver: body is a JSON array of order ids, at most 100 per call.
     @PostMapping("/bulk/ship")
-    public BulkTransitionResult bulkShip(@RequestBody List<Long> orderIds){
-        return orderService.bulkTransition("ship", orderIds);
+    public BulkTransitionResult bulkShip(@RequestBody List<Long> orderIds,
+                                         @RequestParam(required = false) String carrier,
+                                         @RequestParam(defaultValue = "false") boolean packedOnly){
+        return orderService.bulkTransition("ship", orderIds, carrier, packedOnly);
     }
     @PostMapping("/bulk/deliver")
     public BulkTransitionResult bulkDeliver(@RequestBody List<Long> orderIds){

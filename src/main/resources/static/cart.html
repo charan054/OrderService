@@ -499,6 +499,8 @@
                 <label style="font-size:13px;"><input type="checkbox" id="psIncludePacked"> include already packed</label>
                 <button onclick="printPackingSlips()">Open printable slips</button>
                 <button id="psMarkPacked" onclick="markSlipsPacked()" disabled>Mark these as packed</button>
+                <input id="psCarrier" type="text" maxlength="60" placeholder="Carrier for the batch" style="width:170px;">
+                <button id="psShipPacked" onclick="shipPackedSlips()" disabled>Ship the packed ones</button>
             </div>
         </div>
     </section>
@@ -2345,7 +2347,25 @@
       const params = new URLSearchParams();
       lastSlipIds.forEach(id => params.append("orderIds", id));
       const data = await apiCall(`http://localhost:8083/cart/packed?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
-      if (data) { showStatus(`${data.marked} order(s) marked as packed.`, "success"); lastSlipIds = []; document.getElementById("psMarkPacked").disabled = true; }
+      if (data) { showStatus(`${data.marked} order(s) marked as packed.`, "success"); document.getElementById("psMarkPacked").disabled = true; }
+    }
+
+    // Ships the last printed batch, but only the orders that were ticked off as packed (the server skips the rest and says so).
+    async function shipPackedSlips() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey || !lastSlipIds.length) return;
+      if (!confirm(`Ship the packed orders among these ${lastSlipIds.length}? Customers are emailed.`)) return;
+      const params = new URLSearchParams({ packedOnly: "true" });
+      const carrier = document.getElementById("psCarrier").value.trim();
+      if (carrier) params.set("carrier", carrier);
+      const data = await apiCall(`http://localhost:8083/cart/bulk/ship?${params}`, {
+        method: "POST", headers: { "X-Service-Key": serviceKey, "Content-Type": "application/json" }, body: JSON.stringify(lastSlipIds) });
+      if (!data) return;
+      const skipped = (data.results || []).filter(r => !r.success).map(r => `#${r.orderId}: ${r.message}`);
+      showStatus(`${data.succeeded} shipped, ${data.failed} not shipped.${skipped.length ? " " + skipped.join("; ") : ""}`, data.failed ? "error" : "success");
+      lastSlipIds = [];
+      document.getElementById("psShipPacked").disabled = true;
+      document.getElementById("psMarkPacked").disabled = true;
     }
 
     async function printPackingSlips() {
@@ -2360,6 +2380,7 @@
       if (!data || !Array.isArray(data.slips)) return;
       lastSlipIds = data.slips.map(s => s.orderId);
       document.getElementById("psMarkPacked").disabled = !lastSlipIds.length;
+      document.getElementById("psShipPacked").disabled = !lastSlipIds.length;
       if (!data.slips.length) { showStatus("No orders to pack.", "success"); return; }
       const e = escapeHtml;
       const pick = `<section class="slip"><h2>Pick list &mdash; ${data.slips.length} order(s)</h2><table><tr><th>Product</th><th>Units</th><th>Orders</th></tr>${data.pickList.map(l =>
