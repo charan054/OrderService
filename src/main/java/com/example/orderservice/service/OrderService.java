@@ -2389,6 +2389,13 @@ public class OrderService {
     // one customer's orders are few, unlike the admin search over everyone's.
     public OrderHistoryPage getOrderHistory(long phno, String status, java.time.LocalDate from, java.time.LocalDate to,
                                             int page, int size) {
+        return getOrderHistory(phno, status, from, to, null, page, size);
+    }
+
+    // Same, plus an optional product-name search: orders are kept when any item is a catalog product whose name
+    // contains the text (case-insensitive; order items store only the product id, so the catalog does the matching).
+    public OrderHistoryPage getOrderHistory(long phno, String status, java.time.LocalDate from, java.time.LocalDate to,
+                                            String product, int page, int size) {
         validatePhno(phno);
         if (page < 0) {
             throw new ProductException("Page must be 0 or more");
@@ -2403,9 +2410,21 @@ public class OrderService {
         Instant fromInstant = from == null ? null : from.atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
         Instant toExclusive = to == null ? null : to.plusDays(1).atStartOfDay(java.time.ZoneOffset.UTC).toInstant();
 
+        java.util.Set<Integer> wantedProductIds = null;
+        if (product != null && !product.isBlank()) {
+            wantedProductIds = new java.util.HashSet<>();
+            for (Product found : searchProducts(product.trim(), null)) {
+                wantedProductIds.add(found.getProductId());
+            }
+        }
+
         List<Cart> matching = new ArrayList<>();
         for (Cart order : orderRepository.findBycustomerPhno(phno)) {
             if (wantedStatus != null && order.getStatus() != wantedStatus) continue;
+            if (wantedProductIds != null) {
+                final java.util.Set<Integer> ids = wantedProductIds;
+                if (order.getOrderItems() == null || order.getOrderItems().stream().noneMatch(i -> ids.contains(i.getProductId()))) continue;
+            }
             if (fromInstant != null || toExclusive != null) {
                 Instant placedAt = trackingEventRepository.findByOrderIdOrderByTimestampAsc(order.getOrderId()).stream()
                         .map(TrackingEvent::getTimestamp).findFirst().orElse(null);

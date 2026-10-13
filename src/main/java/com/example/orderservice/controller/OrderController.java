@@ -457,10 +457,11 @@ public class OrderController {
                                     @RequestParam(required = false) String status,
                                     @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate from,
                                     @RequestParam(required = false) @org.springframework.format.annotation.DateTimeFormat(iso = org.springframework.format.annotation.DateTimeFormat.ISO.DATE) java.time.LocalDate to,
+                                    @RequestParam(required = false) String product,
                                     @RequestParam(defaultValue = "0") int page,
                                     @RequestParam(defaultValue = "10") int size){
         CustomerAccess.requireSelfOrService(phno);
-        return orderService.getOrderHistory(phno, status, from, to, page, size);
+        return orderService.getOrderHistory(phno, status, from, to, product, page, size);
     }
     @GetMapping("/all")
     public List<Cart> getAll(){
