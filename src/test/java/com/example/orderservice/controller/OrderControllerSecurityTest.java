@@ -266,6 +266,11 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void theTimelineNeedsASignIn() throws Exception {
+        mockMvc.perform(get("/cart/42/timeline").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void theCancelPolicyIsPublic() throws Exception {
         mockMvc.perform(get("/cart/cancelpolicy")).andExpect(status().isOk());
     }
