@@ -32,6 +32,7 @@ import com.example.orderservice.dto.TopSellingProduct;
 import com.example.orderservice.dto.UpiCollectRequestResponse;
 import com.example.orderservice.dto.WaitlistStatus;
 import com.example.orderservice.dto.WishlistPriceAlert;
+import com.example.orderservice.dto.BulkTransitionResult;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.Coupon;
 import com.example.orderservice.entity.CouponRedemption;
@@ -4921,5 +4922,23 @@ class OrderServiceTest {
         assertThrows(ProductException.class, () -> service.updateShipment(42L, "X", null));
         assertThrows(ProductException.class, () -> service.updateShipment(42L, null, null));
         verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void bulkShipCanSetOneCarrierAndSkipOrdersThatAreNotPacked() {
+        Cart packed = placedOrder(1L, 0, item(1, 1));
+        packed.setPackedAt(java.time.Instant.parse("2026-10-13T09:00:00Z"));
+        Cart unpacked = placedOrder(2L, 0, item(1, 1));
+        when(orderRepository.findById(1L)).thenReturn(Optional.of(packed));
+        when(orderRepository.findById(2L)).thenReturn(Optional.of(unpacked));
+        when(orderRepository.save(any(Cart.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        BulkTransitionResult result = service.bulkTransition("ship", List.of(1L, 2L), "Delhivery", true);
+
+        assertEquals(1, result.succeeded());
+        assertEquals(1, result.failed());
+        assertEquals("Delhivery", packed.getCarrier());
+        assertEquals(OrderStatus.SHIPPED, packed.getStatus());
+        assertEquals(OrderStatus.PLACED, unpacked.getStatus());
     }
 }
