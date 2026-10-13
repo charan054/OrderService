@@ -105,6 +105,8 @@ public class OrderService {
     private CartRepository orderRepository;
     @Autowired
     private OrderItemRepository orderItemRepository;
+    @Autowired(required = false)
+    private com.example.orderservice.repository.ExchangeRequestRepository exchangeRepository;
     @Autowired
     private CouponRepository couponRepository;
     @Autowired
@@ -979,6 +981,9 @@ public class OrderService {
         if (cart.getStatus() != OrderStatus.DELIVERED) {
             throw new ProductException("Only a delivered order can be returned");
         }
+        if (exchangedUnits(orderId, null) > 0) {
+            throw new ProductException("Part of this order was exchanged - return the other items one by one");
+        }
         // Same CASH exception as cancel() above - never charged, so nothing to refund.
         if (cart.getPaymentMethod() != PaymentMethod.CASH && cart.getPaymentTransactionId() == null && !paidWithoutCharge(cart)) {
             throw new ProductException("This order cannot be returned");
@@ -1121,6 +1126,7 @@ public class OrderService {
         }
         OrderItem item = cart.getOrderItems().stream().filter(i -> i.getProductId() == productId).findFirst()
                 .orElseThrow(() -> new ProductException("That product is not in this order"));
+        alreadyBooked += exchangedUnits(cart.getOrderId(), productId);
         if (quantity + alreadyBooked > item.getOutstandingQuantity()) {
             throw new ProductException("Only " + Math.max(0, item.getOutstandingQuantity() - alreadyBooked)
                     + " of that item can still be returned");
@@ -1146,6 +1152,10 @@ public class OrderService {
             throw new ProductException("Only items of a delivered order can be returned");
         }
         OrderItem item = itemToAdjust(cart, productId, quantity);
+        if (quantity + exchangedUnits(orderId, productId) > item.getOutstandingQuantity()) {
+            throw new ProductException("Some of those units are being exchanged, so only "
+                    + Math.max(0, item.getOutstandingQuantity() - exchangedUnits(orderId, productId)) + " can be returned");
+        }
         if (authorization != STAFF_REFUND) {
             requireWithinReturnWindow(orderId);
         }
@@ -1182,6 +1192,15 @@ public class OrderService {
             notifyItemRefund(result, "returned", productId, quantity, refundAmount);
         }
         return result;
+    }
+
+    // Units under a waiting, approved or finished exchange (all products when productId is null) - not returnable for money.
+    private int exchangedUnits(long orderId, Integer productId) {
+        if (exchangeRepository == null) {
+            return 0;
+        }
+        return exchangeRepository.findByOrderIdAndStatusIn(orderId, java.util.List.of("REQUESTED", "APPROVED", "RECEIVED")).stream()
+                .filter(e -> productId == null || e.getProductId() == productId).mapToInt(e -> e.getQuantity()).sum();
     }
 
     private OrderItem itemToAdjust(Cart cart, int productId, int quantity) {
