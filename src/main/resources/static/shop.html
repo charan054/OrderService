@@ -2279,10 +2279,15 @@
 
     // Swap a delivered item for another one that costs the same or less (no money moves; staff approve it first).
     async function exchangeMyItem(orderId, productId, outstanding, unitPrice) {
-      const options = products.filter(p => p.productStock > 0 && p.productPrice <= unitPrice + 0.005).slice(0, 12);
-      if (!options.length) { alert("Nothing in stock at that price or lower right now."); return; }
+      const options = products.filter(p => p.productStock > 0)
+        .sort((a, b) => Math.abs(a.productPrice - unitPrice) - Math.abs(b.productPrice - unitPrice)).slice(0, 12);
+      if (!options.length) { alert("Nothing is in stock to exchange for right now."); return; }
+      const diffNote = p => {
+        const d = p.productPrice - unitPrice;
+        return Math.abs(d) < 0.005 ? "" : d > 0 ? ` - Rs. ${d.toFixed(2)} more per unit, from store credit` : ` - Rs. ${(-d).toFixed(2)} back per unit as store credit`;
+      };
       const pick = prompt("Exchange for which product? Type its number:\n" +
-        options.map(p => `${p.productId}: ${p.productName} (Rs. ${Number(p.productPrice).toFixed(2)})`).join("\n"));
+        options.map(p => `${p.productId}: ${p.productName} (Rs. ${Number(p.productPrice).toFixed(2)})${diffNote(p)}`).join("\n"));
       if (pick === null) return;
       const replacementProductId = Number(pick);
       if (!options.some(p => p.productId === replacementProductId)) { alert("Pick one of the numbers listed."); return; }

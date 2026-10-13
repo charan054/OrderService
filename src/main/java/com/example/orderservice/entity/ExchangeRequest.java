@@ -24,6 +24,9 @@ public class ExchangeRequest {
     private int productId;
     private int quantity;
     private int replacementProductId;
+    // Replacement minus original price for the units swapped: positive = paid from store credit at approval, negative =
+    // refunded to store credit when the old item is back.
+    private double priceDifference;
     @Column(length = 300)
     private String reason;
     @Column(length = 20)
