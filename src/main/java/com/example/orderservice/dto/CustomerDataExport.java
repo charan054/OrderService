@@ -25,7 +25,7 @@ public record CustomerDataExport(Instant exportedAt, long phno, Account account,
                                  List<OrderFeedback> orderFeedback, SavedCart savedCart,
                                  List<NotificationLog> notifications, Referrals referrals,
                                  List<SearchWatch> searchWatches) {
-    public record Account(String email, Instant emailVerifiedAt, String referralCode) {
+    public record Account(String email, Instant emailVerifiedAt, String referralCode, String birthday) {
     }
 
     public record Referrals(int friendsReferred, boolean usedAFriendsCode) {

@@ -87,7 +87,9 @@ public class CustomerDataExportService {
 
         return new CustomerDataExport(Instant.now(clock), phno,
                 account == null ? null : new CustomerDataExport.Account(
-                        account.getEmail(), account.getVerifiedAt(), account.getReferralCode()),
+                        account.getEmail(), account.getVerifiedAt(), account.getReferralCode(),
+                        account.getBirthMonth() == null || account.getBirthDay() == null ? null
+                                : String.format("%02d-%02d", account.getBirthMonth(), account.getBirthDay())),
                 myOrders, addresses.findByCustomerPhno(phno), wishlist.findByCustomerPhno(phno),
                 waitlist.findByCustomerPhno(phno), loyaltyAccount,
                 loyaltyTransactions.findByCustomerPhnoOrderByTimestampDesc(phno),
