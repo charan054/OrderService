@@ -777,6 +777,12 @@
         <button class="secondary" style="margin-top:10px;" onclick="toggleTrackOrder()">Track an order instead</button>
     </section>
 
+    <section id="sharedTrackSection" class="center-card hidden">
+        <h2 id="sharedTrackTitle">Order status</h2>
+        <div id="sharedTrackBody"></div>
+        <button class="secondary" style="margin-top:10px;" onclick="closeSharedTrack()">Go to the shop</button>
+    </section>
+
     <section id="trackOrderSection" class="center-card hidden">
         <h2>Track an order</h2>
         <p>No sign-in needed - enter the phone number the order was placed with and its order ID.</p>
@@ -2421,6 +2427,8 @@
           <button class="secondary" style="width:auto;" onclick="emailInvoice(${order.orderId})">Email invoice</button>
           ${order.giftWrap || order.giftMessage ? `<button class="secondary" style="width:auto;" onclick="printGiftReceipt(${order.orderId})">Gift receipt</button>` : ""}
           <button class="secondary" style="width:auto;" onclick="reorderMyOrder(${order.orderId})">Buy again</button>
+          ${order.status === "PLACED" || order.status === "SHIPPED" ? `<button class="secondary" style="width:auto;" onclick="shareOrderStatus(${order.orderId})">Share status</button>
+            <button class="secondary" style="width:auto;" onclick="stopSharingOrder(${order.orderId})">Stop sharing</button>` : ""}
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeDelivery(${order.orderId})">Change delivery</button>` : ""}
           ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeOrderAddressTo(${order.orderId})">Change address</button>` : ""}
           ${order.status === "PLACED" && order.paymentMethod === "CASH" && !order.discountAmount && !order.pointsRedeemed && !order.storeCreditUsed && !order.subscriptionId ? `<button class="secondary" style="width:auto;" onclick="addItemToMyOrder(${order.orderId})">Add item</button>` : ""}
@@ -3935,6 +3943,56 @@
     // current stock; the customer is told exactly what was adjusted. Purely client-side - checkout still
     // revalidates everything server-side.
     let accountOrders = [];
+    // ---- shared order status: shop.html#track=<token> ----
+    // A read-only link to one order's status and timeline (no address, items, prices or phone number). The token is the
+    // credential; it stops working after 30 days or when the customer taps Stop sharing.
+    async function shareOrderStatus(orderId) {
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/share?phno=${encodeURIComponent(customerPhno)}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't make a link. Please try again."); return; }
+      const link = await response.json();
+      const url = location.origin + "/shop.html#track=" + link.token;
+      const note = { textContent: "" };
+      await shareOrCopy({ title: `Order #${orderId} status`, text: `Follow my order #${orderId} from Charan Mart`, url }, note);
+      showToast(note.textContent || "Link ready to share.");
+    }
+
+    async function stopSharingOrder(orderId) {
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/share?phno=${encodeURIComponent(customerPhno)}`, { method: "DELETE" });
+      if (!response.ok) { alert("Couldn't stop sharing. Please try again."); return; }
+      const result = await response.json();
+      showToast(result.revoked ? "Sharing stopped - the link no longer works." : "This order wasn't being shared.");
+    }
+
+    function closeSharedTrack() {
+      document.getElementById("sharedTrackSection").classList.add("hidden");
+      try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+      if (!customerToken) document.getElementById("loginSection").classList.remove("hidden");
+    }
+
+    async function openSharedTrack() {
+      const m = /^#track=([0-9a-f]{32})$/.exec(location.hash);
+      if (!m) return;
+      document.getElementById("loginSection").classList.add("hidden");
+      const section = document.getElementById("sharedTrackSection");
+      const body = document.getElementById("sharedTrackBody");
+      section.classList.remove("hidden");
+      body.innerHTML = `<p style="color:var(--muted);">Loading...</p>`;
+      try {
+        const response = await fetch(`${BASE_URL}/track/${m[1]}`);
+        if (!response.ok) { body.innerHTML = `<p>This link is not valid any more. Ask the person who sent it for a new one.</p>`; return; }
+        const order = await response.json();
+        document.getElementById("sharedTrackTitle").textContent = `Order #${order.orderId}`;
+        body.innerHTML = `
+          ${orderStepperHtml(order.status, order.timeline)}
+          <div class="cart-line"><span>Status</span><span>${escapeHtml(order.status)}</span></div>
+          ${order.carrier || order.trackingNumber ? `<div class="cart-line"><span>Shipment</span><span>${order.carrier ? escapeHtml(order.carrier) : ""}${order.carrier && order.trackingNumber ? ", " : ""}${order.trackingNumber ? "tracking " + escapeHtml(order.trackingNumber) : ""}</span></div>` : ""}
+          ${order.status === "SHIPPED" && order.expectedDeliveryDate ? `<div class="cart-line"><span>Expected by</span><span>${escapeHtml(order.expectedDeliveryDate)}</span></div>` : ""}
+          ${order.timeline.map(e => `<div class="cart-line"><span>${escapeHtml(e.status)}</span><span>${new Date(e.timestamp).toLocaleString()}</span></div>`).join("")}`;
+      } catch (e) {
+        body.innerHTML = `<p>Couldn't load this order right now. Please try again.</p>`;
+      }
+    }
+
     async function reorderMyOrder(orderId) {
       const order = accountOrders.find(o => o.orderId === orderId);
       if (!order || !order.orderItems || !order.orderItems.length) return;
@@ -4477,6 +4535,8 @@
 
       setTimeout(poll, UPI_POLL_INTERVAL_MS);
     }
+
+    openSharedTrack();
 
     (async () => {
       let savedToken = null;
