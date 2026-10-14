@@ -43,6 +43,8 @@ public class Cart {
     // delivery of. Cleared on anything that comes in over HTTP, so a customer cannot claim the discount.
     private Long subscriptionId;
     private double discountAmount;
+    // The part of discountAmount that came from fixed-price bundles (null = none). System-set at checkout.
+    private Double bundleDiscount;
     // Set by the caller at checkout (optional); order() validates it against the customer's LoyaltyAccount
     // balance and turns it into an additional discount (1 point = ₹1) on top of any coupon, before charging.
     // Kept on the saved order as a record of how many points were applied, same role couponCode plays.

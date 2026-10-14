@@ -797,6 +797,24 @@
 
         <div class="card">
             <div class="card-header">
+                <div class="icon">🎁</div>
+                <div class="title-wrap">
+                    <h2>Bundles</h2>
+                    <span class="method">POST</span>
+                </div>
+            </div>
+            <p>Sell a set of products for one lower price. Items are productId:quantity pairs, e.g. 3:2,24:1 (two of product 3 and one of 24). Every complete set in an order is discounted to the bundle price. Requires the Service Key above.</p>
+            <input type="text" id="bundleName" placeholder="Bundle name" />
+            <input type="number" id="bundlePrice" min="0" step="0.01" placeholder="Bundle price" />
+            <input type="text" id="bundleItems" placeholder="Items, e.g. 3:2,24:1" />
+            <button class="green" onclick="createBundle()">Create Bundle</button>
+            <button onclick="listBundles()">View Active Bundles</button>
+            <input type="number" id="bundleRetireId" placeholder="Bundle ID to retire" />
+            <button class="red" onclick="retireBundle()">Retire Bundle</button>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
                 <div class="icon">📊</div>
                 <div class="title-wrap">
                     <h2>Sales Analytics</h2>
@@ -2914,6 +2932,37 @@
           <span style="opacity:.7; font-size:13px;">${r.responseMillis} ms${r.detail ? " - " + escapeHtml(r.detail) : ""}</span>
         </div>`;
       }).join("");
+    }
+
+    const BUNDLES_URL = "http://localhost:8083/bundles";
+
+    async function createBundle() {
+      const name = document.getElementById("bundleName").value.trim();
+      const price = document.getElementById("bundlePrice").value.trim();
+      const items = document.getElementById("bundleItems").value.trim();
+      if (!name || !price || !items) return showStatus("Name, price and items are required.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const params = new URLSearchParams({ name, price, items });
+      const data = await apiCall(`${BUNDLES_URL}?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      if (data) {
+        showStatus(`Bundle ${data.id} created.`, "success");
+        openResultTab("Bundle", data);
+      }
+    }
+
+    async function listBundles() {
+      const data = await apiCall(BUNDLES_URL, {});
+      if (data) openResultTab("Active Bundles", data);
+    }
+
+    async function retireBundle() {
+      const id = document.getElementById("bundleRetireId").value.trim();
+      if (!id) return showStatus("Please enter a bundle ID.", "error");
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      await apiCall(`${BUNDLES_URL}/${encodeURIComponent(id)}`, { method: "DELETE", headers: { "X-Service-Key": serviceKey } });
+      showStatus(`Bundle ${id} retired.`, "success");
     }
 
     async function getSalesAnalytics() {
