@@ -61,7 +61,7 @@ public class SecurityConfig {
                         // ---- Public ----
                         // Catalog browsing and the storefront's product-detail extras (ratings, reviews, gallery,
                         // frequently-bought-together) - no customer's data.
-                        .requestMatchers(HttpMethod.GET, "/bundles", "/cart/display", "/cart/returnpolicy", "/cart/cancelpolicy", "/cart/deliveryfee", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery", "/pincodes/check", "/pincodes/slots", "/pincodes/slots/availability", "/questions/product", "/prefs/unsubscribe", "/subscriptions/terms", "/wishlist/shared/*", "/faq", "/review-photos/*").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/track/*", "/bundles", "/cart/display", "/cart/returnpolicy", "/cart/cancelpolicy", "/cart/deliveryfee", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery", "/pincodes/check", "/pincodes/slots", "/pincodes/slots/availability", "/questions/product", "/prefs/unsubscribe", "/subscriptions/terms", "/wishlist/shared/*", "/faq", "/review-photos/*").permitAll()
                         // Signing in, and the forgot-PIN proxy to PhonepayService - by definition used before the
                         // customer has a session.
                         .requestMatchers(HttpMethod.POST, "/customer/login/request", "/customer/login/verify", "/customer/logout").permitAll()
@@ -96,10 +96,10 @@ public class SecurityConfig {
                         // checkout/cancel/return still also need the buyer's own PhonePe credentials for anything
                         // that moves money (see OrderController) - the session only proves who the customer is.
                         .requestMatchers(HttpMethod.POST, "/cart/checkout", "/cart/*/return/request", "/cart/reviews", "/cart/reviews/photo", "/cart/reviews/flag", "/cart/*/cancel", "/cart/*/return",
-                                "/cart/*/items/*/cancel", "/cart/*/items/*/return", "/cart/*/exchange", "/cart/exchanges/*/withdraw", "/cart/*/items/add", "/cart/*/invoice/email",
+                                "/cart/*/items/*/cancel", "/cart/*/items/*/return", "/cart/*/exchange", "/cart/exchanges/*/withdraw", "/cart/*/items/add", "/cart/*/invoice/email", "/cart/*/share",
                                 "/wishlist/self/add", "/wishlist/share", "/waitlist/self/add", "/searchwatch/self/add", "/addresses/self/add", "/referral/apply", "/questions/ask", "/feedback/submit", "/support/tickets", "/support/tickets/*/reply", "/giftcards/redeem", "/subscriptions").hasAnyRole("CUSTOMER", "SERVICE")
                         .requestMatchers(HttpMethod.PUT, "/customer/birthday", "/savedcart", "/addresses/self/default", "/cart/*/delivery", "/cart/*/address", "/prefs/mine", "/subscriptions/*/pause", "/subscriptions/*/resume", "/subscriptions/*/skip").hasAnyRole("CUSTOMER", "SERVICE")
-                        .requestMatchers(HttpMethod.DELETE, "/customer/birthday", "/wishlist/self/remove", "/wishlist/share", "/waitlist/self/remove", "/searchwatch/self/remove", "/addresses/self/remove", "/subscriptions/*").hasAnyRole("CUSTOMER", "SERVICE")
+                        .requestMatchers(HttpMethod.DELETE, "/cart/*/share", "/customer/birthday", "/wishlist/self/remove", "/wishlist/share", "/waitlist/self/remove", "/searchwatch/self/remove", "/addresses/self/remove", "/subscriptions/*").hasAnyRole("CUSTOMER", "SERVICE")
 
                         // ---- Service only ----
                         .anyRequest().hasRole("SERVICE"))
