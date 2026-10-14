@@ -656,6 +656,8 @@
 
         /* ---- polish: placeholder tiles, loading skeletons, entrance motion, tidier small screens ---- */
         .product-image { position: relative; overflow: hidden; }
+        .product-image[role=button] { cursor: pointer; }
+        .product-image[role=button]:focus-visible { outline: 3px solid var(--primary); outline-offset: -3px; }
         .product-image.placeholder {
           flex-direction: column; gap: 6px; color: #fff; text-align: center; padding: 8px;
           background: linear-gradient(135deg, hsl(var(--ph-h, 262) 62% 46%), hsl(calc(var(--ph-h, 262) + 38) 66% 36%));
@@ -3282,7 +3284,7 @@
         <div class="product-card">
           <button class="wishlist-btn ${isWishlisted ? "active" : ""}" onclick="toggleWishlist(${p.productId})"
                   aria-label="${isWishlisted ? "Remove from wishlist" : "Add to wishlist"}">${isWishlisted ? "&#9829;" : "&#9825;"}</button>
-          <div class="product-image ${p.productImageUrl ? "" : "placeholder"}" ${p.productImageUrl ? "" : `style="--ph-h:${(Array.from(String(p.productCategory || p.productName)).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 0))}"`}>
+          <div class="product-image ${p.productImageUrl ? "" : "placeholder"}" role="button" tabindex="0" aria-label="Quick view of ${escapeHtml(p.productName)}" onclick="openProductModal(${p.productId})" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openProductModal(${p.productId}); }" ${p.productImageUrl ? "" : `style="--ph-h:${(Array.from(String(p.productCategory || p.productName)).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 0))}"`}>
             ${p.productImageUrl
               ? `<img src="${escapeHtml(p.productImageUrl)}" alt="${escapeHtml(p.productName)}" loading="lazy" data-name="${escapeHtml(p.productName)}" data-cat="${escapeHtml(p.productCategory || "")}" onerror="imageFallback(this)" onload="imageLoaded(this)" />`
               : placeholderTileHtml(p.productName, p.productCategory)}
