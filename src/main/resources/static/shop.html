@@ -730,6 +730,15 @@
           .product-card { animation: none; }
           .skeleton-card .sk-img, .skeleton-card .sk-line { animation: none; }
         }
+        /* ---- phone cart bar: always-visible item count and total, tap to jump to the cart ---- */
+        .cart-bar { display: none; }
+        @media (max-width: 800px) {
+          .cart-bar { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 900; display: flex; align-items: center; justify-content: space-between;
+            gap: 12px; padding: 12px 16px; border: 0; border-radius: 14px; background: linear-gradient(120deg, #4c1d95, #7c3aed); color: #fff; font-size: 15px;
+            font-weight: 700; box-shadow: 0 8px 24px rgba(76, 29, 149, .45); cursor: pointer; width: auto; transition: transform .25s ease, opacity .25s ease; }
+          .cart-bar.hidden { transform: translateY(140%); opacity: 0; pointer-events: none; display: flex; }
+          body { padding-bottom: 76px; }
+        }
         /* ---- delight: cart bump and order-placed confetti ---- */
         @keyframes cartBump { 0% { transform: scale(1); } 40% { transform: scale(1.04); box-shadow: 0 0 0 4px rgba(124,58,237,.25); } 100% { transform: scale(1); } }
         .cart-bump { animation: cartBump .45s ease; }
@@ -846,7 +855,7 @@
                 <div id="helpView" class="hidden"></div>
             </div>
 
-            <div class="panel">
+            <div class="panel" id="cartPanel">
                 <h2>Your cart</h2>
                 <p id="cartNote" class="hidden" style="font-size:12px; color:var(--muted); margin:-6px 0 10px;"></p>
                 <div id="cartLines"><p style="color:var(--muted); font-size:14px;">Your cart is empty.</p></div>
@@ -3799,6 +3808,25 @@
         setTimeout(() => piece.remove(), 4200);
       }
     }
+    // Phone-only bar pinned to the bottom; hidden while the cart panel itself is on screen or the cart is empty.
+    function updateCartBar() {
+      let bar = document.getElementById("cartBar");
+      if (!bar) {
+        bar = document.createElement("button");
+        bar.id = "cartBar";
+        bar.className = "cart-bar hidden";
+        bar.addEventListener("click", () => document.getElementById("cartPanel").scrollIntoView({ behavior: "smooth", block: "start" }));
+        document.body.appendChild(bar);
+        window.addEventListener("scroll", updateCartBar, { passive: true });
+        window.addEventListener("resize", updateCartBar);
+      }
+      const count = cart.reduce((sum, item) => sum + item.quantity, 0);
+      const panelRect = document.getElementById("cartPanel").getBoundingClientRect();
+      const cartOnScreen = panelRect.top < innerHeight * 0.85 && panelRect.bottom > 0;
+      bar.classList.toggle("hidden", !count || cartOnScreen);
+      bar.setAttribute("aria-label", `View cart: ${count} item${count === 1 ? "" : "s"}, ${document.getElementById("cartTotal").textContent}`);
+      bar.innerHTML = `<span>🛒 ${count} item${count === 1 ? "" : "s"}</span><span>${document.getElementById("cartTotal").textContent} · View cart →</span>`;
+    }
     function bumpCart() {
       const box = document.getElementById("cartLines");
       const panel = box && box.closest("section, aside, .card, .panel") || box;
@@ -4266,6 +4294,7 @@
       renderFreeDeliveryBar(goods, baseFee, freeAbove);
       renderCouponSuggestions();
       saveCart();
+      updateCartBar();
     }
 
     // Whether cash on delivery is open to this customer (see CodRiskService). Checkout enforces it server-side anyway;
