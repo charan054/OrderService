@@ -810,9 +810,9 @@
             <div>
                 <div id="ratePrompt" class="hidden" style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:12px;"></div>
                 <div class="search-row">
-                    <input type="text" id="searchName" placeholder="Search products (press / )" oninput="onSearchChange()" list="searchSuggestions" autocomplete="off" />
+                    <input type="text" id="searchName" aria-label="Search products" placeholder="Search products (press / )" oninput="onSearchChange()" list="searchSuggestions" autocomplete="off" />
                     <datalist id="searchSuggestions"></datalist>
-                    <select id="searchCategory" onchange="onSearchChange()" disabled>
+                    <select id="searchCategory" aria-label="Filter by category" onchange="onSearchChange()" disabled>
                         <option value="">Loading categories...</option>
                     </select>
                 </div>
@@ -1285,7 +1285,7 @@
           const product = catalog.find(p => p.productId === line.productId);
           if (!product) { notes.push(`${line.name} is no longer available`); return; }
           if (product.productStock <= 0) { notes.push(`${product.productName} is out of stock`); return; }
-          const quantity = Math.min(Math.max(1, Number(line.quantity) || 1), product.productStock);
+          const quantity = Math.min(Math.max(1, Math.floor(Number(line.quantity)) || 1), product.productStock);
           if (quantity < line.quantity) notes.push(`${product.productName} reduced to ${quantity} (stock)`);
           if (line.price !== undefined && product.productPrice !== line.price) notes.push(`${product.productName} price is now ₹${product.productPrice}`);
           restored.push({ productId: product.productId, name: product.productName, price: product.productPrice, quantity });
@@ -3281,8 +3281,8 @@
             ${p.productStock <= 0
               ? `<button class="secondary" style="width:auto;" onclick="toggleWaitlist(${p.productId})">${isWaitlisted ? "Notified when back ✓" : "Notify me"}</button>`
               : `<div class="qty-row">
-                  <input type="number" min="1" value="1" id="qty_${p.productId}" />
-                  <button style="width:auto;" onclick="addToCart(${p.productId})">Add</button>
+                  <input type="number" min="1" max="${p.productStock}" step="1" value="1" id="qty_${p.productId}" aria-label="Quantity of ${escapeHtml(p.productName)}" />
+                  <button style="width:auto;" onclick="addToCart(${p.productId})" aria-label="Add ${escapeHtml(p.productName)} to cart">Add</button>
                 </div>`}
           </div>
         </div>
@@ -4239,11 +4239,11 @@
           <div class="cart-line">
             <span>${escapeHtml(item.name)}</span>
             <span class="qty-stepper">
-              <button onclick="changeCartQuantity(${item.productId}, -1)">&minus;</button>
+              <button onclick="changeCartQuantity(${item.productId}, -1)" aria-label="Decrease quantity of ${escapeHtml(item.name)}">&minus;</button>
               <span>${item.quantity}</span>
-              <button onclick="changeCartQuantity(${item.productId}, 1)">&plus;</button>
+              <button onclick="changeCartQuantity(${item.productId}, 1)" aria-label="Increase quantity of ${escapeHtml(item.name)}">&plus;</button>
             </span>
-            <span>₹${(item.price * item.quantity).toFixed(2)} <button class="later-btn" onclick="saveForLater(${item.productId})">Save for later</button> <button onclick="removeFromCart(${item.productId})">&times;</button></span>
+            <span>₹${(item.price * item.quantity).toFixed(2)} <button class="later-btn" onclick="saveForLater(${item.productId})" aria-label="Save ${escapeHtml(item.name)} for later">Save for later</button> <button onclick="removeFromCart(${item.productId})" aria-label="Remove ${escapeHtml(item.name)} from cart">&times;</button></span>
           </div>
         `).join("");
       }
