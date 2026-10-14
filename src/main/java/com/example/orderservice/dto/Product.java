@@ -33,4 +33,9 @@ public class Product {
     // When ProductService first saw the product (UTC); null for products that predate the field. The storefront
     // uses it for the New shelf and badge.
     private java.time.Instant createdAt;
+    // Timed sale, from ProductService: while onSale is true productPrice already IS the sale price (so checkout charges
+    // it without special handling) and regularPrice is what it costs otherwise. The storefront shows the two together.
+    private Double regularPrice;
+    private boolean onSale;
+    private java.time.Instant saleEndsAt;
 }
