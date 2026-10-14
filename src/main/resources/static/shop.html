@@ -233,7 +233,13 @@
         .product-body .price { font-weight: 800; font-size: 16px; color: var(--accent); }
 
         .qty-row { display: flex; gap: 8px; margin-bottom: 10px; }
+        .qty-row[hidden] { display: none; }
         .qty-row input { margin-bottom: 0; text-align: center; }
+        /* Once a product is in the cart its Add row turns into a - n + stepper right on the card. */
+        .card-stepper { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; padding: 4px; border-radius: 12px;
+          background: color-mix(in srgb, var(--primary) 12%, transparent); font-weight: 700; font-size: 14px; }
+        .card-stepper[hidden] { display: none; }
+        .card-stepper button { width: 36px; padding: 6px 0; font-size: 18px; line-height: 1; }
 
         .product-card { position: relative; }
         /* Colours come from the global select style (so dark mode works); only the size is tightened for a card. */
@@ -3296,15 +3302,33 @@
             <div class="price-row"><span class="price">₹${p.productPrice}</span>${saleHtml(p)}</div>
             ${p.productStock <= 0
               ? `<button class="secondary" style="width:auto;" onclick="toggleWaitlist(${p.productId})">${isWaitlisted ? "Notified when back ✓" : "Notify me"}</button>`
-              : `<div class="qty-row">
+              : `<div class="qty-row" id="qtyRow_${p.productId}">
                   <input type="number" min="1" max="${p.productStock}" step="1" value="1" id="qty_${p.productId}" aria-label="Quantity of ${escapeHtml(p.productName)}" />
                   <button style="width:auto;" onclick="addToCart(${p.productId})" aria-label="Add ${escapeHtml(p.productName)} to cart">Add</button>
-                </div>`}
+                </div><div class="card-stepper" id="stepper_${p.productId}" hidden></div>`}
           </div>
         </div>
       `;
       }).join("");
       renderCompareBar();
+      syncCardSteppers();
+    }
+
+    // Swaps each card's Add row for a - n + stepper while that product is in the cart (and back when it is not).
+    function syncCardSteppers() {
+      document.querySelectorAll(".card-stepper").forEach(box => {
+        const id = Number(box.id.replace("stepper_", ""));
+        const item = cart.find(i => i.productId === id);
+        const row = document.getElementById("qtyRow_" + id);
+        if (!row) return;
+        box.hidden = !item;
+        row.hidden = !!item;
+        if (!item) return;
+        const name = escapeHtml(item.name);
+        box.innerHTML = `<button onclick="changeCartQuantity(${id}, -1)" aria-label="Decrease quantity of ${name}">&minus;</button>
+          <span>${item.quantity} in cart</span>
+          <button onclick="changeCartQuantity(${id}, 1)" aria-label="Increase quantity of ${name}">&plus;</button>`;
+      });
     }
 
     // ---------- compare ----------
@@ -4302,6 +4326,7 @@
       renderCouponSuggestions();
       saveCart();
       updateCartBar();
+      syncCardSteppers();
     }
 
     // Whether cash on delivery is open to this customer (see CodRiskService). Checkout enforces it server-side anyway;
