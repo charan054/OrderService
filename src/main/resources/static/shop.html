@@ -437,6 +437,11 @@
         .subscribe-box select, .subscribe-box input[type=number] { width: auto; display: inline-block; margin: 0 6px 6px 0; }
         .subscription-row { padding: 10px 0; border-bottom: 1px solid var(--border, #eee); }
         .low-stock-badge { color: var(--err-fg, #b42318); background: var(--err-bg, #fee4e2); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
+        .buy-again { margin: 0 0 16px; }
+        .buy-again h3 { margin: 0 0 8px; }
+        .buy-again-row { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+        .buy-again-card { flex: 0 0 150px; border: 1px solid var(--border); border-radius: 12px; padding: 10px; background: var(--surface); display: grid; gap: 4px; }
+        .buy-again-card strong { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .bundle-shelf { margin: 0 0 16px; }
         .bundle-shelf h3 { margin: 0 0 8px; }
         .bundle-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; }
@@ -855,6 +860,7 @@
                     <button id="tabHelp" onclick="showTab('help')">Help</button>
                 </div>
                 <div id="wishlistShare" class="hidden" style="margin:0 0 12px; font-size:14px;"></div>
+                <div id="buyAgainShelf" class="hidden"></div>
                 <div id="bundleShelf" class="hidden"></div>
                 <div id="productGrid" class="product-grid"></div>
                 <div id="productPager" class="pager hidden"></div>
@@ -1575,6 +1581,7 @@
       showAccountInfo();
       loadProducts();
       loadBundles();
+      loadBuyAgain();
       refreshNotificationBadge();
       loadDeliveryTerms();
       loadCancelPolicy();
@@ -2156,6 +2163,7 @@
       document.getElementById("helpView").classList.toggle("hidden", tab !== "help");
       document.querySelector(".search-row").classList.toggle("hidden", standalone);
       document.querySelector(".filter-row").classList.toggle("hidden", standalone);
+      renderBuyAgain();
       if (tab === "account") {
         loadAccountView();
       } else if (tab === "notifications") {
@@ -3314,6 +3322,7 @@
       }).join("");
       renderCompareBar();
       syncCardSteppers();
+      renderBuyAgain();
     }
 
     // Swaps each card's Add row for a - n + stepper while that product is in the cart (and back when it is not).
@@ -3872,14 +3881,14 @@
       if (!product) return;
       const qtyInput = document.getElementById(`qty_${productId}`);
       // Whole units only, at least 1, and never more than is in stock (counting what is already in the cart).
-      const wanted = Math.max(1, Math.floor(Number(qtyInput.value)) || 1);
+      const wanted = Math.max(1, Math.floor(Number(qtyInput ? qtyInput.value : 1)) || 1);
       const existing = cart.find(item => item.productId === productId);
       const room = Math.max(0, product.productStock - (existing ? existing.quantity : 0));
       if (room <= 0) { showToast(`You already have all ${product.productStock} ${product.productName} in your cart.`, "error"); return; }
       const quantity = Math.min(wanted, room);
       if (quantity < wanted) showToast(`Only ${product.productStock} ${product.productName} in stock - added ${quantity}.`, "error");
       else showToast(`Added ${quantity} × ${product.productName} to your cart`, "ok");
-      qtyInput.value = 1;
+      if (qtyInput) qtyInput.value = 1;
       if (existing) {
         existing.quantity += quantity;
       } else {
@@ -4233,6 +4242,42 @@
     // Bundles: fixed-price sets. The server applies the discount at checkout (BundleService.discountFor); this mirrors
     // its rule (biggest saving first, each unit used by one set) so the cart total shown here matches.
     let bundles = [];
+    // "Buy it again": the products this customer has ordered most often (from their recent orders), shown above the grid
+    // on the plain All products view. Built from /cart/history and the catalog already in memory - no new endpoint.
+    let buyAgainCounts = new Map();
+    async function loadBuyAgain() {
+      try {
+        const response = await authFetch(`${BASE_URL}/cart/history?phno=${encodeURIComponent(customerPhno)}&page=0&size=20`);
+        const page = response.ok ? await response.json() : null;
+        const counts = new Map();
+        ((page && page.orders) || []).filter(o => o.status !== "CANCELLED" && o.status !== "PENDING_PAYMENT").forEach(o =>
+          (o.orderItems || []).forEach(line => counts.set(line.productId, (counts.get(line.productId) || 0) + (line.productQuantity || 1))));
+        buyAgainCounts = counts;
+      } catch (e) { buyAgainCounts = new Map(); }
+      renderBuyAgain();
+    }
+
+    function renderBuyAgain() {
+      const shelf = document.getElementById("buyAgainShelf");
+      if (!shelf) return;
+      const plain = activeTab === "all" && !document.getElementById("searchName").value.trim() && !document.getElementById("searchCategory").value;
+      const picks = plain ? products.filter(p => p.productStock > 0 && buyAgainCounts.has(p.productId))
+        .sort((a, b) => buyAgainCounts.get(b.productId) - buyAgainCounts.get(a.productId)).slice(0, 6) : [];
+      shelf.classList.toggle("hidden", !picks.length);
+      if (!picks.length) { shelf.innerHTML = ""; return; }
+      shelf.className = "buy-again";
+      shelf.innerHTML = `<h3>Buy it again</h3><div class="buy-again-row">${picks.map(p => `
+        <div class="buy-again-card"><strong title="${escapeHtml(p.productName)}">${escapeHtml(p.productName)}</strong>
+          <span class="price">&#8377;${p.productPrice}</span>
+          <button style="width:auto;" onclick="buyAgainAdd(${p.productId})" aria-label="Add ${escapeHtml(p.productName)} to cart">Add</button></div>`).join("")}</div>`;
+    }
+
+    function buyAgainAdd(productId) {
+      const qty = document.getElementById("qty_" + productId);
+      if (qty) qty.value = 1;
+      addToCart(productId);
+    }
+
     async function loadBundles() {
       try {
         const response = await authFetch(`${BASE_URL}/bundles`);
