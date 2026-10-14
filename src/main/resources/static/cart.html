@@ -1325,6 +1325,23 @@
             <div id="cancelReportWrap" class="orders-table-wrap"></div>
         </div>
         <div class="card wide">
+            <div class="card-header" id="card-reasons">
+                <div class="icon">&#128260;</div>
+                <div class="title-wrap">
+                    <h2>Returns &amp; Cancellations</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>For orders placed in a date range (default: the last 90 days): the reasons given, a week-by-week count and the products most often sent back. Leave the dates blank for the default. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <label>From <input type="date" id="reasonsFrom" /></label>
+                <label>To <input type="date" id="reasonsTo" /></label>
+                <button onclick="loadReasonsReport()">Load Report</button>
+                <button class="blue" onclick="downloadReasonsCsv()">Download CSV</button>
+            </div>
+            <div id="reasonsWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
             <div class="card-header">
                 <div class="icon">&#128181;</div>
                 <div class="title-wrap">
@@ -2634,6 +2651,56 @@
           <tr><td>${escapeHtml(k.replaceAll("_", " ").toLowerCase())}</td><td>${n}</td><td>${(100 * n / r.totalCancelled).toFixed(0)}%</td></tr>`).join("")}</tbody></table>
         ${r.recentNotes.length ? "<p>Latest notes:</p><ul>" + r.recentNotes.map(n => `<li>#${n.orderId}: ${escapeHtml(n.note)}</li>`).join("") + "</ul>" : ""}`;
       showStatus(`${r.totalCancelled} cancelled order(s).`, "success");
+    }
+
+    // ---------- returns & cancellations ----------
+    function reasonsQuery() {
+      const q = new URLSearchParams();
+      const from = document.getElementById("reasonsFrom").value;
+      const to = document.getElementById("reasonsTo").value;
+      if (from) q.set("from", from);
+      if (to) q.set("to", to);
+      const text = q.toString();
+      return text ? "?" + text : "";
+    }
+
+    async function loadReasonsReport() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const r = await apiCall(`${BASE_URL}/analytics/reasons${reasonsQuery()}`, { headers: { "X-Service-Key": serviceKey } });
+      if (!r) return;
+      const table = (head, rows) => rows.length
+        ? `<table class="orders-table"><thead><tr>${head.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${rows.map(cells => `<tr>${cells.map(c => `<td>${escapeHtml(String(c))}</td>`).join("")}</tr>`).join("")}</tbody></table>`
+        : "<p>None.</p>";
+      document.getElementById("reasonsWrap").innerHTML = `
+        <p>${escapeHtml(r.from)} to ${escapeHtml(r.to)}: <strong>${r.ordersPlaced}</strong> order(s) placed &middot;
+          <strong>${r.ordersWithCancellations}</strong> with cancellations (${r.unitsCancelled} unit(s)) &middot;
+          <strong>${r.ordersWithReturns}</strong> with returns (${r.unitsReturned} unit(s))</p>
+        <h4>Why orders were cancelled</h4>${table(["Reason", "Units"], r.cancelReasons.map(c => [c.reason, c.units]))}
+        <h4>Why items were returned</h4>${table(["Reason", "Units"], r.returnReasons.map(c => [c.reason, c.units]))}
+        <h4>By week placed</h4>${table(["Week starting", "Orders", "Cancelled units", "Returned units"], r.weeks.map(w => [w.weekStart, w.ordersPlaced, w.unitsCancelled, w.unitsReturned]))}
+        <h4>Products sent back most</h4>${table(["Product", "Ordered", "Cancelled", "Returned", "Sent back"], r.products.map(p => [p.productId + " " + p.productName, p.unitsOrdered, p.unitsCancelled, p.unitsReturned, p.sentBackPercent + "%"]))}`;
+      showStatus("Returns & cancellations report loaded.", "success");
+    }
+
+    async function downloadReasonsCsv() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      try {
+        const response = await fetch(`${BASE_URL}/analytics/reasons/export${reasonsQuery()}`, { headers: { "X-Service-Key": serviceKey } });
+        if (!response.ok) throw new Error((await response.text()) || `HTTP Error: ${response.status}`);
+        const blob = await response.blob();
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "returns-and-cancellations.csv";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(link.href);
+        showStatus("returns-and-cancellations.csv downloaded.", "success");
+      } catch (error) {
+        showStatus("CSV download failed: " + error.message, "error");
+      }
     }
 
     // ---------- today ----------
