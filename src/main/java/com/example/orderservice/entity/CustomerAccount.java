@@ -28,4 +28,9 @@ public class CustomerAccount {
     // True once the customer has unsubscribed from promotional emails (abandoned-cart reminders, restock / price-drop
     // alerts, loyalty-expiry warnings). Emails about their own orders and sign-in codes are never affected.
     private boolean marketingOptOut;
+    // Day and month of the customer's birthday (no year), set by the customer; both null = none saved. The year of
+    // the birthday the last coupon was sent for, so each year's coupon is sent once.
+    private Integer birthMonth;
+    private Integer birthDay;
+    private Integer birthdayCouponYear;
 }

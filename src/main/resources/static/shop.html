@@ -2386,6 +2386,8 @@
       const storeCredit = creditResponse.ok ? await creditResponse.json() : null;
       const prefsResponse = await authFetch(`${BASE_URL}/prefs/mine?phno=${encodeURIComponent(customerPhno)}`);
       const emailPrefs = prefsResponse.ok ? await prefsResponse.json() : null;
+      const birthdayResponse = await authFetch(`${BASE_URL}/customer/birthday?phno=${encodeURIComponent(customerPhno)}`);
+      const myBirthday = birthdayResponse.ok ? (await birthdayResponse.json()).birthday : null;
       const exchangesResponse = await authFetch(`${BASE_URL}/cart/exchanges/mine?phno=${encodeURIComponent(customerPhno)}`);
       myExchanges = exchangesResponse.ok ? await exchangesResponse.json() : [];
       const recommendationsResponse = await authFetch(`${BASE_URL}/cart/recommendations?phno=${encodeURIComponent(customerPhno)}&limit=8`);
@@ -2462,6 +2464,7 @@
           <input type="checkbox" id="marketingEmails" style="width:auto;" ${emailPrefs.marketingEmails ? "checked" : ""} onchange="setMarketingEmails(this)" />
           Email me cart reminders, restock / price-drop alerts and points-expiry warnings</label>
           <span class="meta">Emails about your own orders and sign-in codes are always sent.</span></p>` : ""}
+        ${myBirthday === null ? "" : birthdayHtml(myBirthday)}
         ${referralHtml(referral)}
         <h3 style="margin:16px 0 10px;">Order history</h3>
         ${orderFilterBarHtml(historyPage)}
@@ -2767,6 +2770,34 @@
           &middot; ${t.amount >= 0 ? "+" : "-"}₹${Math.abs(t.amount).toFixed(2)}</div>`).join("");
       return `<div style="margin:12px 0;"><strong>Store credit: ₹${credit.balance.toFixed(2)}</strong>
         <span class="meta">Use it at checkout. Refunds can be taken as store credit instantly.</span>${rows}</div>`;
+    }
+
+    // Birthday (day and month only): once a year, around it, we email a single-use coupon if marketing email is on.
+    const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    function birthdayHtml(saved) {
+      const [m, d] = saved ? saved.split("-").map(Number) : [0, 0];
+      return `<p style="margin:8px 0;"><strong>Birthday</strong> <span class="meta">${saved ? "Saved: " + d + " " + MONTH_NAMES[m - 1] + "." : "Add yours for a birthday treat."}</span><br />
+        <select id="birthMonth" aria-label="Birthday month" style="width:auto;">${MONTH_NAMES.map((n, i) => `<option value="${i + 1}" ${i + 1 === m ? "selected" : ""}>${n}</option>`).join("")}</select>
+        <input type="number" id="birthDay" min="1" max="31" placeholder="Day" aria-label="Birthday day" value="${d || ""}" style="width:80px;" />
+        <button class="secondary" style="width:auto;" onclick="saveBirthday()">Save</button>
+        ${saved ? `<button class="secondary" style="width:auto;" onclick="removeBirthday()">Remove</button>` : ""}</p>`;
+    }
+
+    async function saveBirthday() {
+      const month = Number(document.getElementById("birthMonth").value);
+      const day = Number(document.getElementById("birthDay").value);
+      if (!Number.isInteger(day) || day < 1 || day > 31) { alert("Enter the day of the month."); return; }
+      const response = await authFetch(`${BASE_URL}/customer/birthday?phno=${encodeURIComponent(customerPhno)}&month=${month}&day=${day}`, { method: "PUT" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't save your birthday."); return; }
+      showToast("Birthday saved.");
+      loadAccountView();
+    }
+
+    async function removeBirthday() {
+      const response = await authFetch(`${BASE_URL}/customer/birthday?phno=${encodeURIComponent(customerPhno)}`, { method: "DELETE" });
+      if (!response.ok) { alert("Couldn't remove your birthday."); return; }
+      showToast("Birthday removed.");
+      loadAccountView();
     }
 
     async function setMarketingEmails(box) {
