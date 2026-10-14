@@ -366,6 +366,25 @@
         .card { scroll-margin-top: 70px; }
         @media (prefers-reduced-motion: reduce) { .card.flash { animation: none; } }
         @media (max-width: 600px) { #adminNav { padding: 8px 12px; } #adminNav .nav-title { display: none; } }
+        /* ---- dark mode: follows the device setting; the page is light by default ---- */
+        @media (prefers-color-scheme: dark) {
+          :root { color-scheme: dark; --white: #111c2e; --dark: #e2e8f0; --muted: #94a3b8; --border: #27364d; --bg: #0b1220; --shadow: 0 18px 45px rgba(0, 0, 0, 0.45); }
+          .card, .products-section { background: #111c2e; border-color: #27364d; color: #e2e8f0; }
+          .card h2, .products-section h2, .icon, .method { color: #c4b5fd; }
+          .icon, .method { background: #2e1f5e; }
+          .orders-date { color: #94a3b8; }
+          .orders-table th, th { background: #1e1b3a; color: #c4b5fd; }
+          td { color: #e2e8f0; }
+          tr:hover td { background: #1a1733; }
+          input, select, textarea { background: #0b1626; color: #e2e8f0; border-color: #27364d; }
+          input:focus, select:focus, textarea:focus { background: #0f1b30; }
+          input::placeholder { color: #64748b; }
+          .status-panel { background: #111c2e; color: #ddd6fe; }
+          .rev-summary { color: #cbd5e1; }
+          .rev-summary b { color: #f1f5f9; }
+          #navResults { background: #111c2e; }
+          #navResults button:hover, #navResults button.active { background: #2e1f5e; }
+        }
     </style>
 </head>
 <body>
