@@ -4139,7 +4139,13 @@
   function titleOf(c) { return c.querySelector(".card-header h2").textContent.trim(); }
   function load() { try { return JSON.parse(localStorage.getItem(STORE) || "[]"); } catch (e) { return []; } }
   function save(list) { try { localStorage.setItem(STORE, JSON.stringify(list)); } catch (e) {} }
-  var collapsed = load();
+  // First visit (nothing remembered yet): start with only what every admin needs open - sign-in, the key and the to-do list -
+  // and the other cards folded away; the finder above opens any of them. After that the choices made here are remembered.
+  var firstVisit = false;
+  try { firstVisit = localStorage.getItem(STORE) === null; } catch (e) {}
+  var collapsed = firstVisit
+    ? cards.map(titleOf).filter(function (t) { return ["Admin Sign-in", "Service Credentials", "Needs Attention"].indexOf(t) < 0; })
+    : load();
   cards.forEach(function (c, i) {
     if (!c.id) c.id = "card-auto-" + i;
     if (collapsed.indexOf(titleOf(c)) >= 0) c.classList.add("collapsed");
