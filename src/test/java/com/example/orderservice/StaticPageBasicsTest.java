@@ -41,7 +41,7 @@ class StaticPageBasicsTest {
         String shop = Files.readString(STATIC.resolve("shop.html"), StandardCharsets.UTF_8);
         assertTrue(shop.contains("aria-label=\"Add ${escapeHtml(p.productName)} to cart\""), "Add button lost its accessible name");
         assertTrue(shop.contains("max=\"${p.productStock}\" step=\"1\""), "quantity input lost its stock cap / whole-number step");
-        assertTrue(shop.contains("Math.floor(Number(qtyInput.value))"), "addToCart no longer rounds to whole units");
+        assertTrue(shop.contains("Math.floor(Number(qtyInput ? qtyInput.value : 1))"), "addToCart no longer rounds to whole units");
         assertTrue(shop.contains("product.productStock - (existing ? existing.quantity : 0)"), "addToCart no longer caps at stock");
         assertTrue(shop.contains("function syncCardSteppers()"), "product cards lost their quick-add stepper");
     }
