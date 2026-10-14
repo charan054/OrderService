@@ -730,6 +730,12 @@
           .product-card { animation: none; }
           .skeleton-card .sk-img, .skeleton-card .sk-line { animation: none; }
         }
+        /* ---- delight: cart bump and order-placed confetti ---- */
+        @keyframes cartBump { 0% { transform: scale(1); } 40% { transform: scale(1.04); box-shadow: 0 0 0 4px rgba(124,58,237,.25); } 100% { transform: scale(1); } }
+        .cart-bump { animation: cartBump .45s ease; }
+        .confetti-piece { position: fixed; top: -12px; width: 9px; height: 14px; z-index: 10000; pointer-events: none; border-radius: 2px; animation: confettiFall linear forwards; }
+        @keyframes confettiFall { to { transform: translateY(105vh) rotate(720deg); opacity: .9; } }
+        @media (prefers-reduced-motion: reduce) { .cart-bump { animation: none; } .confetti-piece { display: none; } }
         @media (max-width: 600px) {
           header.topbar { align-items: flex-start; }
           header.topbar .tagline { display: none; }
@@ -3778,19 +3784,48 @@
         : "No reviews yet";
     }
 
+    // Small celebration when an order goes through. Pure CSS pieces that remove themselves; skipped for reduced motion.
+    function celebrate() {
+      if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const colors = ["#7c3aed", "#f97316", "#16a34a", "#0ea5e9", "#eab308", "#ec4899"];
+      for (let i = 0; i < 70; i++) {
+        const piece = document.createElement("span");
+        piece.className = "confetti-piece";
+        piece.style.left = Math.random() * 100 + "vw";
+        piece.style.background = colors[i % colors.length];
+        piece.style.animationDuration = (1.8 + Math.random() * 1.6) + "s";
+        piece.style.animationDelay = (Math.random() * 0.5) + "s";
+        document.body.appendChild(piece);
+        setTimeout(() => piece.remove(), 4200);
+      }
+    }
+    function bumpCart() {
+      const box = document.getElementById("cartLines");
+      const panel = box && box.closest("section, aside, .card, .panel") || box;
+      if (!panel) return;
+      panel.classList.remove("cart-bump"); void panel.offsetWidth; panel.classList.add("cart-bump");
+    }
+
     function addToCart(productId) {
       const product = products.find(p => p.productId === productId);
       if (!product) return;
       const qtyInput = document.getElementById(`qty_${productId}`);
-      const quantity = Math.max(1, Number(qtyInput.value) || 1);
-
+      // Whole units only, at least 1, and never more than is in stock (counting what is already in the cart).
+      const wanted = Math.max(1, Math.floor(Number(qtyInput.value)) || 1);
       const existing = cart.find(item => item.productId === productId);
+      const room = Math.max(0, product.productStock - (existing ? existing.quantity : 0));
+      if (room <= 0) { showToast(`You already have all ${product.productStock} ${product.productName} in your cart.`, "error"); return; }
+      const quantity = Math.min(wanted, room);
+      if (quantity < wanted) showToast(`Only ${product.productStock} ${product.productName} in stock - added ${quantity}.`, "error");
+      else showToast(`Added ${quantity} × ${product.productName} to your cart`, "ok");
+      qtyInput.value = 1;
       if (existing) {
         existing.quantity += quantity;
       } else {
         cart.push({ productId, name: product.productName, price: product.productPrice, quantity });
       }
       renderCart();
+      bumpCart();
     }
 
     // Opens a print-friendly receipt for one of the logged-in customer's own orders in a new window (Print / Save
@@ -4483,6 +4518,7 @@
             `Order #${order.orderId} placed${method === "CASH" ? " - pay on delivery." : ", paid via PhonePe."}`,
             "success"
           );
+          celebrate();
         }
         loadProducts();
         loadLoyaltyBalance();
@@ -4517,6 +4553,7 @@
           const order = await response.json();
           if (order.status === "PLACED") {
             setCheckoutStatus(`Order #${orderId} paid and placed via UPI.`, "success");
+            celebrate();
             loadProducts();
             loadLoyaltyBalance();
       loadCouponSuggestions();
