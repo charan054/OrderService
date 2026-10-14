@@ -1831,9 +1831,16 @@
     // category, so a catalog without pictures still reads as a shop and not a list of "No image" boxes.
     function placeholderGlyph(name, category) {
       const t = `${name || ""} ${category || ""}`.toLowerCase();
-      const rules = [[/soap|shampoo|face|wash|cream|lotion|skin|hair|cetaphil|dove|cinthol/, "&#129524;"], [/dal|rice|atta|flour|grain|pulse|moong|wheat/, "&#127806;"],
-        [/chip|snack|kurkure|biscuit|cookie|namkeen/, "&#127871;"], [/laptop|phone|gadget|book|realme|tv|camera/, "&#128187;"],
-        [/water|bottle|drink|juice|tea|coffee/, "&#128167;"], [/mango|fruit|apple|banana|jelly/, "&#127823;"]];
+      // Most specific first: the first matching rule wins, so "face wash" gets a bottle before "wash" gets a sponge.
+      const rules = [[/soap|cinthol|lifebuoy|lux|dettol|hand ?wash/, "&#129532;"], [/shampoo|conditioner|hair|clinic|dove|loreal|meera/, "&#129524;"],
+        [/face|cream|lotion|skin|cetaphil|moistur|sunscreen/, "&#129524;"], [/tooth|paste|brush/, "&#129701;"], [/lipstick|makeup|perfume|deo/, "&#128132;"],
+        [/detergent|clean|mop|broom|dish|surf|vim|harpic|wash/, "&#129529;"], [/tissue|paper|napkin|roll/, "&#129531;"],
+        [/dal|rice|atta|flour|grain|pulse|moong|wheat|sugar|salt/, "&#127806;"], [/oil|ghee|butter|milk|curd|paneer|cheese/, "&#129371;"],
+        [/chocolate|candy|sweet|cake|ice ?cream/, "&#127851;"], [/chip|snack|kurkure|biscuit|cookie|namkeen|popcorn/, "&#127871;"],
+        [/laptop|phone|gadget|realme|tv|camera|charger|earphone|headphone|mouse|keyboard/, "&#128187;"], [/book|pen|notebook|stationery/, "&#128214;"],
+        [/tea|coffee/, "&#9749;"], [/water|bottle|drink|juice|soda|cola|beverage/, "&#129380;"],
+        [/mango|fruit|apple|banana|jelly|orange|grape/, "&#127823;"], [/vegetable|tomato|potato|onion|carrot/, "&#129365;"],
+        [/food|meal|ready|instant|noodle|pasta/, "&#127869;"], [/grocer/, "&#129387;"]];
       const hit = rules.find(([re]) => re.test(t));
       return hit ? hit[1] : "&#128717;";
     }
