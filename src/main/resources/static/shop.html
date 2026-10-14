@@ -431,6 +431,11 @@
         .subscribe-box select, .subscribe-box input[type=number] { width: auto; display: inline-block; margin: 0 6px 6px 0; }
         .subscription-row { padding: 10px 0; border-bottom: 1px solid var(--border, #eee); }
         .low-stock-badge { color: var(--err-fg, #b42318); background: var(--err-bg, #fee4e2); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
+        .bundle-shelf { margin: 0 0 16px; }
+        .bundle-shelf h3 { margin: 0 0 8px; }
+        .bundle-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; }
+        .bundle-card { min-width: 220px; max-width: 260px; border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: var(--surface); }
+        .bundle-card ul { margin: 6px 0; padding-left: 18px; font-size: 13px; color: var(--muted); }
         .sale-was { text-decoration: line-through; color: var(--muted); font-size: 13px; margin-left: 6px; }
         .sale-badge { color: #fff; background: #d63031; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 6px; white-space: nowrap; }
         .new-badge { color: #fff; background: var(--accent); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 6px; white-space: nowrap; vertical-align: middle; }
@@ -821,6 +826,7 @@
                     <button id="tabHelp" onclick="showTab('help')">Help</button>
                 </div>
                 <div id="wishlistShare" class="hidden" style="margin:0 0 12px; font-size:14px;"></div>
+                <div id="bundleShelf" class="hidden"></div>
                 <div id="productGrid" class="product-grid"></div>
                 <div id="productPager" class="pager hidden"></div>
                 <div id="accountView" class="hidden"></div>
@@ -838,6 +844,7 @@
                     <div class="free-bar-text" id="freeDeliveryText"></div>
                     <div class="free-bar-track"><div class="free-bar-fill" id="freeDeliveryFill"></div></div>
                 </div>
+                <div class="total-row hidden" id="cartBundleRow"><span>Bundle savings</span><span id="cartBundleSavings"></span></div>
                 <div class="total-row hidden" id="cartDeliveryRow"><span id="cartDeliveryLabel">Delivery</span><span id="cartDelivery">₹0</span></div>
                 <div class="total-row"><span>Total</span><span id="cartTotal">₹0</span></div>
 
@@ -1538,6 +1545,7 @@
       document.getElementById("payerPhno").value = customerPhno;
       showAccountInfo();
       loadProducts();
+      loadBundles();
       refreshNotificationBadge();
       loadDeliveryTerms();
       loadCancelPolicy();
@@ -4037,6 +4045,67 @@
       document.getElementById("freeDeliveryText").textContent = progress.text;
       document.getElementById("freeDeliveryFill").style.width = progress.percent + "%";
     }
+    // Bundles: fixed-price sets. The server applies the discount at checkout (BundleService.discountFor); this mirrors
+    // its rule (biggest saving first, each unit used by one set) so the cart total shown here matches.
+    let bundles = [];
+    async function loadBundles() {
+      try {
+        const response = await authFetch(`${BASE_URL}/bundles`);
+        bundles = response.ok ? await response.json() : [];
+      } catch (e) { bundles = []; }
+      renderBundleShelf();
+      renderCart();
+    }
+
+    function bundleSavingsFor(lines) {
+      const left = {};
+      const prices = {};
+      lines.forEach(l => { left[l.productId] = (left[l.productId] || 0) + l.quantity; prices[l.productId] = l.price; });
+      const usable = bundles
+        .map(b => {
+          const parts = b.items.reduce((sum, i) => sum + i.quantity * (prices[i.productId] ?? i.unitPrice), 0);
+          return { b, saving: parts - b.bundlePrice };
+        })
+        .filter(x => x.saving > 0.004)
+        .sort((a, c) => c.saving - a.saving);
+      let total = 0;
+      usable.forEach(({ b, saving }) => {
+        const sets = Math.min(...b.items.map(i => Math.floor((left[i.productId] || 0) / i.quantity)));
+        if (!(sets > 0)) return;
+        b.items.forEach(i => { left[i.productId] -= sets * i.quantity; });
+        total += sets * saving;
+      });
+      return Math.round(total * 100) / 100;
+    }
+
+    function renderBundleShelf() {
+      const shelf = document.getElementById("bundleShelf");
+      const shown = bundles.filter(b => b.savings > 0);
+      shelf.classList.toggle("hidden", !shown.length);
+      if (!shown.length) { shelf.innerHTML = ""; return; }
+      shelf.className = "bundle-shelf";
+      shelf.innerHTML = `<h3>Bundle deals</h3><div class="bundle-row">${shown.map(b => `
+        <div class="bundle-card">
+          <strong>${escapeHtml(b.name)}</strong>
+          <ul>${b.items.map(i => `<li>${i.quantity} &times; ${escapeHtml(i.productName)}</li>`).join("")}</ul>
+          <div><span class="price">&#8377;${b.bundlePrice.toFixed(2)}</span><span class="sale-was">&#8377;${b.regularTotal.toFixed(2)}</span></div>
+          <div class="meta" style="margin-bottom:6px;">Save &#8377;${b.savings.toFixed(2)}</div>
+          <button ${b.available ? "" : "disabled"} onclick="addBundleToCart(${b.id})">${b.available ? "Add bundle" : "Out of stock"}</button>
+        </div>`).join("")}</div>`;
+    }
+
+    function addBundleToCart(bundleId) {
+      const bundle = bundles.find(b => b.id === bundleId);
+      if (!bundle) return;
+      bundle.items.forEach(i => {
+        const existing = cart.find(item => item.productId === i.productId);
+        if (existing) existing.quantity += i.quantity;
+        else cart.push({ productId: i.productId, name: i.productName, price: i.unitPrice, quantity: i.quantity });
+      });
+      renderCart();
+      showToast(`${bundle.name} added to your cart.`);
+    }
+
     function renderCart() {
       const linesBox = document.getElementById("cartLines");
       if (!cart.length) {
@@ -4066,7 +4135,10 @@
       document.getElementById("cartDelivery").textContent = fee > 0 ? `₹${fee.toFixed(2)}` : "Free";
       document.getElementById("cartDeliveryLabel").textContent = fee > 0 && freeAbove > 0
         ? `Delivery (free from ₹${freeAbove.toFixed(0)}${myTier !== "BRONZE" && freeAbove < deliveryTerms.freeAbove ? " for " + myTier.toLowerCase() + " members" : ""})` : "Delivery";
-      document.getElementById("cartTotal").textContent = `₹${(goods + fee).toFixed(2)}`;
+      const bundleSaving = cart.length ? bundleSavingsFor(cart) : 0;
+      document.getElementById("cartBundleRow").classList.toggle("hidden", !(bundleSaving > 0));
+      document.getElementById("cartBundleSavings").textContent = `-₹${bundleSaving.toFixed(2)}`;
+      document.getElementById("cartTotal").textContent = `₹${(goods - bundleSaving + fee).toFixed(2)}`;
       renderFreeDeliveryBar(goods, baseFee, freeAbove);
       renderCouponSuggestions();
       saveCart();

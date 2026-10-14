@@ -121,6 +121,8 @@ class OrderServiceTest {
     @Mock
     private CouponRepository couponRepository;
     @Mock
+    private com.example.orderservice.repository.BundleRepository bundleRepository;
+    @Mock
     private CouponRedemptionRepository couponRedemptionRepository;
     @Mock
     private LoyaltyAccountRepository loyaltyAccountRepository;
@@ -786,6 +788,54 @@ class OrderServiceTest {
 
         verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
         verify(orderRepository, never()).save(any());
+    }
+
+    // ---------- bundles ----------
+
+    private com.example.orderservice.entity.Bundle bundleOf(double price, int... productAndQty) {
+        com.example.orderservice.entity.Bundle b = new com.example.orderservice.entity.Bundle();
+        b.setId(1L);
+        b.setName("Duo");
+        b.setBundlePrice(price);
+        for (int i = 0; i < productAndQty.length; i += 2) {
+            com.example.orderservice.entity.BundleItem bi = new com.example.orderservice.entity.BundleItem();
+            bi.setProductId(productAndQty[i]);
+            bi.setQuantity(productAndQty[i + 1]);
+            b.getItems().add(bi);
+        }
+        return b;
+    }
+
+    @Test
+    void orderTakesTheBundleSavingOffBeforeACouponPercentage() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(productClient.getProductById(2)).thenReturn(product(2, 100.0, 10));
+        when(bundleRepository.findByActiveTrueOrderByIdAsc()).thenReturn(List.of(bundleOf(500.0, 1, 1, 2, 1)));
+        when(couponRepository.findById("SAVE10")).thenReturn(Optional.of(coupon("SAVE10", 10, true)));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+        Cart cart = cart(CUSTOMER, item(1, 1), item(2, 1));
+        cart.setCouponCode("SAVE10");
+
+        Cart result = service.order(cart, AUTH, null);
+
+        // parts 600, bundle 500 -> 100 off; the 10% coupon is then taken from 500 -> 50
+        assertEquals(100.0, result.getBundleDiscount());
+        assertEquals(150.0, result.getDiscountAmount());
+        assertEquals(450.0, result.getTotalPrice());
+    }
+
+    @Test
+    void orderWithoutACompleteBundleSetGetsNoBundleDiscount() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(bundleRepository.findByActiveTrueOrderByIdAsc()).thenReturn(List.of(bundleOf(500.0, 1, 1, 2, 1)));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+
+        Cart result = service.order(cart(CUSTOMER, item(1, 1)), AUTH, null);
+
+        assertNull(result.getBundleDiscount());
+        assertEquals(500.0, result.getTotalPrice());
     }
 
     // ---------- coupons ----------

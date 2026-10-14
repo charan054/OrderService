@@ -107,6 +107,8 @@ public class OrderService {
     private OrderItemRepository orderItemRepository;
     @Autowired(required = false)
     private com.example.orderservice.repository.ExchangeRequestRepository exchangeRepository;
+    @Autowired(required = false)
+    private com.example.orderservice.repository.BundleRepository bundleRepository;
     @Autowired
     private CouponRepository couponRepository;
     @Autowired
@@ -234,6 +236,8 @@ public class OrderService {
         // Validate every item and compute the price WITHOUT touching stock yet, so a later item failing
         // (not found, insufficient stock) can never leave an earlier item's stock decremented with no order to show for it.
         double price=0;
+        java.util.Map<Integer, Integer> orderedQuantities = new java.util.HashMap<>();
+        java.util.Map<Integer, Double> chargedPrices = new java.util.HashMap<>();
         for(OrderItem orderItem : cart.getOrderItems())
         {
             Product pro=productClient.getProductById(orderItem.getProductId());
@@ -254,13 +258,19 @@ public class OrderService {
             }
             price=price+(orderItem.getProductQuantity()*pro.getProductPrice());
             orderItem.setUnitPrice(pro.getProductPrice());
+            orderedQuantities.merge(orderItem.getProductId(), orderItem.getProductQuantity(), Integer::sum);
+            chargedPrices.put(orderItem.getProductId(), pro.getProductPrice());
             orderItem.setGstRate(pro.getGstRate() != null ? pro.getGstRate() : defaultGstRate);
             orderItem.setCancelledQuantity(0);
             orderItem.setReturnedQuantity(0);
         }
         // Resolved (and normalized onto the cart) BEFORE charging, same reasoning as stock: an invalid/inactive
         // code must fail before anything - including a payment - has happened.
-        double discount = resolveDiscount(cart, price);
+        // Complete bundle sets come off first; a coupon's percentage then applies to what is left.
+        double bundleDiscount = bundleRepository == null ? 0
+                : BundleService.discountFor(bundleRepository.findByActiveTrueOrderByIdAsc(), orderedQuantities, chargedPrices);
+        cart.setBundleDiscount(bundleDiscount > 0 ? bundleDiscount : null);
+        double discount = bundleDiscount + resolveDiscount(cart, price - bundleDiscount);
         if (subscription != null) {
             discount += roundMoney((price - discount) * subscription.discountPercent() / 100.0);
         }
