@@ -431,6 +431,8 @@
         .subscribe-box select, .subscribe-box input[type=number] { width: auto; display: inline-block; margin: 0 6px 6px 0; }
         .subscription-row { padding: 10px 0; border-bottom: 1px solid var(--border, #eee); }
         .low-stock-badge { color: var(--err-fg, #b42318); background: var(--err-bg, #fee4e2); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
+        .sale-was { text-decoration: line-through; color: var(--muted); font-size: 13px; margin-left: 6px; }
+        .sale-badge { color: #fff; background: #d63031; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 6px; white-space: nowrap; }
         .new-badge { color: #fff; background: var(--accent); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 6px; white-space: nowrap; vertical-align: middle; }
         .verified-badge { color: var(--ok-fg); background: var(--ok-bg); font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; margin-left: 4px; white-space: nowrap; }
         .review-item .review-comment { font-size: 14px; }
@@ -1564,6 +1566,13 @@
     function holdText(until) {
       const left = Math.max(0, Math.ceil((until - Date.now()) / 1000));
       return `One is held for you - ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} left`;
+    }
+
+    // Strike-through regular price and a "Sale" badge (with the end date) while ProductService says a sale is live.
+    function saleHtml(p) {
+      if (!p.onSale || p.regularPrice == null) return "";
+      const ends = p.saleEndsAt ? ` until ${new Date(p.saleEndsAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}` : "";
+      return `<span class="sale-was">₹${p.regularPrice}</span><span class="sale-badge">Sale${escapeHtml(ends)}</span>`;
     }
 
     function holdBadgeHtml(productId) {
@@ -3215,7 +3224,7 @@
                    onchange="toggleCompare(${p.productId}, this)" /> Compare</label>
             ${priceDrop ? `<div class="price-drop-badge">Price dropped ₹${priceDrop.priceDrop.toFixed(2)}</div>` : ""}
             ${holdBadgeHtml(p.productId)}
-            <div class="price-row"><span class="price">₹${p.productPrice}</span></div>
+            <div class="price-row"><span class="price">₹${p.productPrice}</span>${saleHtml(p)}</div>
             ${p.productStock <= 0
               ? `<button class="secondary" style="width:auto;" onclick="toggleWaitlist(${p.productId})">${isWaitlisted ? "Notified when back ✓" : "Notify me"}</button>`
               : `<div class="qty-row">
