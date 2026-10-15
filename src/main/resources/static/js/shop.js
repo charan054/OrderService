@@ -1132,6 +1132,7 @@
       activeTab = tab;
       document.getElementById("tabAll").classList.toggle("active", tab === "all");
       document.getElementById("tabNew").classList.toggle("active", tab === "new");
+      document.getElementById("tabSale").classList.toggle("active", tab === "sale");
       document.getElementById("tabWishlist").classList.toggle("active", tab === "wishlist");
       document.getElementById("tabAccount").classList.toggle("active", tab === "account");
       document.getElementById("tabNotifications").classList.toggle("active", tab === "notifications");
@@ -1387,6 +1388,44 @@
       renderCart();
     }
 
+    // "Your shopping at a glance": built from the customer's own latest orders (up to 50, cancelled and unpaid ones left out)
+    // with no extra endpoint. Spent is what they paid net of refunds; saved is coupon + bundle discounts plus points used.
+    async function loadSpendingInsights() {
+      const box = document.getElementById("spendInsights");
+      if (!box) return;
+      try {
+        const response = await authFetch(`${BASE_URL}/cart/history?phno=${encodeURIComponent(customerPhno)}&page=0&size=50`);
+        if (!response.ok) return;
+        const page = await response.json();
+        const orders = (page.orders || []).filter(o => o.status !== "CANCELLED" && o.status !== "PENDING_PAYMENT");
+        if (!orders.length) return;
+        const spent = orders.reduce((sum, o) => sum + Math.max(0, (o.totalPrice || 0) - (o.refundedAmount || 0)), 0);
+        const saved = orders.reduce((sum, o) => sum + (o.discountAmount || 0) + (o.pointsRedeemed || 0), 0);
+        const bought = new Map();
+        orders.forEach(o => (o.orderItems || []).forEach(i => {
+          const kept = i.productQuantity - (i.cancelledQuantity || 0) - (i.returnedQuantity || 0);
+          if (kept > 0) bought.set(i.productId, (bought.get(i.productId) || 0) + kept);
+        }));
+        const nameOf = id => { const p = products.find(x => x.productId === id); return p ? p.productName : "Product #" + id; };
+        const top = [...bought.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3);
+        const most = top.length ? top[0][1] : 1;
+        const money = n => "\u20B9" + n.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        box.innerHTML = `<div class="insights">
+          <h3>Your shopping at a glance</h3>
+          <div class="insight-tiles">
+            <div class="insight-tile"><span>${orders.length}</span>orders</div>
+            <div class="insight-tile"><span>${money(spent)}</span>spent</div>
+            <div class="insight-tile"><span>${money(spent / orders.length)}</span>average basket</div>
+            <div class="insight-tile good"><span>${money(saved)}</span>saved with offers</div>
+          </div>
+          ${top.length ? `<div class="insight-top"><strong>Most bought</strong>${top.map(([id, qty]) => `
+            <div class="insight-bar"><span class="insight-name">${escapeHtml(nameOf(id))}</span>
+              <span class="insight-track"><span style="width:${Math.round(qty / most * 100)}%"></span></span><span class="insight-qty">&times;${qty}</span></div>`).join("")}</div>` : ""}
+          <span class="meta">Based on your latest ${orders.length} order${orders.length === 1 ? "" : "s"}.</span>
+        </div>`;
+      } catch (e) { /* a missing summary is not worth an error */ }
+    }
+
     async function loadAccountView() {
       const view = document.getElementById("accountView");
       view.innerHTML = `<p style="color:var(--muted);">Loading your account...</p>`;
@@ -1497,6 +1536,7 @@
           <span class="meta">Emails about your own orders and sign-in codes are always sent.</span></p>` : ""}
         ${myBirthday === null ? "" : birthdayHtml(myBirthday)}
         ${referralHtml(referral)}
+        <div id="spendInsights"></div>
         <h3 style="margin:16px 0 10px;">Order history</h3>
         ${orderFilterBarHtml(historyPage)}
         ${ordersHtml}
@@ -1525,6 +1565,7 @@
           <button id="addressCancel" class="secondary hidden" style="width:auto;" onclick="cancelAddressEdit()">Cancel</button>
         </div>
       `;
+      loadSpendingInsights();
     }
 
     let myExchanges = [];
@@ -2211,10 +2252,25 @@
       renderProducts();
     }
 
+    // Percent off for a product that is on sale (0 when it is not), used to put the biggest discounts first.
+    function saleDiscountPercent(p) {
+      return p.onSale && p.regularPrice > 0 ? (p.regularPrice - p.productPrice) / p.regularPrice * 100 : 0;
+    }
+
+    // The On sale tab only shows up while something is actually on sale (or while it is the tab being viewed).
+    function updateSaleTab() {
+      const count = products.filter(p => p.onSale).length;
+      document.getElementById("saleCount").textContent = count;
+      document.getElementById("tabSale").hidden = count === 0 && activeTab !== "sale";
+    }
+
     function renderProducts() {
+      updateSaleTab();
       const grid = document.getElementById("productGrid");
       const visibleProducts = activeTab === "wishlist"
         ? products.filter(p => wishlistProductIds.has(p.productId))
+        : activeTab === "sale"
+        ? products.filter(p => p.onSale).sort((a, b) => saleDiscountPercent(b) - saleDiscountPercent(a))
         : activeTab === "new"
         ? products.filter(isNewProduct).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
         : activeTab === "recent"
@@ -2248,6 +2304,8 @@
           ? `<p style="color:var(--muted);">No products match your filters.</p>`
           : activeTab === "wishlist"
           ? `<p style="color:var(--muted);">Nothing wishlisted yet - tap the heart on a product to save it here.</p>`
+          : activeTab === "sale"
+          ? `<p style="color:var(--muted);">No sales running right now - check back soon.</p>`
           : activeTab === "new"
           ? `<p style="color:var(--muted);">Nothing new in the last ${NEW_PRODUCT_DAYS} days - check back soon.</p>`
           : activeTab === "recent"

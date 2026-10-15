@@ -756,3 +756,16 @@
           .filter-row select { flex: 1 1 100%; max-width: none; }
         }
     
+        /* ---- account: shopping at a glance ---- */
+        .insights { margin: 16px 0; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+        .insights h3 { margin: 0 0 10px; }
+        .insight-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 12px; }
+        .insight-tile { padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--primary) 10%, transparent); font-size: 13px; color: var(--muted); }
+        .insight-tile span { display: block; font-size: 20px; font-weight: 800; color: var(--text, inherit); }
+        .insight-tile.good { background: color-mix(in srgb, var(--green, #16a34a) 14%, transparent); }
+        .insight-top { display: grid; gap: 6px; margin-bottom: 8px; }
+        .insight-bar { display: grid; grid-template-columns: minmax(80px, 140px) 1fr auto; align-items: center; gap: 8px; font-size: 13px; }
+        .insight-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .insight-track { height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; }
+        .insight-track span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #7c3aed, #f97316); }
+        .insight-qty { font-weight: 700; }
