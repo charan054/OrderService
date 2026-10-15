@@ -61,7 +61,7 @@ public class SecurityConfig {
                         // ---- Public ----
                         // Catalog browsing and the storefront's product-detail extras (ratings, reviews, gallery,
                         // frequently-bought-together) - no customer's data.
-                        .requestMatchers(HttpMethod.GET, "/track/*", "/bundles", "/cart/display", "/cart/returnpolicy", "/cart/cancelpolicy", "/cart/deliveryfee", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery", "/pincodes/check", "/pincodes/slots", "/pincodes/slots/availability", "/questions/product", "/prefs/unsubscribe", "/subscriptions/terms", "/wishlist/shared/*", "/faq", "/review-photos/*").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/track/*", "/bundles", "/quantitybreaks", "/cart/display", "/cart/returnpolicy", "/cart/cancelpolicy", "/cart/deliveryfee", "/cart/frequentlyboughttogether", "/cart/search", "/cart/ratings", "/cart/reviews", "/cart/gallery", "/pincodes/check", "/pincodes/slots", "/pincodes/slots/availability", "/questions/product", "/prefs/unsubscribe", "/subscriptions/terms", "/wishlist/shared/*", "/faq", "/review-photos/*").permitAll()
                         // Signing in, and the forgot-PIN proxy to PhonepayService - by definition used before the
                         // customer has a session.
                         .requestMatchers(HttpMethod.POST, "/customer/login/request", "/customer/login/verify", "/customer/logout").permitAll()

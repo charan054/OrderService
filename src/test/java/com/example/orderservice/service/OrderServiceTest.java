@@ -123,6 +123,8 @@ class OrderServiceTest {
     @Mock
     private com.example.orderservice.repository.BundleRepository bundleRepository;
     @Mock
+    private com.example.orderservice.repository.QuantityBreakRepository quantityBreakRepository;
+    @Mock
     private CouponRedemptionRepository couponRedemptionRepository;
     @Mock
     private LoyaltyAccountRepository loyaltyAccountRepository;
@@ -804,6 +806,59 @@ class OrderServiceTest {
             b.getItems().add(bi);
         }
         return b;
+    }
+
+    private static com.example.orderservice.entity.QuantityBreak breakOf(int productId, int minQuantity, int percent) {
+        com.example.orderservice.entity.QuantityBreak b = new com.example.orderservice.entity.QuantityBreak();
+        b.setProductId(productId);
+        b.setMinQuantity(minQuantity);
+        b.setPercentOff(percent);
+        return b;
+    }
+
+    @Test
+    void orderReachingAQuantityBreakGetsItsPercentageOffTheseUnits() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 100.0, 10));
+        when(quantityBreakRepository.findByActiveTrueOrderByProductIdAscMinQuantityAsc()).thenReturn(List.of(breakOf(1, 3, 10)));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+
+        Cart result = service.order(cart(CUSTOMER, item(1, 3)), AUTH, null);
+
+        assertEquals(30.0, result.getQuantityDiscount());
+        assertNull(result.getBundleDiscount());
+        assertEquals(30.0, result.getDiscountAmount());
+        assertEquals(270.0, result.getTotalPrice());
+    }
+
+    @Test
+    void orderBelowTheQuantityBreakIsNotDiscounted() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 100.0, 10));
+        when(quantityBreakRepository.findByActiveTrueOrderByProductIdAscMinQuantityAsc()).thenReturn(List.of(breakOf(1, 3, 10)));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+
+        Cart result = service.order(cart(CUSTOMER, item(1, 2)), AUTH, null);
+
+        assertNull(result.getQuantityDiscount());
+        assertEquals(200.0, result.getTotalPrice());
+    }
+
+    @Test
+    void aBundleAndQuantityBreaksNeverStackTheLargerSavingWins() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 500.0, 10));
+        when(productClient.getProductById(2)).thenReturn(product(2, 100.0, 10));
+        when(bundleRepository.findByActiveTrueOrderByIdAsc()).thenReturn(List.of(bundleOf(500.0, 1, 1, 2, 1)));
+        when(quantityBreakRepository.findByActiveTrueOrderByProductIdAscMinQuantityAsc()).thenReturn(List.of(breakOf(2, 2, 10)));
+        when(phonepeClient.makePayment(eq(AUTH), any(PaymentRequest.class))).thenReturn(paymentResponse(100000));
+
+        // bundle saves 100 on the pair; 10% off two of product 2 would save only 20 -> bundle wins, no break recorded
+        Cart result = service.order(cart(CUSTOMER, item(1, 1), item(2, 2)), AUTH, null);
+
+        assertEquals(100.0, result.getBundleDiscount());
+        assertNull(result.getQuantityDiscount());
+        assertEquals(100.0, result.getDiscountAmount());
     }
 
     @Test

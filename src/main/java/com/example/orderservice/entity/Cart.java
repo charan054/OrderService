@@ -45,6 +45,8 @@ public class Cart {
     private double discountAmount;
     // The part of discountAmount that came from fixed-price bundles (null = none). System-set at checkout.
     private Double bundleDiscount;
+    // The part of discountAmount that came from quantity price breaks (null = none). System-set; an order has this or a bundle saving.
+    private Double quantityDiscount;
     // Set by the caller at checkout (optional); order() validates it against the customer's LoyaltyAccount
     // balance and turns it into an additional discount (1 point = ₹1) on top of any coupon, before charging.
     // Kept on the saved order as a record of how many points were applied, same role couponCode plays.

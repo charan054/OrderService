@@ -566,6 +566,7 @@
       showAccountInfo();
       loadProducts();
       loadBundles();
+      loadQuantityBreaks();
       loadBuyAgain();
       refreshNotificationBadge();
       loadDeliveryTerms();
@@ -2360,6 +2361,7 @@
             <h3>${escapeHtml(cardTitle(item))}${isNewProduct(p) ? `<span class="new-badge">New</span>` : ""}</h3>
             ${variantPickerHtml(item)}
             <div class="meta">${escapeHtml(p.productCategory)} &middot; ${stockLabelHtml(p)}</div>
+            ${quantityBreakHtml(p)}
             ${rating && rating.reviewCount > 0
               ? `<div class="rating-row"><span class="stars">${starsFor(rating.averageRating)}</span> (${rating.reviewCount})</div>`
               : `<div class="rating-row">No reviews yet</div>`}
@@ -3337,6 +3339,36 @@
     // Bundles: fixed-price sets. The server applies the discount at checkout (BundleService.discountFor); this mirrors
     // its rule (biggest saving first, each unit used by one set) so the cart total shown here matches.
     let bundles = [];
+    // Quantity breaks ("buy 3+, save 10%"): the server applies them at checkout (QuantityBreakService.discountFor); the
+    // cart mirrors it. As on the server an order gets either its bundle saving or its break saving, whichever is larger.
+    let quantityBreaks = [];
+    async function loadQuantityBreaks() {
+      try {
+        const response = await authFetch(`${BASE_URL}/quantitybreaks`);
+        quantityBreaks = response.ok ? await response.json() : [];
+      } catch (e) { quantityBreaks = []; }
+      renderProducts();
+      renderCart();
+    }
+
+    function quantityBreakSavingsFor(lines) {
+      const qty = {}, prices = {};
+      lines.forEach(l => { qty[l.productId] = (qty[l.productId] || 0) + l.quantity; prices[l.productId] = l.price; });
+      let total = 0;
+      Object.keys(qty).forEach(id => {
+        const best = quantityBreaks.filter(b => b.productId === Number(id) && qty[id] >= b.minQuantity).reduce((m, b) => Math.max(m, b.percentOff), 0);
+        total += qty[id] * prices[id] * best / 100;
+      });
+      return Math.round(total * 100) / 100;
+    }
+
+    // "Buy 3+ save 10%" for a product card; shows the lowest tier and, if there are more, how far the saving goes.
+    function quantityBreakHtml(p) {
+      const tiers = quantityBreaks.filter(b => b.productId === p.productId).sort((a, b) => a.minQuantity - b.minQuantity);
+      if (!tiers.length) return "";
+      const text = tiers.map(t => `${t.minQuantity}+ save ${t.percentOff}%`).join(", ");
+      return `<div class="meta"><span class="low-stock-badge" style="background:var(--accent-soft, #e6f4ea); color:inherit;">Buy ${escapeHtml(text)}</span></div>`;
+    }
     // "Buy it again": the products this customer has ordered most often (from their recent orders), shown above the grid
     // on the plain All products view. Built from /cart/history and the catalog already in memory - no new endpoint.
     let buyAgainCounts = new Map();
@@ -3460,7 +3492,10 @@
       document.getElementById("cartDelivery").textContent = fee > 0 ? `₹${fee.toFixed(2)}` : "Free";
       document.getElementById("cartDeliveryLabel").textContent = fee > 0 && freeAbove > 0
         ? `Delivery (free from ₹${freeAbove.toFixed(0)}${myTier !== "BRONZE" && freeAbove < deliveryTerms.freeAbove ? " for " + myTier.toLowerCase() + " members" : ""})` : "Delivery";
-      const bundleSaving = cart.length ? bundleSavingsFor(cart) : 0;
+      const bundleOnly = cart.length ? bundleSavingsFor(cart) : 0;
+      const breakOnly = cart.length ? quantityBreakSavingsFor(cart) : 0;
+      const bundleSaving = Math.max(bundleOnly, breakOnly);
+      document.getElementById("cartBundleLabel").textContent = breakOnly > bundleOnly ? "Quantity savings" : "Bundle savings";
       document.getElementById("cartBundleRow").classList.toggle("hidden", !(bundleSaving > 0));
       document.getElementById("cartBundleSavings").textContent = `-₹${bundleSaving.toFixed(2)}`;
       document.getElementById("cartTotal").textContent = `₹${(goods - bundleSaving + fee).toFixed(2)}`;
