@@ -20,6 +20,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -41,7 +45,7 @@ class PriceMatchServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new PriceMatchService(requests, productClient, Clock.fixed(NOW, ZoneOffset.UTC), notifier);
+        service = new PriceMatchService(requests, productClient, Clock.fixed(NOW, ZoneOffset.UTC), notifier, "key");
     }
 
     private void productAt(double price) {
@@ -138,7 +142,7 @@ class PriceMatchServiceTest {
 
         service.resolve(7, false, "Different size");
 
-        verify(notifier).notifyPriceMatchDecision(CUSTOMER, "Soap", 80, false, "Different size");
+        verify(notifier).notifyPriceMatchDecision(CUSTOMER, "Soap", 80, false, "Different size", null, null);
     }
 
     @Test
@@ -153,7 +157,7 @@ class PriceMatchServiceTest {
 
         service.resolve(7, true, null);
 
-        verify(notifier).notifyPriceMatchDecision(CUSTOMER, "product #1", 80, true, null);
+        verify(notifier).notifyPriceMatchDecision(CUSTOMER, "product #1", 80, true, null, null, null);
     }
 
     @Test
@@ -166,6 +170,61 @@ class PriceMatchServiceTest {
 
         assertEquals(PriceMatchRequest.Status.DECLINED, out.getStatus());
         assertNull(out.getAdminNote());
+    }
+
+    @Test
+    void approvingWithASalePriceStartsATimedSaleFirstAndRecordsIt() {
+        PriceMatchRequest r = open(7);
+        r.setProductId(1);
+        r.setCustomerPhno(CUSTOMER);
+        when(requests.findById(7L)).thenReturn(Optional.of(r));
+        when(requests.save(r)).thenReturn(r);
+
+        PriceMatchRequest out = service.resolve(7, true, null, 90.0, 3);
+
+        Instant endsAt = NOW.plus(java.time.Duration.ofDays(3));
+        verify(productClient).setProductSale("key", 1, 90.0, endsAt);
+        assertEquals(90.0, out.getSalePrice());
+        assertEquals(endsAt, out.getSaleEndsAt());
+        assertEquals(PriceMatchRequest.Status.APPROVED, out.getStatus());
+    }
+
+    @Test
+    void aSaleDefaultsToSevenDays() {
+        PriceMatchRequest r = open(7);
+        r.setProductId(1);
+        when(requests.findById(7L)).thenReturn(Optional.of(r));
+        when(requests.save(r)).thenReturn(r);
+
+        service.resolve(7, true, null, 90.0, null);
+
+        verify(productClient).setProductSale("key", 1, 90.0, NOW.plus(java.time.Duration.ofDays(7)));
+    }
+
+    @Test
+    void ifProductServiceRefusesTheSaleTheRequestStaysOpenAndNobodyIsEmailed() {
+        PriceMatchRequest r = open(7);
+        r.setProductId(1);
+        when(requests.findById(7L)).thenReturn(Optional.of(r));
+        when(productClient.setProductSale(any(), any(), any(), any())).thenThrow(mock(feign.FeignException.class));
+
+        assertThrows(ProductException.class, () -> service.resolve(7, true, null, 600.0, 3));
+
+        assertEquals(PriceMatchRequest.Status.OPEN, r.getStatus());
+        verify(requests, never()).save(any());
+        verify(notifier, never()).notifyPriceMatchDecision(anyLong(), any(), anyDouble(), anyBoolean(), any(), any(), any());
+    }
+
+    @Test
+    void aSaleOnlyMakesSenseWhenApprovingAndWithinLimits() {
+        PriceMatchRequest r = open(7);
+        when(requests.findById(7L)).thenReturn(Optional.of(r));
+
+        assertThrows(ProductException.class, () -> service.resolve(7, false, null, 90.0, 3));
+        assertThrows(ProductException.class, () -> service.resolve(7, true, null, 0.0, 3));
+        assertThrows(ProductException.class, () -> service.resolve(7, true, null, 90.0, 0));
+        assertThrows(ProductException.class, () -> service.resolve(7, true, null, 90.0, PriceMatchService.MAX_SALE_DAYS + 1));
+        verify(productClient, never()).setProductSale(any(), any(), any(), any());
     }
 
     @Test

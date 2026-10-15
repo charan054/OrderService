@@ -486,7 +486,7 @@
         return;
       }
       wrap.innerHTML = `<table class="orders-table"><thead><tr>
-        <th>#</th><th>Product</th><th>Customer</th><th>Our price</th><th>Their price</th><th>Link</th><th>Note to customer</th><th>Action</th>
+        <th>#</th><th>Product</th><th>Customer</th><th>Our price</th><th>Their price</th><th>Link</th><th>Note to customer</th><th>Start a sale (optional)</th><th>Action</th>
       </tr></thead><tbody>${priceMatches.map((r, i) => `
         <tr>
           <td>${r.id}</td>
@@ -496,6 +496,8 @@
           <td>${Number(r.competitorPrice).toFixed(2)}</td>
           <td style="white-space:normal; max-width:220px; word-break:break-all;">${/^https?:\/\//i.test(r.competitorUrl || "") ? `<a href="${escapeHtml(r.competitorUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(r.competitorUrl)}</a>` : escapeHtml(r.competitorUrl || "")}</td>
           <td><input type="text" id="pmNote${i}" maxlength="300" placeholder="Optional note" /></td>
+          <td><input type="number" id="pmSale${i}" min="0.01" step="0.01" placeholder="Sale price" style="width:90px" />
+              <input type="number" id="pmDays${i}" min="1" max="90" value="7" style="width:56px" title="Days the sale runs" /> days</td>
           <td><button class="blue" onclick="resolvePriceMatch(${i}, true)">Approve</button>
               <button onclick="resolvePriceMatch(${i}, false)">Decline</button></td>
         </tr>`).join("")}</tbody></table>`;
@@ -514,7 +516,14 @@
       if (!serviceKey) return;
       const r = priceMatches[index];
       const note = document.getElementById("pmNote" + index).value.trim();
-      await apiCall(`${PM_URL}/${r.id}/resolve?approved=${approved}&note=${encodeURIComponent(note)}`, {
+      const salePrice = parseFloat(document.getElementById("pmSale" + index).value);
+      const saleDays = parseInt(document.getElementById("pmDays" + index).value, 10) || 7;
+      let saleQuery = "";
+      if (approved && salePrice > 0) {
+        if (!confirm(`Approve AND put product ${r.productId} on sale at ${salePrice.toFixed(2)} for ${saleDays} day(s)? Every customer will see the sale price.`)) return;
+        saleQuery = `&salePrice=${salePrice}&saleDays=${saleDays}`;
+      }
+      await apiCall(`${PM_URL}/${r.id}/resolve?approved=${approved}&note=${encodeURIComponent(note)}${saleQuery}`, {
         method: "PUT",
         headers: { "X-Service-Key": serviceKey }
       });

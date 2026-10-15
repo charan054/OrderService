@@ -37,4 +37,7 @@ public class PriceMatchRequest {
     private String adminNote;
     private Instant createdAt;
     private Instant resolvedAt;
+    // Set when approving also started a sale on the product: the sale price and when it ends.
+    private Double salePrice;
+    private Instant saleEndsAt;
 }

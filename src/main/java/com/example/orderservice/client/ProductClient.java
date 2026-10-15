@@ -39,6 +39,10 @@ public interface ProductClient {
     // ProductService requires X-Service-Key on every catalog-changing call (see its SecurityConfig).
     @PutMapping("/product/updatePrice")
     public Product updateProductPrice(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam Integer id, @RequestParam Double price);
+    // Timed sale price (ProductService validates it is below the regular price and that the end is in the future).
+    @PutMapping("/product/sale")
+    public Product setProductSale(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam Integer id,
+                                  @RequestParam Double price, @RequestParam java.time.Instant to);
     @PutMapping("/product/updateStock")
     public Product updateProductStock(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam Integer id, @RequestParam Integer stock);
 
