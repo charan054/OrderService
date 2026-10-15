@@ -38,7 +38,7 @@ class StaticPageBasicsTest {
 
     @Test
     void storefrontKeepsAddToCartLimitsAndLabels() throws IOException {
-        String shop = Files.readString(STATIC.resolve("shop.html"), StandardCharsets.UTF_8);
+        String shop = Files.readString(STATIC.resolve("js/shop.js"), StandardCharsets.UTF_8);
         assertTrue(shop.contains("aria-label=\"Add ${escapeHtml(p.productName)} to cart\""), "Add button lost its accessible name");
         assertTrue(shop.contains("max=\"${p.productStock}\" step=\"1\""), "quantity input lost its stock cap / whole-number step");
         assertTrue(shop.contains("Math.floor(Number(qtyInput ? qtyInput.value : 1))"), "addToCart no longer rounds to whole units");

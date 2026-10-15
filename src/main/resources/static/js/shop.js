@@ -1,0 +1,3688 @@
+    const BASE_URL = "http://localhost:8083";
+    let customerPhno = null;
+    let products = [];
+    let cart = []; // {productId, name, price, quantity, stock}
+    let wishlistProductIds = new Set();
+    let wishlistItems = []; // the raw wishlist entries (productId, priceWhenAdded)
+    let waitlistProductIds = new Set();
+    // productId -> the moment (ms) a unit held for this customer after a restock email is released again.
+    let waitlistHolds = new Map();
+    let priceDropsByProductId = new Map();
+    let activeTab = "all";
+    const PRODUCTS_PER_PAGE = 12;
+    let currentPage = 1;
+    let allCategories = [];
+    let searchDebounceTimer = null;
+    let modalProductId = null;
+
+    // ---- product links: shop.html#product=12 ----
+    // Entirely client-side. The id in the address bar follows whichever product's details are open, so the URL can be
+    // copied or shared. Someone who arrives on a link before signing in keeps it until the catalog has loaded after
+    // sign-in, then the product opens (or they are told it is gone). Only the product id is ever in the link.
+    function productIdFromHash() {
+      const m = /^#product=(\d{1,9})$/.exec(location.hash);
+      return m ? Number(m[1]) : null;
+    }
+    let deepLinkProductId = productIdFromHash();
+    if (deepLinkProductId !== null) document.getElementById("deepLinkNote").classList.remove("hidden");
+
+    function setProductHash(productId) {
+      try {
+        history.replaceState(null, "", productId === null ? location.pathname + location.search : "#product=" + productId);
+      } catch (e) { /* a sandboxed page may refuse; the link just will not follow the modal */ }
+    }
+
+    function productLink(productId) {
+      return location.origin + location.pathname + "#product=" + productId;
+    }
+
+    function copyProductLink() {
+      if (modalProductId === null) return;
+      const link = productLink(modalProductId);
+      const message = document.getElementById("productLinkMsg");
+      const done = ok => { message.textContent = ok ? "Link copied" : "Couldn't copy - copy the address from your browser's address bar"; };
+      const fallback = () => {
+        const box = document.createElement("input");
+        box.value = link;
+        document.body.appendChild(box);
+        box.select();
+        let ok = false;
+        try { ok = document.execCommand("copy"); } catch (e) { /* falls through to the failure message */ }
+        box.remove();
+        done(ok);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(link).then(() => done(true), fallback);
+      else fallback();
+    }
+
+    // ---- sharing ----
+    // Uses the phone's own share sheet (WhatsApp, messages...) when the browser has one, otherwise copies the link.
+    // Only ids and the page address are ever shared - never a phone number or any account detail.
+    if (navigator.share) document.getElementById("shareProductBtn").style.display = "";
+
+    async function copyText(text) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(text); return true; }
+      } catch (e) { /* fall through to the old way */ }
+      const box = document.createElement("input");
+      box.value = text;
+      document.body.appendChild(box);
+      box.select();
+      let ok = false;
+      try { ok = document.execCommand("copy"); } catch (e) { /* reported as a failure below */ }
+      box.remove();
+      return ok;
+    }
+
+    async function shareOrCopy(data, messageEl) {
+      const say = text => { if (messageEl) messageEl.textContent = text; };
+      if (navigator.share) {
+        try { await navigator.share(data); return; }
+        catch (e) { if (e && e.name === "AbortError") return; /* anything else: copy instead */ }
+      }
+      say(await copyText(data.url) ? "Link copied" : "Couldn't copy - copy the address from your browser's address bar");
+    }
+
+    function shareProduct() {
+      const product = products.find(p => p.productId === modalProductId);
+      if (!product) return;
+      shareOrCopy({ title: product.productName, text: `${product.productName} - ₹${Number(product.productPrice).toFixed(2)} at Charan Mart`,
+                    url: productLink(product.productId) }, document.getElementById("productLinkMsg"));
+    }
+
+    function shareWishlistLink() {
+      const input = document.getElementById("wishlistShareLink");
+      if (input) shareOrCopy({ title: "My wishlist", text: "Have a look at my wishlist on Charan Mart", url: input.value },
+                              document.getElementById("wishlistShareMsg"));
+    }
+
+    // A cart is shared as a link carrying only product ids (shop.html#cart=1,2,3). Opening it adds the in-stock
+    // ones, quantity 1 each, once the opener is signed in - the same path "Add all to my cart" on a shared wishlist uses.
+    function shareCart() {
+      if (!cart.length) return;
+      const ids = [...new Set(cart.map(item => item.productId))].slice(0, 30);
+      shareOrCopy({ title: "My cart", text: `${ids.length} item${ids.length === 1 ? "" : "s"} from Charan Mart`,
+                    url: location.origin + location.pathname + "#cart=" + ids.join(",") }, document.getElementById("cartShareMsg"));
+    }
+
+    function takeSharedCartFromHash() {
+      const m = /^#cart=(\d{1,9}(?:,\d{1,9}){0,29})$/.exec(location.hash);
+      if (!m) return false;
+      const ids = [...new Set(m[1].split(",").map(Number))];
+      try { localStorage.setItem("pendingCartAdds", JSON.stringify(ids)); } catch (e) { return false; }
+      try { history.replaceState(null, "", location.pathname + location.search); } catch (e) { /* harmless if refused */ }
+      return true;
+    }
+    takeSharedCartFromHash();
+    window.addEventListener("hashchange", () => {
+      if (takeSharedCartFromHash() && customerToken) applyPendingSharedItems();
+    });
+
+    // Opens the linked product once the catalog is in. A link to something that is not on sale any more is dropped with a note.
+    function applyProductDeepLink() {
+      if (deepLinkProductId === null) return;
+      const id = deepLinkProductId;
+      deepLinkProductId = null;
+      if (products.some(p => p.productId === id)) {
+        openProductModal(id);
+        return;
+      }
+      setProductHash(null);
+      const note = document.getElementById("cartNote");
+      const message = "The product in that link isn't available any more";
+      note.textContent = note.classList.contains("hidden") || !note.textContent ? message : note.textContent + " · " + message;
+      note.classList.remove("hidden");
+    }
+
+    window.addEventListener("hashchange", () => {
+      const id = productIdFromHash();
+      if (id === null) {
+        if (modalProductId !== null) closeProductModal();
+      } else if (!customerToken || !products.length) {
+        deepLinkProductId = id;
+      } else if (id !== modalProductId && products.some(p => p.productId === id)) {
+        openProductModal(id);
+      }
+    });
+    let ratingsByProductId = new Map();
+
+    // Verified storefront session (see CustomerAuthService): sent as X-Customer-Token on every call. Every
+    // endpoint holding one customer's own data requires it, so a 401 back means the session expired or was
+    // revoked - drop it and ask the customer to sign in again.
+    let customerToken = null;
+
+    // ---- toasts and in-page dialogs ----
+    // alert() becomes a non-blocking toast; the browser's confirm and prompt become askConfirm()/askText(), which return promises
+    // (callers await them) and show a themed dialog instead of the browser's.
+    function showToast(message, kind) {
+      let box = document.getElementById("toastBox");
+      if (!box) { box = document.createElement("div"); box.id = "toastBox"; box.setAttribute("aria-live", "polite"); document.body.appendChild(box); }
+      const text = String(message == null ? "" : message);
+      const type = kind || (/could not|couldn.t|cannot|can.t|failed|error|invalid|not valid|enter a|please enter|only \d|expired|blocked|refused|wrong/i.test(text) ? "error"
+        : /placed|saved|sent|thanks|added|removed|requested|withdrawn|copied|done|success|booked|updated/i.test(text) ? "ok" : "");
+      const toast = document.createElement("div");
+      toast.className = "toast" + (type ? " " + type : "");
+      toast.setAttribute("role", "status");
+      toast.textContent = text;
+      const close = () => { if (toast.parentNode) toast.parentNode.removeChild(toast); };
+      toast.addEventListener("click", close);
+      box.appendChild(toast);
+      setTimeout(close, Math.min(10000, 3500 + text.length * 40));
+    }
+    window.alert = function (message) { showToast(message); };
+
+    let dialogQueue = Promise.resolve();
+    function openDialog(message, withInput, defaultValue, okLabel) {
+      const run = () => new Promise(resolve => {
+        const overlay = document.createElement("div");
+        overlay.className = "dlg-overlay";
+        overlay.innerHTML = `<div class="dlg-box" role="dialog" aria-modal="true"><div class="dlg-msg"></div>
+          ${withInput ? `<input type="text" class="dlg-input" />` : ""}
+          <div class="dlg-actions"><button type="button" class="secondary dlg-cancel">Cancel</button><button type="button" class="dlg-ok"></button></div></div>`;
+        overlay.querySelector(".dlg-msg").textContent = String(message);
+        overlay.querySelector(".dlg-ok").textContent = okLabel;
+        const input = overlay.querySelector(".dlg-input");
+        if (input) input.value = defaultValue == null ? "" : String(defaultValue);
+        const previous = document.activeElement;
+        const finish = value => { document.removeEventListener("keydown", onKey, true); overlay.remove(); if (previous && previous.focus) { try { previous.focus(); } catch (e) {} } resolve(value); };
+        const accept = () => finish(withInput ? input.value : true);
+        const cancel = () => finish(withInput ? null : false);
+        function onKey(e) {
+          if (e.key === "Escape") { e.preventDefault(); cancel(); }
+          else if (e.key === "Enter" && (withInput || e.target === overlay.querySelector(".dlg-ok") || !e.target.matches("button"))) { e.preventDefault(); accept(); }
+        }
+        overlay.querySelector(".dlg-ok").addEventListener("click", accept);
+        overlay.querySelector(".dlg-cancel").addEventListener("click", cancel);
+        overlay.addEventListener("mousedown", e => { if (e.target === overlay) cancel(); });
+        document.addEventListener("keydown", onKey, true);
+        document.body.appendChild(overlay);
+        (input || overlay.querySelector(".dlg-ok")).focus();
+        if (input) input.select();
+      });
+      const next = dialogQueue.then(run);
+      dialogQueue = next.catch(() => {});
+      return next;
+    }
+    function askConfirm(message) { return openDialog(message, false, null, "OK"); }
+    function askText(message, defaultValue) { return openDialog(message, true, defaultValue, "OK"); }
+
+    async function authFetch(url, options = {}) {
+      const headers = new Headers(options.headers || {});
+      if (customerToken) headers.set("X-Customer-Token", customerToken);
+      const response = await fetch(url, { ...options, headers });
+      if (response.status === 401 && customerToken) {
+        endSession("Your session has expired. Please sign in again.");
+      }
+      return response;
+    }
+
+    // Header chip with the wallet (store credit - gift cards are redeemed into it) and loyalty points, so the
+    // balance is visible without opening My account. Click it to jump there (gift card redeem lives there).
+    let walletPoints = null;
+    function showAccountInfo() {
+      const wallet = customerPhno
+        ? ` <button class="secondary" id="walletChip" onclick="showTab('account')" title="Store credit and gift card balance - open My account">`
+          + `Wallet ₹${storeCreditBalance.toFixed(2)}${walletPoints === null ? "" : " · " + walletPoints + " pts"}</button>`
+        : "";
+      document.getElementById("accountInfo").innerHTML = customerPhno
+        ? `<span class="signed-in">Signed in as ${customerPhno}</span>${wallet} <button class="secondary" onclick="logout()">Log out</button>`
+        : "";
+    }
+
+    // ---- Cart persistence ----
+    // The cart is saved per phone number in localStorage on every change, so a refresh, accidental tab close or
+    // logout/login doesn't empty it. Saving only starts once the saved copy has been restored (cartPersistReady),
+    // otherwise the first empty render after a page load would overwrite it.
+    let cartPersistReady = false;
+    const cartStorageKey = () => `shopCart_${customerPhno}`;
+
+    function saveCart() {
+      if (!cartPersistReady || !customerPhno) return;
+      try {
+        if (cart.length) localStorage.setItem(cartStorageKey(), JSON.stringify(cart));
+        else localStorage.removeItem(cartStorageKey());
+      } catch (e) { /* storage full/blocked - the cart just won't persist */ }
+      scheduleServerCartSave();
+    }
+
+    // The same cart also goes to the server (just product ids + quantities) so it follows the customer to another
+    // browser or device. Debounced so a burst of +/- clicks is one request; failures are ignored because the
+    // localStorage copy above still works on its own.
+    let serverCartTimer = null;
+    function scheduleServerCartSave() {
+      clearTimeout(serverCartTimer);
+      const phno = customerPhno;
+      const lines = cart.map(item => ({ productId: item.productId, quantity: item.quantity }));
+      serverCartTimer = setTimeout(() => {
+        if (!customerToken) return;
+        authFetch(`${BASE_URL}/savedcart?phno=${encodeURIComponent(phno)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(lines)
+        }).catch(() => {});
+      }, 600);
+    }
+
+    // Re-validates the saved lines against the live catalog (current price; dropped if gone or out of stock;
+    // quantity capped at stock) and tells the customer what changed.
+    async function restoreSavedCart() {
+      cartPersistReady = false;
+      let saved = [];
+      try { saved = JSON.parse(localStorage.getItem(cartStorageKey()) || "[]"); } catch (e) { saved = []; }
+      // The server's copy wins when it has one (it is what the customer last changed on any device); the browser's
+      // own copy is only used for a customer with nothing saved on the server yet, or if the server is unreachable.
+      try {
+        const serverResponse = await authFetch(`${BASE_URL}/savedcart?phno=${encodeURIComponent(customerPhno)}`);
+        if (serverResponse.ok) {
+          const serverCart = await serverResponse.json();
+          if (serverCart.lines && serverCart.lines.length) {
+            saved = serverCart.lines.map(l => ({ productId: l.productId, name: "Item #" + l.productId, quantity: l.quantity }));
+          }
+        }
+      } catch (e) { /* fall back to the browser copy */ }
+      const note = document.getElementById("cartNote");
+      note.classList.add("hidden");
+      if (!Array.isArray(saved) || !saved.length) { cartPersistReady = true; await applyPendingSharedItems(); return; }
+      const notes = [];
+      try {
+        const response = await authFetch(`${BASE_URL}/cart/search`);
+        if (!response.ok) throw new Error("catalog unavailable");
+        const catalog = await response.json();
+        const restored = [];
+        saved.forEach(line => {
+          const product = catalog.find(p => p.productId === line.productId);
+          if (!product) { notes.push(`${line.name} is no longer available`); return; }
+          if (product.productStock <= 0) { notes.push(`${product.productName} is out of stock`); return; }
+          const quantity = Math.min(Math.max(1, Math.floor(Number(line.quantity)) || 1), product.productStock);
+          if (quantity < line.quantity) notes.push(`${product.productName} reduced to ${quantity} (stock)`);
+          if (line.price !== undefined && product.productPrice !== line.price) notes.push(`${product.productName} price is now ₹${product.productPrice}`);
+          restored.push({ productId: product.productId, name: product.productName, price: product.productPrice, quantity });
+        });
+        cart = restored;
+      } catch (e) {
+        cart = saved.filter(l => l.price !== undefined); // catalog unreachable: keep lines that carry a price (browser copy); checkout re-validates server-side anyway
+      }
+      cartPersistReady = true;
+      renderCart();
+      if (cart.length) notes.unshift("Your saved cart was restored");
+      if (notes.length) {
+        note.textContent = notes.join(" · ");
+        note.classList.remove("hidden");
+      }
+      await applyPendingSharedItems();
+    }
+
+    // wishlist.html ("Add all to my cart" on someone's shared wishlist) leaves product ids under pendingCartAdds in
+    // localStorage and sends the visitor here; once signed in, the in-stock ones not already in the cart go in with
+    // quantity 1. The key is removed first so a reload can never add them twice.
+    async function applyPendingSharedItems() {
+      let ids = [];
+      try {
+        ids = JSON.parse(localStorage.getItem("pendingCartAdds") || "[]");
+        localStorage.removeItem("pendingCartAdds");
+      } catch (e) { return; }
+      ids = Array.isArray(ids) ? ids.filter(id => Number.isInteger(id)) : [];
+      if (!ids.length) return;
+      try {
+        const response = await authFetch(`${BASE_URL}/cart/search`);
+        if (!response.ok) return;
+        const catalog = await response.json();
+        let added = 0;
+        ids.forEach(id => {
+          const product = catalog.find(p => p.productId === id);
+          if (!product || product.productStock <= 0 || cart.some(item => item.productId === id)) return;
+          cart.push({ productId: product.productId, name: product.productName, price: product.productPrice, quantity: 1 });
+          added++;
+        });
+        if (!added) return;
+        renderCart();
+        const note = document.getElementById("cartNote");
+        const message = `${added} item${added === 1 ? "" : "s"} from the shared link added to your cart`;
+        note.textContent = note.classList.contains("hidden") || !note.textContent ? message : note.textContent + " · " + message;
+        note.classList.remove("hidden");
+      } catch (e) { /* the shared list is still on its own page; nothing is lost */ }
+    }
+
+    function logout() {
+      if (customerToken) {
+        fetch(`${BASE_URL}/customer/logout`, { method: "POST", headers: { "X-Customer-Token": customerToken } })
+          .catch(() => {});
+      }
+      endSession();
+    }
+
+    // Clears the session locally (and shows why, if given) without calling the server - used both by logout()
+    // and when the server has already rejected the token.
+    function endSession(message) {
+      customerToken = null;
+      try { localStorage.removeItem("shopCustomerToken"); } catch (e) {}
+      localStorage.removeItem("shopCustomerPhno");
+      // The saved cart stays in localStorage under this phone number so it is still there at the next login;
+      // only the in-memory copy is dropped (and saving is paused until the next restore).
+      cartPersistReady = false;
+      customerPhno = null;
+      cart = [];
+      savedForLater = [];
+      renderLater();
+      storeCreditBalance = 0;
+      walletPoints = null;
+      compareIds.clear();
+      renderCompareBar();
+      document.getElementById("loginSection").classList.remove("hidden");
+      document.getElementById("shopSection").classList.add("hidden");
+      showLoginStep("request");
+      showLoginError(message || "");
+      showAccountInfo();
+    }
+
+    function showLoginError(message) {
+      const errorBox = document.getElementById("loginError");
+      errorBox.textContent = message;
+      errorBox.classList.toggle("hidden", !message);
+    }
+
+    function showLoginStep(step) {
+      document.getElementById("loginStepRequest").classList.toggle("hidden", step !== "request");
+      document.getElementById("loginStepVerify").classList.toggle("hidden", step !== "verify");
+      showLoginError("");
+      if (step === "verify") document.getElementById("loginCode").focus();
+    }
+
+    async function requestLoginCode() {
+      const phno = document.getElementById("loginPhno").value.trim();
+      const email = document.getElementById("loginEmail").value.trim();
+      if (!/^[6-9][0-9]{9}$/.test(phno)) return showLoginError("Enter a valid 10-digit phone number.");
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return showLoginError("Enter a valid email address.");
+      const response = await fetch(`${BASE_URL}/customer/login/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: Number(phno), email })
+      });
+      if (!response.ok) return showLoginError((await response.text()) || "Couldn't send a code. Try again.");
+      // Deliberately vague: a number that's already linked to an email gets its code there, not to what was typed.
+      document.getElementById("loginCodeSentNote").textContent =
+        "We've emailed a 6-digit code. If this number is already linked to an email, the code went to that address instead. It expires in 10 minutes.";
+      document.getElementById("loginCode").value = "";
+      showLoginStep("verify");
+    }
+
+    async function verifyLoginCode() {
+      const phno = document.getElementById("loginPhno").value.trim();
+      const code = document.getElementById("loginCode").value.trim();
+      if (!/^[0-9]{6}$/.test(code)) return showLoginError("Enter the 6-digit code from the email.");
+      const response = await fetch(`${BASE_URL}/customer/login/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: Number(phno), code })
+      });
+      if (!response.ok) return showLoginError((await response.text()) || "That code didn't work.");
+      const session = await response.json();
+      customerToken = session.token;
+      customerPhno = String(session.phno);
+      try { localStorage.setItem("shopCustomerToken", customerToken); } catch (e) {}
+      localStorage.setItem("shopCustomerPhno", customerPhno);
+      enterShop();
+    }
+
+    function toggleTrackOrder() {
+      document.getElementById("loginSection").classList.toggle("hidden");
+      document.getElementById("trackOrderSection").classList.toggle("hidden");
+      document.getElementById("trackOrderError").classList.add("hidden");
+      document.getElementById("trackOrderResult").innerHTML = "";
+    }
+
+    // Placed -> Shipped -> Delivered progress for an order. Cancelled and Returned end the line in red; an order that
+    // is still awaiting its UPI payment starts with that step. timeline (optional, from /cart/{id}/tracking) adds the
+    // date each step was reached. Pure presentation of the status the server already reports.
+    const STEPPER_LABELS = { PENDING_PAYMENT: "Awaiting payment", PLACED: "Placed", SHIPPED: "Shipped", DELIVERED: "Delivered",
+      RETURNED: "Returned", CANCELLED: "Cancelled" };
+
+    function orderStepperHtml(status, timeline) {
+      let steps;
+      if (status === "CANCELLED") steps = ["PLACED", "CANCELLED"];
+      else if (status === "RETURNED") steps = ["PLACED", "SHIPPED", "DELIVERED", "RETURNED"];
+      else if (status === "PENDING_PAYMENT") steps = ["PENDING_PAYMENT", "PLACED", "SHIPPED", "DELIVERED"];
+      else if (status === "PLACED" || status === "SHIPPED" || status === "DELIVERED") steps = ["PLACED", "SHIPPED", "DELIVERED"];
+      else return "";
+      const at = steps.indexOf(status);
+      const bad = status === "CANCELLED" || status === "RETURNED";
+      return `<ol class="stepper" aria-label="Order progress">${steps.map((step, i) => {
+        const reached = i <= at ? (timeline || []).find(e => e.status === step) : null;
+        const when = reached ? `<span class="when">${new Date(reached.timestamp).toLocaleDateString()}</span>` : "";
+        const state = i < at ? "done" : i === at ? "current" + (bad ? " final-bad" : step === "DELIVERED" ? " final-ok" : "") : "todo";
+        const mark = i < at || (i === at && (step === "DELIVERED")) ? "&#10003;" : i === at && bad ? "&#10005;" : "";
+        return `<li class="${state}"${i === at ? ' aria-current="step"' : ""}><span class="dot">${mark}</span>${escapeHtml(STEPPER_LABELS[step])}${when}</li>`;
+      }).join("")}</ol>`;
+    }
+
+    async function lookupOrder() {
+      const phno = document.getElementById("trackPhno").value.trim();
+      const orderId = document.getElementById("trackOrderId").value.trim();
+      const errorBox = document.getElementById("trackOrderError");
+      const resultBox = document.getElementById("trackOrderResult");
+      resultBox.innerHTML = "";
+
+      if (!/^[6-9][0-9]{9}$/.test(phno) || !orderId) {
+        errorBox.textContent = "Enter a valid phone number and an order ID.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+      errorBox.classList.add("hidden");
+
+      const summaryResponse = await fetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/summary?phno=${encodeURIComponent(phno)}`);
+      const order = summaryResponse.ok ? await summaryResponse.json() : null;
+
+      if (!order) {
+        errorBox.textContent = "No order with that ID was found for this phone number.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      const trackingResponse = await fetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/tracking`);
+      const timeline = trackingResponse.ok ? await trackingResponse.json() : [];
+
+      resultBox.innerHTML = `
+        ${orderStepperHtml(order.status, timeline)}
+        <div class="cart-line"><span>Status</span><span>${escapeHtml(order.status)}</span></div>
+        ${order.carrier || order.trackingNumber ? `<div class="cart-line"><span>Shipment</span><span>${order.carrier ? escapeHtml(order.carrier) : ""}${order.carrier && order.trackingNumber ? ", " : ""}${order.trackingNumber ? "tracking " + escapeHtml(order.trackingNumber) : ""}</span></div>` : ""}
+        <div class="cart-line"><span>Total</span><span>₹${order.totalPrice.toFixed(2)}</span></div>
+        <div class="cart-line"><span>Payment</span><span>${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : order.status === "CANCELLED" ? "" : " (unpaid)") : ""}</span></div>
+        ${deliveryEtaLine(order.status, timeline)}
+        ${timeline.map(event => `<div class="cart-line"><span>${escapeHtml(event.status)}</span><span>${new Date(event.timestamp).toLocaleString()}</span></div>`).join("")}
+      `;
+    }
+
+    // A simple estimate, not a real carrier ETA - this system has no logistics/carrier integration to draw a
+    // real one from. Only shown once SHIPPED (an estimate before that would be pure guesswork), and no longer
+    // once the order has actually reached a final state (DELIVERED/CANCELLED/RETURNED) - the real event already
+    // says what happened by then, an estimate would be redundant or wrong.
+    const SHIPPING_ETA_DAYS = 3;
+
+    function deliveryEtaLine(status, timeline) {
+      if (status !== "SHIPPED") return "";
+      const shippedEvent = timeline.find(e => e.status === "SHIPPED");
+      if (!shippedEvent) return "";
+      const eta = new Date(shippedEvent.timestamp);
+      eta.setDate(eta.getDate() + SHIPPING_ETA_DAYS);
+      return `<div class="cart-line"><span>Estimated delivery</span><span>${eta.toLocaleDateString()}</span></div>`;
+    }
+
+    // ---- one-tap rating after delivery ----
+    // The newest delivered order that has no feedback yet (and was not dismissed on this browser) gets a banner with
+    // thumbs up / down. Thumbs up is saved as 5 stars and thumbs down as 1; a thumbs down then offers "Report a
+    // problem". The full star form stays under My account > Rate this order.
+    const rateDismissKey = () => `shopRateDismissed_${customerPhno}`;
+    function dismissedRateIds() {
+      try { return JSON.parse(localStorage.getItem(rateDismissKey()) || "[]"); } catch (e) { return []; }
+    }
+
+    async function loadRatePrompt() {
+      const box = document.getElementById("ratePrompt");
+      box.classList.add("hidden");
+      if (!customerPhno) return;
+      try {
+        const [ordersResponse, feedbackResponse] = await Promise.all([
+          authFetch(`${BASE_URL}/cart/byphno?phno=${encodeURIComponent(customerPhno)}`),
+          authFetch(`${BASE_URL}/feedback/mine?phno=${encodeURIComponent(customerPhno)}`)
+        ]);
+        if (!ordersResponse.ok || !feedbackResponse.ok) return;
+        const rated = new Set((await feedbackResponse.json()).map(f => f.orderId));
+        const skipped = new Set(dismissedRateIds());
+        const order = (await ordersResponse.json())
+          .filter(o => o.status === "DELIVERED" && !rated.has(o.orderId) && !skipped.has(o.orderId))
+          .sort((a, b) => b.orderId - a.orderId)[0];
+        if (!order) return;
+        box.innerHTML = `<strong>How was order #${order.orderId}?</strong>
+          <button class="secondary" style="width:auto; margin:0 6px;" onclick="thumbRate(${order.orderId}, true)" aria-label="Good">&#128077;</button>
+          <button class="secondary" style="width:auto;" onclick="thumbRate(${order.orderId}, false)" aria-label="Not good">&#128078;</button>
+          <button class="secondary" style="width:auto; float:right;" onclick="dismissRatePrompt(${order.orderId})">Not now</button>`;
+        box.classList.remove("hidden");
+      } catch (e) { /* the prompt is optional; My account still has Rate this order */ }
+    }
+
+    function dismissRatePrompt(orderId) {
+      try { localStorage.setItem(rateDismissKey(), JSON.stringify([...dismissedRateIds(), orderId].slice(-50))); } catch (e) {}
+      document.getElementById("ratePrompt").classList.add("hidden");
+    }
+
+    async function thumbRate(orderId, up) {
+      const box = document.getElementById("ratePrompt");
+      const response = await authFetch(`${BASE_URL}/feedback/submit?phno=${encodeURIComponent(customerPhno)}&orderId=${orderId}&rating=${up ? 5 : 1}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't save your feedback. Please try again."); return; }
+      ratedOrderIds.add(orderId);
+      box.innerHTML = up
+        ? `Thanks for the feedback! &#128154;`
+        : `Sorry to hear that. <button class="secondary" style="width:auto; margin-left:6px;" onclick="reportProblem(${orderId})">Tell us what went wrong</button>`;
+      if (up) setTimeout(() => box.classList.add("hidden"), 3000);
+    }
+
+    function enterShop() {
+      loadRatePrompt();
+      loadSavedForLater();
+      restoreSavedCart();
+      document.getElementById("loginSection").classList.add("hidden");
+      document.getElementById("shopSection").classList.remove("hidden");
+      document.getElementById("payerPhno").value = customerPhno;
+      showAccountInfo();
+      loadProducts();
+      loadBundles();
+      loadBuyAgain();
+      refreshNotificationBadge();
+      loadDeliveryTerms();
+      loadCancelPolicy();
+      loadReturnPolicy();
+      loadWishlist();
+      loadWaitlist();
+      loadSearchWatches();
+      loadSlotAvailability();
+      loadLoyaltyBalance();
+      loadCouponSuggestions();
+      loadCodEligibility();
+      loadStoreCredit();
+      loadAddressOptions();
+    }
+
+    async function loadWaitlist() {
+      const response = await authFetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const waitlist = response.ok ? await response.json() : [];
+      waitlistProductIds = new Set(waitlist.map(item => item.productId));
+      waitlistHolds = new Map(waitlist.filter(item => item.heldUntil).map(item => [item.productId, Date.parse(item.heldUntil)]));
+      renderProducts();
+    }
+
+    // "One is held for you - 12:34 left" on the product card while a restock hold is running; ticks every second and
+    // drops itself (and refreshes the waitlist) when the time is up.
+    function holdText(until) {
+      const left = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+      return `One is held for you - ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")} left`;
+    }
+
+    // Strike-through regular price and a "Sale" badge (with the end date) while ProductService says a sale is live.
+    function saleHtml(p) {
+      if (!p.onSale || p.regularPrice == null) return "";
+      const ends = p.saleEndsAt ? ` until ${new Date(p.saleEndsAt).toLocaleDateString(undefined, { day: "numeric", month: "short" })}` : "";
+      return `<span class="sale-was">₹${p.regularPrice}</span><span class="sale-badge">Sale${escapeHtml(ends)}</span>`;
+    }
+
+    function holdBadgeHtml(productId) {
+      const until = waitlistHolds.get(productId);
+      if (!until || until <= Date.now()) return "";
+      return `<div class="price-drop-badge hold-badge" data-until="${until}">${holdText(until)}</div>`;
+    }
+
+    setInterval(() => {
+      let expired = false;
+      document.querySelectorAll(".hold-badge").forEach(badge => {
+        const until = Number(badge.dataset.until);
+        if (until <= Date.now()) { badge.remove(); expired = true; }
+        else badge.textContent = holdText(until);
+      });
+      if (expired && customerPhno) loadWaitlist();
+    }, 1000);
+
+    async function toggleWaitlist(productId) {
+      const isWaitlisted = waitlistProductIds.has(productId);
+      const query = `phno=${encodeURIComponent(customerPhno)}&productId=${encodeURIComponent(productId)}`;
+      if (isWaitlisted) {
+        await authFetch(`${BASE_URL}/waitlist/self/remove?${query}`, { method: "DELETE" });
+      } else {
+        await authFetch(`${BASE_URL}/waitlist/self/add?${query}`, { method: "POST" });
+      }
+      await loadWaitlist();
+    }
+
+    async function loadAddressOptions() {
+      const response = await authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const addresses = response.ok ? await response.json() : [];
+      const select = document.getElementById("shippingAddressId");
+      select.innerHTML = `<option value="">No saved address selected</option>` +
+        addresses.map(a => `<option value="${a.id}" data-pincode="${escapeHtml(a.pincode || "")}">${escapeHtml(a.label || a.city)} - ${escapeHtml(a.line1)}${a.isDefault ? " (default)" : ""}</option>`).join("");
+      const defaultAddress = addresses.find(a => a.isDefault);
+      if (defaultAddress) select.value = defaultAddress.id;
+      checkAddressPincode();
+    }
+
+    // Tells the buyer up front whether the chosen address's pincode is one we deliver to (and how long it takes),
+    // instead of only failing at checkout. Informational only - the server re-checks when the order is placed.
+    async function checkAddressPincode() {
+      const hint = document.getElementById("pincodeHint");
+      const opt = document.getElementById("shippingAddressId").selectedOptions[0];
+      const pincode = opt && opt.dataset ? opt.dataset.pincode : "";
+      hint.style.color = "var(--muted)";
+      zoneFee = null;
+      if (!pincode) { hint.textContent = ""; renderCart(); return; }
+      try {
+        const r = await fetch(`${BASE_URL}/pincodes/check?pincode=${encodeURIComponent(pincode)}`);
+        if (!r.ok) { hint.textContent = ""; return; }
+        const d = await r.json();
+        zoneFee = d.serviceable && d.deliveryFee !== null && d.deliveryFee !== undefined ? d.deliveryFee : null;
+        renderCart();
+        if (!d.serviceable) {
+          hint.style.color = "#c0392b";
+          hint.textContent = `Sorry, we don't deliver to ${pincode} yet.`;
+        } else {
+          hint.textContent = d.deliveryDays ? `Delivers to ${pincode} in about ${d.deliveryDays} day(s).` : "";
+        }
+      } catch (e) { hint.textContent = ""; }
+    }
+
+    // Header toggle: flips between light and dark, remembering the choice (falls back to the OS setting until
+    // the visitor has chosen once).
+    function currentTheme() {
+      const explicit = document.documentElement.getAttribute("data-theme");
+      if (explicit) return explicit;
+      return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    }
+
+    function updateThemeIcon() {
+      const btn = document.getElementById("themeToggle");
+      if (btn) btn.innerHTML = currentTheme() === "dark" ? "&#9728;&#65039;" : "&#127769;";
+    }
+
+    function toggleTheme() {
+      const next = currentTheme() === "dark" ? "light" : "dark";
+      document.documentElement.setAttribute("data-theme", next);
+      try { localStorage.setItem("theme", next); } catch (e) {}
+      updateThemeIcon();
+    }
+
+    let couponSuggestions = [];
+
+    // Coupons this customer could use right now (server-side filtered: active, unexpired, not used up). Shown as
+    // tap-to-apply chips under the coupon field, each with the estimated saving on the current cart.
+    // The banner at the top of the shop: a greeting plus whatever is genuinely on right now - the best coupon, the
+    // free-delivery threshold, how many new arrivals there are, and the customer's points. Chips only show for real data.
+    function heroOffers() {
+      const chips = [];
+      if (couponSuggestions && couponSuggestions.length) {
+        const c = couponSuggestions[0];
+        chips.push({ html: `Use <span class="code">${escapeHtml(c.code)}</span> &middot; ${Number(c.discountPercent)}% off` });
+      }
+      const freeAbove = typeof myFreeAbove === "function" ? myFreeAbove() : 0;
+      if (freeAbove < 0) chips.push({ html: "Free delivery on every order" });
+      else if (freeAbove > 0 && deliveryTerms && deliveryTerms.fee > 0) chips.push({ html: `Free delivery above &#8377;${freeAbove.toFixed(0)}` });
+      const fresh = (products || []).filter(isNewProduct).length;
+      if (fresh > 0) chips.push({ html: `${fresh} new arrival${fresh === 1 ? "" : "s"} &rarr;`, tab: "new" });
+      if (walletPoints) chips.push({ html: `${walletPoints} loyalty points to spend`, tab: "account" });
+      return chips;
+    }
+    function renderHero() {
+      const hero = document.getElementById("storeHero");
+      if (!hero) return;
+      const chips = heroOffers();
+      hero.classList.toggle("hidden", !customerPhno);
+      hero.querySelector(".hero-chips").innerHTML = chips.map(c => c.tab
+        ? `<button type="button" class="hero-chip" onclick="showTab('${c.tab}')">${c.html}</button>`
+        : `<span class="hero-chip">${c.html}</span>`).join("");
+    }
+
+    async function loadCouponSuggestions() {
+      try {
+        const response = await authFetch(`${BASE_URL}/coupons/available?phno=${encodeURIComponent(customerPhno)}`);
+        couponSuggestions = response.ok ? await response.json() : [];
+      } catch (e) {
+        couponSuggestions = [];
+      }
+      renderCouponSuggestions();
+      renderHero();
+    }
+
+    // The best coupon (suggestions arrive highest discount first) is filled in automatically once the cart has
+    // something in it, unless the customer has typed their own code or tapped a chip to remove/replace it - from then
+    // on their choice stands until the order is placed.
+    let couponAutoApplyOff = false;
+    let couponAutoApplied = null;
+
+    function renderCouponSuggestions() {
+      const box = document.getElementById("couponSuggestions");
+      if (!box) return;
+      const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      const input = document.getElementById("couponCode");
+      if (!couponAutoApplyOff && total > 0 && !input.value.trim() && couponSuggestions.length) {
+        input.value = couponSuggestions[0].code;
+        couponAutoApplied = couponSuggestions[0].code;
+      }
+      const applied = input.value.trim().toUpperCase();
+      const autoNote = couponAutoApplied && applied === couponAutoApplied && !couponAutoApplyOff
+        ? `<p class="meta" style="flex-basis:100%;">Best coupon applied automatically - tap it to remove.</p>` : "";
+      box.innerHTML = autoNote + couponSuggestions.map(c => {
+        const saving = total > 0 ? ` (save ₹${(total * c.discountPercent / 100).toFixed(2)})` : "";
+        const expiry = c.expiryDate ? `, until ${new Date(c.expiryDate).toLocaleDateString()}` : "";
+        return `<button type="button" class="${applied === c.code ? "applied" : ""}" onclick="applySuggestedCoupon('${escapeHtml(c.code)}')" title="${c.discountPercent}% off${expiry}">${escapeHtml(c.code)} &middot; ${c.discountPercent}% off${saving}</button>`;
+      }).join("");
+    }
+
+    function applySuggestedCoupon(code) {
+      couponAutoApplyOff = true; // the customer is choosing now - stop second-guessing them
+      const input = document.getElementById("couponCode");
+      input.value = input.value.trim().toUpperCase() === code ? "" : code;
+      renderCouponSuggestions();
+    }
+
+    updateThemeIcon();
+
+    // Store credit balance for the checkout field (hidden while the balance is zero).
+    let storeCreditBalance = 0;
+    async function loadStoreCredit() {
+      storeCreditBalance = 0;
+      try {
+        const response = await authFetch(`${BASE_URL}/storecredit/byphno?phno=${encodeURIComponent(customerPhno)}`);
+        if (response.ok) storeCreditBalance = (await response.json()).balance;
+      } catch (e) { /* treat as none */ }
+      document.getElementById("storeCreditBox").classList.toggle("hidden", !(storeCreditBalance > 0));
+      showAccountInfo();
+      document.getElementById("storeCreditHint").textContent = storeCreditBalance > 0
+        ? `You have ₹${storeCreditBalance.toFixed(2)} store credit. It comes off after any coupon and points.` : "";
+    }
+
+    // For an online order: refund to store credit (instant, no PIN) or back to PhonePe (needs the PIN). Returns
+    // the extra query params to send, or null if the customer backed out.
+    // noPin: the refund is paid by the shop when the goods are received, so only the destination is asked.
+    async function refundChoiceParams(noPin) {
+      const toCredit = await askConfirm("Refund to your Charan Mart store credit instead of PhonePe?\n\n"
+        + "OK = store credit (instant, no PIN needed)\nCancel = back to your PhonePe account");
+      if (toCredit) return { refundTo: "STORE_CREDIT" };
+      // Optionally send part of it to store credit and the rest back to PhonePe.
+      const split = await askText("Send part of the refund to store credit and the rest to PhonePe?\nEnter the percent for store credit (1-99), or leave blank for all to PhonePe:", "");
+      const percent = split === null ? 0 : Number(split.trim());
+      const refundTo = Number.isInteger(percent) && percent >= 1 && percent <= 99 ? { refundTo: "SPLIT:" + percent } : {};
+      if (noPin) return refundTo;
+      const pin = await askText("Enter your PhonePe PIN to confirm the refund:");
+      if (!pin) return null;
+      return { payerPhno: customerPhno, payerPin: pin, ...refundTo };
+    }
+
+    async function loadLoyaltyBalance() {
+      const response = await authFetch(`${BASE_URL}/loyalty/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const hint = document.getElementById("loyaltyHint");
+      if (!response.ok) {
+        hint.textContent = "";
+        return;
+      }
+      const account = await response.json();
+      walletPoints = account.pointsBalance;
+      myTier = account.tier || "BRONZE";
+      renderHero();
+      renderCart();
+      showAccountInfo();
+      const expires = account.pointsBalance > 0 && account.pointsExpireAt
+        ? ` They expire on ${new Date(account.pointsExpireAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })} unless you use them.` : "";
+      hint.textContent = `You have ${account.pointsBalance} loyalty points (1 point = ₹1).${expires}`;
+    }
+
+    let deliveryTerms = { fee: 0, freeAbove: 0 };
+    let myTier = "BRONZE";   // from the loyalty account; picks the customer's own free-delivery threshold
+    let zoneFee = null;   // the chosen address's pincode fee, replacing deliveryTerms.fee (null = no special fee)
+    // Same rule as the server (OrderService.freeAboveFor): -1 = always free, 0 = no threshold, else the amount.
+    function myFreeAbove() {
+      const silver = deliveryTerms.freeAboveSilver || 0, gold = deliveryTerms.freeAboveGold || 0;
+      const t = myTier === "GOLD" ? (gold !== 0 ? gold : silver) : myTier === "SILVER" ? silver : 0;
+      if (t === 0) return deliveryTerms.freeAbove;
+      if (t < 0) return -1;
+      return deliveryTerms.freeAbove > 0 ? Math.min(t, deliveryTerms.freeAbove) : t;
+    }
+
+    async function loadDeliveryTerms() {
+      try {
+        const response = await fetch(`${BASE_URL}/cart/deliveryfee`);
+        if (response.ok) { deliveryTerms = await response.json(); renderCart(); renderHero(); }
+      } catch (e) { /* no fee preview - the server still charges it */ }
+    }
+
+    // Until the first catalog response arrives the grid shows shimmering placeholders, not "no products".
+    let catalogLoaded = false;
+    function skeletonCardsHtml(n) {
+      return Array.from({ length: n }, () => `<div class="skeleton-card" aria-hidden="true"><div class="sk-img"></div>
+        <div class="sk-body"><div class="sk-line"></div><div class="sk-line short"></div><div class="sk-line"></div></div></div>`).join("");
+    }
+
+    // A friendly tile for a product with no usable photo: an emoji for what it looks like plus a colour taken from its
+    // category, so a catalog without pictures still reads as a shop and not a list of "No image" boxes.
+    function placeholderGlyph(name, category) {
+      const t = `${name || ""} ${category || ""}`.toLowerCase();
+      // Most specific first: the first matching rule wins, so "face wash" gets a bottle before "wash" gets a sponge.
+      const rules = [[/soap|cinthol|lifebuoy|lux|dettol|hand ?wash/, "&#129532;"], [/shampoo|conditioner|hair|clinic|dove|loreal|meera/, "&#129524;"],
+        [/face|cream|lotion|skin|cetaphil|moistur|sunscreen/, "&#129524;"], [/tooth|paste|brush/, "&#129701;"], [/lipstick|makeup|perfume|deo/, "&#128132;"],
+        [/detergent|clean|mop|broom|dish|surf|vim|harpic|wash/, "&#129529;"], [/tissue|paper|napkin|roll/, "&#129531;"],
+        [/dal|rice|atta|flour|grain|pulse|moong|wheat|sugar|salt/, "&#127806;"], [/oil|ghee|butter|milk|curd|paneer|cheese/, "&#129371;"],
+        [/chocolate|candy|sweet|cake|ice ?cream/, "&#127851;"], [/chip|snack|kurkure|biscuit|cookie|namkeen|popcorn/, "&#127871;"],
+        [/laptop|phone|gadget|realme|tv|camera|charger|earphone|headphone|mouse|keyboard/, "&#128187;"], [/book|pen|notebook|stationery/, "&#128214;"],
+        [/tea|coffee/, "&#9749;"], [/water|bottle|drink|juice|soda|cola|beverage/, "&#129380;"],
+        [/mango|fruit|apple|banana|jelly|orange|grape/, "&#127823;"], [/vegetable|tomato|potato|onion|carrot/, "&#129365;"],
+        [/food|meal|ready|instant|noodle|pasta/, "&#127869;"], [/grocer/, "&#129387;"]];
+      const hit = rules.find(([re]) => re.test(t));
+      return hit ? hit[1] : "&#128717;";
+    }
+    function placeholderTileHtml(name, category) {
+      let h = 0;
+      for (const ch of String(category || name || "x")) h = (h * 31 + ch.charCodeAt(0)) % 360;
+      return `<span class="ph-glyph" style="--ph-h:${h}">${placeholderGlyph(name, category)}</span><span class="ph-name">${escapeHtml(name || "")}</span>`;
+    }
+    // Used by <img onerror/onload>: a broken link, or a 1x1 stand-in picture, becomes the placeholder tile.
+    function imageFallback(img) {
+      const box = img.parentElement;
+      if (!box || box.classList.contains("placeholder")) return;
+      let h = 0;
+      for (const ch of String(img.dataset.cat || img.dataset.name || "x")) h = (h * 31 + ch.charCodeAt(0)) % 360;
+      box.classList.add("placeholder");
+      box.style.setProperty("--ph-h", h);
+      box.innerHTML = `<span class="ph-glyph">${placeholderGlyph(img.dataset.name, img.dataset.cat)}</span><span class="ph-name">${escapeHtml(img.dataset.name || "")}</span>`;
+    }
+    function imageLoaded(img) {
+      if (img.naturalWidth < 16 || img.naturalHeight < 16) imageFallback(img);
+    }
+
+    async function loadProducts() {
+      const name = document.getElementById("searchName").value.trim();
+      const category = document.getElementById("searchCategory").value;
+      const query = new URLSearchParams();
+      if (name) query.set("name", name);
+      if (category) query.set("category", category);
+
+      const response = await authFetch(`${BASE_URL}/cart/search?${query.toString()}`);
+      products = response.ok ? await response.json() : [];
+      catalogLoaded = true;
+      currentPage = 1;
+      renderProducts();
+      renderHero();
+
+      if (!name && !category) {
+        refreshCategoryOptions();
+      }
+      const ratingsLoaded = loadRatings();
+      if (response.ok) ratingsLoaded.catch(() => {}).then(applyProductDeepLink);
+    }
+
+    async function loadRatings() {
+      if (!products.length) return;
+      // Chunked: a big catalog would otherwise put thousands of ids in one query string (URLs have a length limit).
+      const RATINGS_CHUNK = 50;
+      const chunks = [];
+      for (let i = 0; i < products.length; i += RATINGS_CHUNK) chunks.push(products.slice(i, i + RATINGS_CHUNK));
+      const results = await Promise.all(chunks.map(async chunk => {
+        const idsQuery = chunk.map(p => `productIds=${p.productId}`).join("&");
+        const response = await authFetch(`${BASE_URL}/cart/ratings?${idsQuery}`);
+        return response.ok ? await response.json() : [];
+      }));
+      ratingsByProductId = new Map(results.flat().map(r => [r.productId, r]));
+      renderProducts();
+    }
+
+    // "Only 3 left": shown when stock is at or under the product's own low-stock threshold, or 5 if that is smaller (the
+    // dev catalog has thresholds of 0, which would otherwise never warn).
+    function isLowStock(p) {
+      return p.productStock > 0 && p.productStock <= Math.max(5, p.lowStockThreshold || 0);
+    }
+
+    // A product counts as new for this many days after it was first added (createdAt is null for older products).
+    const NEW_PRODUCT_DAYS = 14;
+
+    function isNewProduct(p) {
+      const added = p.createdAt ? Date.parse(p.createdAt) : NaN;
+      return !isNaN(added) && Date.now() - added < NEW_PRODUCT_DAYS * 24 * 60 * 60 * 1000;
+    }
+
+    function stockLabelHtml(p) {
+      if (p.productStock <= 0) return "out of stock";
+      return isLowStock(p)
+        ? `<span class="low-stock-badge">Only ${p.productStock} left</span>`
+        : p.productStock + " in stock";
+    }
+
+    function starsFor(averageRating) {
+      const rounded = Math.round(averageRating);
+      return "&#9733;".repeat(rounded) + "&#9734;".repeat(5 - rounded);
+    }
+
+    function refreshCategoryOptions() {
+      buildSearchIndex();
+      allCategories = [...new Set(products.map(p => p.productCategory).filter(Boolean))].sort();
+      const select = document.getElementById("searchCategory");
+      const current = select.disabled ? "" : select.value;
+      select.innerHTML = `<option value="">All categories</option>` +
+        allCategories.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join("");
+      select.value = current;
+      select.disabled = false;
+    }
+
+    // ---- search suggestions and "did you mean" ----
+    // Built from the unfiltered catalog (see refreshCategoryOptions), so it works without any extra request: product
+    // names and category names the customer could be looking for.
+    let searchIndex = [];
+
+    function buildSearchIndex() {
+      const seen = new Set();
+      searchIndex = [];
+      const add = (text, kind) => {
+        const key = text.toLowerCase();
+        if (!text || seen.has(key)) return;
+        seen.add(key);
+        searchIndex.push({ text, kind });
+      };
+      products.forEach(p => add(String(p.productName || "").trim(), "product"));
+      products.forEach(p => add(String(p.productCategory || "").trim(), "category"));
+    }
+
+    // Classic edit distance (insert, delete, substitute, each 1) - small inputs, so the simple version is plenty.
+    function levenshtein(a, b) {
+      if (a === b) return 0;
+      let previous = Array.from({ length: b.length + 1 }, (_, i) => i);
+      for (let i = 1; i <= a.length; i++) {
+        const row = [i];
+        for (let j = 1; j <= b.length; j++) {
+          row[j] = Math.min(previous[j] + 1, row[j - 1] + 1, previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        }
+        previous = row;
+      }
+      return previous[b.length];
+    }
+
+    // Names that start with, or else contain, what has been typed - for the type-ahead list.
+    function searchSuggestions(term, limit = 8) {
+      const t = String(term || "").trim().toLowerCase();
+      if (t.length < 2) return [];
+      const starts = [], contains = [];
+      searchIndex.forEach(entry => {
+        const name = entry.text.toLowerCase();
+        if (name === t) return;
+        if (name.startsWith(t)) starts.push(entry.text);
+        else if (name.includes(t)) contains.push(entry.text);
+      });
+      return starts.concat(contains).slice(0, limit);
+    }
+
+    // Closest names to a term that matched nothing: compares against each whole name and each word of it, and only
+    // accepts a small distance (about a third of the length), so "shampo" finds "Dove Shampoo" but "xyz" finds nothing.
+    function didYouMean(term, limit = 3) {
+      const t = String(term || "").trim().toLowerCase();
+      if (t.length < 3) return [];
+      const allowed = Math.max(1, Math.floor(t.length / 3));
+      const scored = [];
+      searchIndex.forEach(entry => {
+        const name = entry.text.toLowerCase();
+        const candidates = [name, ...name.split(/[^a-z0-9]+/).filter(w => w.length >= 3)];
+        const best = Math.min(...candidates.map(c => levenshtein(t, c)));
+        if (best > 0 && best <= allowed && best < t.length) scored.push({ text: entry.text, best });
+      });
+      return scored.sort((a, b) => a.best - b.best || a.text.localeCompare(b.text)).slice(0, limit).map(s => s.text);
+    }
+
+    function updateSearchSuggestions() {
+      const list = document.getElementById("searchSuggestions");
+      if (!list) return;
+      list.innerHTML = searchSuggestions(document.getElementById("searchName").value)
+        .map(text => `<option value="${escapeHtml(text)}"></option>`).join("");
+    }
+
+    function applySuggestion(text) {
+      document.getElementById("searchName").value = text;
+      updateSearchSuggestions();
+      loadProducts();
+    }
+
+    function noSearchResultsHtml() {
+      const term = document.getElementById("searchName").value.trim();
+      const similar = didYouMean(term);
+      return `<p style="color:var(--muted);">No results for &ldquo;${escapeHtml(term)}&rdquo;.${similar.length
+        ? ` Did you mean ${similar.map(s => `<button class="secondary" style="width:auto; padding:2px 10px; margin:0 4px;" data-s="${escapeHtml(s)}" onclick="applySuggestion(this.dataset.s)">${escapeHtml(s)}</button>`).join("")}?`
+        : " Try a shorter word, or pick a category."}</p>${searchWatchPromptHtml(term)}`;
+    }
+
+    // ---------- "tell me when you stock this" ----------
+    // A search that found nothing can be saved; we email once when a matching product is in stock.
+    let searchWatches = [];
+
+    function normaliseSearchTerm(term) {
+      return term.trim().replace(/\s+/g, " ").toLowerCase();
+    }
+
+    async function loadSearchWatches() {
+      if (!customerPhno) { searchWatches = []; return; }
+      const response = await authFetch(`${BASE_URL}/searchwatch/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      searchWatches = response.ok ? await response.json() : [];
+    }
+
+    function searchWatchPromptHtml(term) {
+      const normalised = normaliseSearchTerm(term);
+      if (!customerPhno || normalised.length < 3 || normalised.length > 60 || document.getElementById("searchCategory").value) return "";
+      const watching = searchWatches.find(w => w.term === normalised);
+      return watching
+        ? `<p style="margin:6px 0;">&#10003; We'll email you when &ldquo;${escapeHtml(normalised)}&rdquo; is in stock.
+             <button class="secondary" style="width:auto; padding:2px 10px;" data-t="${escapeHtml(normalised)}" onclick="removeSearchWatch(this.dataset.t)">Stop watching</button></p>`
+        : `<p style="margin:6px 0;"><button style="width:auto;" data-t="${escapeHtml(normalised)}" onclick="addSearchWatch(this.dataset.t)">Tell me when you stock this</button>
+             <span class="meta">One email when something matching &ldquo;${escapeHtml(normalised)}&rdquo; is in stock.</span></p>`;
+    }
+
+    async function addSearchWatch(term) {
+      const response = await authFetch(`${BASE_URL}/searchwatch/self/add?phno=${encodeURIComponent(customerPhno)}&term=${encodeURIComponent(term)}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't save that search."); return; }
+      await loadSearchWatches();
+      renderProducts();
+    }
+
+    async function removeSearchWatch(term) {
+      await authFetch(`${BASE_URL}/searchwatch/self/remove?phno=${encodeURIComponent(customerPhno)}&term=${encodeURIComponent(term)}`, { method: "DELETE" });
+      await loadSearchWatches();
+      renderProducts();
+      if (document.getElementById("accountView") && !document.getElementById("accountView").classList.contains("hidden")) loadAccountView();
+    }
+
+    function searchWatchRowsHtml() {
+      return searchWatches.map(w => `<div class="order-row">
+          <div><strong>Search: &ldquo;${escapeHtml(w.term)}&rdquo;</strong>
+            <span class="meta">${w.notifiedAt ? "We emailed you when it arrived - remove it, or search it again to re-arm" : "Waiting for a matching product to be in stock"}</span></div>
+          <button class="secondary" style="width:auto;" data-t="${escapeHtml(w.term)}" onclick="removeSearchWatch(this.dataset.t)">Remove</button>
+        </div>`).join("");
+    }
+
+    function onSearchChange() {
+      updateSearchSuggestions();
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(loadProducts, 250);
+    }
+
+    async function loadWishlist() {
+      const [wishlistResponse, priceDropsResponse] = await Promise.all([
+        authFetch(`${BASE_URL}/wishlist/byphno?phno=${encodeURIComponent(customerPhno)}`),
+        authFetch(`${BASE_URL}/wishlist/pricedrops?phno=${encodeURIComponent(customerPhno)}`)
+      ]);
+      const wishlist = wishlistResponse.ok ? await wishlistResponse.json() : [];
+      const priceDrops = priceDropsResponse.ok ? await priceDropsResponse.json() : [];
+
+      wishlistItems = wishlist;
+      wishlistProductIds = new Set(wishlist.map(item => item.productId));
+      priceDropsByProductId = new Map(priceDrops.map(drop => [drop.productId, drop]));
+      document.getElementById("wishlistCount").textContent = wishlistProductIds.size;
+      renderProducts();
+    }
+
+    async function loadWishlistShare() {
+      const box = document.getElementById("wishlistShare");
+      const response = await authFetch(`${BASE_URL}/wishlist/share?phno=${encodeURIComponent(customerPhno)}`);
+      const status = response.ok ? await response.json() : { shared: false };
+      if (status.shared) {
+        const link = `${BASE_URL}/wishlist.html?t=${status.token}`;
+        const views = Number(status.views) || 0;
+        box.innerHTML = `Anyone with this link can view your wishlist (opened ${views} time${views === 1 ? "" : "s"}): <input id="wishlistShareLink" readonly value="${escapeHtml(link)}" style="width:min(100%,420px);" onclick="this.select()" />
+          <button onclick="copyWishlistLink()">Copy</button> ${navigator.share ? '<button onclick="shareWishlistLink()">Share&hellip;</button> ' : ""}<button onclick="stopSharingWishlist()">Stop sharing</button> <span id="wishlistShareMsg"></span>`;
+      } else {
+        box.innerHTML = `<button onclick="startSharingWishlist()">Share my wishlist</button> <span id="wishlistShareMsg"></span>`;
+      }
+    }
+
+    async function startSharingWishlist() {
+      await authFetch(`${BASE_URL}/wishlist/share?phno=${encodeURIComponent(customerPhno)}`, { method: "POST" });
+      loadWishlistShare();
+    }
+
+    async function stopSharingWishlist() {
+      await authFetch(`${BASE_URL}/wishlist/share?phno=${encodeURIComponent(customerPhno)}`, { method: "DELETE" });
+      loadWishlistShare();
+    }
+
+    function copyWishlistLink() {
+      const input = document.getElementById("wishlistShareLink");
+      input.select();
+      const done = () => { document.getElementById("wishlistShareMsg").textContent = "Copied"; };
+      if (navigator.clipboard) navigator.clipboard.writeText(input.value).then(done, () => document.execCommand("copy") && done());
+      else if (document.execCommand("copy")) done();
+    }
+
+    function showTab(tab) {
+      activeTab = tab;
+      document.getElementById("tabAll").classList.toggle("active", tab === "all");
+      document.getElementById("tabNew").classList.toggle("active", tab === "new");
+      document.getElementById("tabWishlist").classList.toggle("active", tab === "wishlist");
+      document.getElementById("tabAccount").classList.toggle("active", tab === "account");
+      document.getElementById("tabNotifications").classList.toggle("active", tab === "notifications");
+      document.getElementById("tabHelp").classList.toggle("active", tab === "help");
+      document.getElementById("tabRecent").classList.toggle("active", tab === "recent");
+      const standalone = tab === "account" || tab === "notifications" || tab === "help";
+      document.getElementById("productGrid").classList.toggle("hidden", standalone);
+      if (standalone) document.getElementById("productPager").classList.add("hidden");
+      currentPage = 1;
+      document.getElementById("wishlistShare").classList.toggle("hidden", tab !== "wishlist");
+      if (tab === "wishlist") loadWishlistShare();
+      document.getElementById("accountView").classList.toggle("hidden", tab !== "account");
+      document.getElementById("notificationsView").classList.toggle("hidden", tab !== "notifications");
+      document.getElementById("helpView").classList.toggle("hidden", tab !== "help");
+      document.querySelector(".search-row").classList.toggle("hidden", standalone);
+      document.querySelector(".filter-row").classList.toggle("hidden", standalone);
+      renderBuyAgain();
+      if (tab === "account") {
+        loadAccountView();
+      } else if (tab === "notifications") {
+        loadNotificationsView();
+      } else if (tab === "help") {
+        loadHelpView();
+      } else {
+        renderProducts();
+      }
+    }
+
+    let helpEntries = null;
+
+    async function loadHelpView() {
+      const view = document.getElementById("helpView");
+      if (helpEntries === null) {
+        view.innerHTML = `<p style="color:var(--muted);">Loading help...</p>`;
+        try {
+          const response = await fetch(`${BASE_URL}/faq`);
+          helpEntries = response.ok ? await response.json() : [];
+        } catch (e) {
+          helpEntries = [];
+        }
+      }
+      view.innerHTML = `<input type="text" id="helpSearch" placeholder="Search help..." oninput="renderHelpEntries()" style="width:100%; margin-bottom:12px;" />
+        <div id="helpList"></div>
+        <p style="margin-top:14px; font-size:13px; color:var(--muted);">Still stuck? Open <strong>My account</strong>, find the order and choose <strong>Report a problem</strong>.</p>`;
+      renderHelpEntries();
+    }
+
+    // Questions and answers are admin-entered plain text, so they are escaped; the search matches either.
+    function renderHelpEntries() {
+      const term = (document.getElementById("helpSearch")?.value || "").trim().toLowerCase();
+      const matches = (helpEntries || []).filter(e => !term || e.question.toLowerCase().includes(term) || e.answer.toLowerCase().includes(term));
+      document.getElementById("helpList").innerHTML = matches.length
+        ? matches.map(e => `<details class="help-entry" style="margin-bottom:8px; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface);">
+            <summary style="cursor:pointer; font-weight:600;">${escapeHtml(e.question)}</summary>
+            <p style="margin-top:8px; white-space:pre-line;">${escapeHtml(e.answer)}</p></details>`).join("")
+        : `<p style="color:var(--muted);">${(helpEntries || []).length ? "No help entries match your search." : "No help entries yet."}</p>`;
+    }
+
+    // Read/unread is remembered per customer in this browser only (nothing is stored on the server).
+    let allNotifications = [];
+    let notificationFilter = "ALL";
+
+    function readNotificationIds() {
+      try { return new Set(JSON.parse(localStorage.getItem("notifRead_" + customerPhno) || "[]")); } catch (e) { return new Set(); }
+    }
+
+    function saveReadNotificationIds(ids) {
+      try { localStorage.setItem("notifRead_" + customerPhno, JSON.stringify([...ids])); } catch (e) { /* not remembered */ }
+    }
+
+    function showUnreadCount() {
+      const read = readNotificationIds();
+      const unread = allNotifications.filter(n => !read.has(n.id)).length;
+      document.getElementById("tabNotifications").textContent = unread ? `My notifications (${unread})` : "My notifications";
+      return unread;
+    }
+
+    // Quietly fetched after sign-in so the tab shows how many are new before it is opened.
+    async function refreshNotificationBadge() {
+      try {
+        const response = await authFetch(`${BASE_URL}/cart/notifications?phno=${encodeURIComponent(customerPhno)}`);
+        if (response.ok) { allNotifications = await response.json(); showUnreadCount(); }
+      } catch (e) { /* the tab still loads on demand */ }
+    }
+
+    function markNotificationRead(id) {
+      const read = readNotificationIds();
+      read.add(id);
+      saveReadNotificationIds(read);
+      renderNotifications();
+    }
+
+    function markAllNotificationsRead() {
+      const read = readNotificationIds();
+      allNotifications.forEach(n => read.add(n.id));
+      saveReadNotificationIds(read);
+      renderNotifications();
+    }
+
+    function setNotificationFilter(filter) {
+      notificationFilter = filter;
+      renderNotifications();
+    }
+
+    function renderNotifications() {
+      const view = document.getElementById("notificationsView");
+      const read = readNotificationIds();
+      const unread = showUnreadCount();
+      const types = [...new Set(allNotifications.map(n => n.eventType))];
+      const filters = ["ALL", "UNREAD", ...types];
+      const shown = allNotifications.filter(n => notificationFilter === "ALL"
+        || (notificationFilter === "UNREAD" ? !read.has(n.id) : n.eventType === notificationFilter));
+      const chips = filters.map(f => `<button class="secondary${f === notificationFilter ? " active" : ""}" style="width:auto; padding:4px 10px;" onclick="setNotificationFilter('${f}')">${f === "ALL" ? "All" : f === "UNREAD" ? "Unread" : escapeHtml(f.charAt(0) + f.slice(1).toLowerCase())}</button>`).join(" ");
+      const bar = allNotifications.length
+        ? `<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">${chips}
+            ${unread ? `<button class="link-button" onclick="markAllNotificationsRead()">Mark all as read</button>` : ""}</div>` : "";
+      view.innerHTML = bar + (shown.length ? shown.map(n => `
+        <div class="order-row" style="${read.has(n.id) ? "" : "border-left:3px solid var(--accent, #2563eb);"}">
+          <div>
+            <strong>${read.has(n.id) ? "" : "&#9679; "}Order #${n.orderId} - ${escapeHtml(n.eventType)}</strong>
+            <span class="meta">${escapeHtml(n.message)}${n.emailed ? " · emailed to you" : ""}</span>
+          </div>
+          <div class="meta">${new Date(n.sentAt).toLocaleString()}
+            ${read.has(n.id) ? "" : `<button class="link-button" onclick="markNotificationRead(${n.id})">Mark read</button>`}</div>
+        </div>
+      `).join("") : `<p style="color:var(--muted);">${allNotifications.length ? "Nothing matches this filter." : "No notifications yet."}</p>`);
+    }
+
+    async function loadNotificationsView() {
+      const view = document.getElementById("notificationsView");
+      view.innerHTML = `<p style="color:var(--muted);">Loading your notifications...</p>`;
+
+      const response = await authFetch(`${BASE_URL}/cart/notifications?phno=${encodeURIComponent(customerPhno)}`);
+      allNotifications = response.ok ? await response.json() : [];
+      notificationFilter = "ALL";
+      renderNotifications();
+    }
+
+    // Refer-a-friend card: the customer's own code to share, and (until they have used one) a box to enter a
+    // friend's code - which only works before their first order.
+    function referralHtml(referral) {
+      if (!referral) return "";
+      return `
+        <h3 style="margin:16px 0 10px;">Refer a friend</h3>
+        <div class="order-row" style="flex-direction:column; align-items:flex-start; gap:6px;">
+          <div>Your code: <strong style="letter-spacing:2px; font-size:1.1em;">${escapeHtml(referral.code)}</strong>
+            <button class="link-button" onclick="copyReferralCode('${escapeHtml(referral.code)}')">Copy</button></div>
+          <div class="meta">When a friend uses it and their first order (₹${referral.minimumOrderAmount} or more) is delivered, you both get ${referral.bonusPoints} points.
+            ${referral.friendsReferred ? `So far: ${referral.friendsReferred} friend(s) joined, ${referral.friendsRewarded} rewarded (${referral.pointsEarned} points earned).` : ""}</div>
+          ${referral.usedAFriendsCode ? `<div class="meta">You joined with a friend's code - your bonus arrives when your first order is delivered.</div>` : `
+          <div style="display:flex; gap:8px; width:100%;">
+            <input type="text" id="friendCode" placeholder="Got a friend's code? (new customers only)" style="margin:0;" />
+            <button style="width:auto;" onclick="applyFriendCode()">Apply</button>
+          </div>
+          <div id="friendCodeMessage" class="error-text hidden"></div>`}
+        </div>`;
+    }
+
+    async function copyReferralCode(code) {
+      try {
+        await navigator.clipboard.writeText(code);
+        alert("Code copied: " + code);
+      } catch {
+        await askText("Copy your referral code:", code);
+      }
+    }
+
+    async function applyFriendCode() {
+      const code = document.getElementById("friendCode").value.trim();
+      const message = document.getElementById("friendCodeMessage");
+      message.classList.remove("hidden");
+      if (!code) {
+        message.textContent = "Enter your friend's code.";
+        return;
+      }
+      const response = await authFetch(`${BASE_URL}/referral/apply?phno=${encodeURIComponent(customerPhno)}&code=${encodeURIComponent(code)}`, { method: "POST" });
+      if (response.ok) {
+        await loadAccountView();
+      } else {
+        message.textContent = (await response.text()) || "That code could not be applied.";
+      }
+    }
+
+    // Order-history filter/paging state; the server does the filtering (GET /cart/history).
+    let orderFilter = { status: "", from: "", to: "", product: "", page: 0 };
+    const ORDER_PAGE_SIZE = 10;
+
+    function setOrderFilter(change) {
+      orderFilter = { ...orderFilter, page: 0, ...change };
+      loadAccountView();
+    }
+
+    function orderHistoryQuery() {
+      let q = `phno=${encodeURIComponent(customerPhno)}&page=${orderFilter.page}&size=${ORDER_PAGE_SIZE}`;
+      if (orderFilter.status) q += `&status=${encodeURIComponent(orderFilter.status)}`;
+      if (orderFilter.from) q += `&from=${orderFilter.from}`;
+      if (orderFilter.to) q += `&to=${orderFilter.to}`;
+      if (orderFilter.product) q += `&product=${encodeURIComponent(orderFilter.product)}`;
+      return q;
+    }
+
+    function orderFilterBarHtml(historyPage) {
+      const statuses = ["", "PLACED", "SHIPPED", "DELIVERED", "CANCELLED", "RETURNED"];
+      const f = orderFilter;
+      const pager = historyPage && historyPage.totalPages > 1 ? `
+        <div class="order-row" style="justify-content:center; gap:12px;">
+          <button class="secondary" style="width:auto;" ${f.page <= 0 ? "disabled" : ""} onclick="setOrderFilter({page: ${f.page - 1}})">Previous</button>
+          <span class="meta">Page ${f.page + 1} of ${historyPage.totalPages}</span>
+          <button class="secondary" style="width:auto;" ${f.page + 1 >= historyPage.totalPages ? "disabled" : ""} onclick="setOrderFilter({page: ${f.page + 1}})">Next</button>
+        </div>` : "";
+      return `
+        <div class="order-row" style="gap:8px; flex-wrap:wrap;">
+          <select onchange="setOrderFilter({status: this.value})" style="width:auto;">
+            ${statuses.map(st => `<option value="${st}" ${f.status === st ? "selected" : ""}>${st ? st.charAt(0) + st.slice(1).toLowerCase() : "All statuses"}</option>`).join("")}
+          </select>
+          <label class="meta">From <input type="date" value="${f.from}" onchange="setOrderFilter({from: this.value})" style="width:auto;" /></label>
+          <label class="meta">To <input type="date" value="${f.to}" onchange="setOrderFilter({to: this.value})" style="width:auto;" /></label>
+          <input type="search" placeholder="Search by product" value="${escapeHtml(f.product)}" aria-label="Search orders by product" onchange="setOrderFilter({product: this.value.trim()})" style="width:auto;" />
+          ${f.status || f.from || f.to || f.product ? `<button class="secondary" style="width:auto;" onclick="setOrderFilter({status: '', from: '', to: '', product: ''})">Clear</button>` : ""}
+          ${historyPage ? `<span class="meta">${historyPage.totalElements} order(s)</span>` : ""}
+        </div>
+        ${pager}`;
+    }
+
+    // "Picked for you" strip at the top of My account. Server picks (see RecommendationService); a card opens the
+    // product details, or adds one to the cart straight away. Names come from the catalog, so they are escaped.
+    function recommendationsHtml(recommendations) {
+      if (!recommendations.length) return "";
+      const anyPersonal = recommendations.some(r => r.reason === "BOUGHT_WITH");
+      return `<h3 style="margin:16px 0 10px;">Picked for you</h3>
+        <p style="font-size:13px; color:var(--muted); margin:-4px 0 10px;">${anyPersonal ? "Based on what you have ordered before." : "Popular with our customers."}</p>
+        <div class="recommendation-strip" style="display:flex; gap:12px; overflow-x:auto; padding-bottom:6px;">
+          ${recommendations.map(r => `<div class="recommendation-card" style="min-width:150px; max-width:170px; border:1px solid var(--border); border-radius:10px; padding:10px; background:var(--surface);">
+            <div style="height:90px; display:flex; align-items:center; justify-content:center; overflow:hidden; border-radius:8px; background:var(--surface-2); color:var(--muted); font-size:12px;">
+              ${r.productImageUrl && /^https?:\/\//i.test(r.productImageUrl)
+                ? `<img src="${escapeHtml(r.productImageUrl)}" alt="${escapeHtml(r.productName)}" style="max-width:100%; max-height:100%;" onerror="this.parentElement.textContent='No image'" />`
+                : "No image"}</div>
+            <div style="font-weight:600; font-size:14px; margin-top:6px;">${escapeHtml(r.productName)}</div>
+            <div style="font-size:12px; color:var(--muted);">${escapeHtml(r.productCategory)}</div>
+            <div style="font-weight:700; margin:4px 0;">&#8377;${Number(r.productPrice).toFixed(2)}</div>
+            <button style="width:auto; padding:4px 10px;" onclick="addRecommendedToCart(${r.productId})">Add</button>
+            <button class="secondary" style="width:auto; padding:4px 10px;" onclick="openProductModal(${r.productId})">Details</button>
+          </div>`).join("")}
+        </div>`;
+    }
+
+    function addRecommendedToCart(productId) {
+      const product = products.find(p => p.productId === productId);
+      if (!product) { alert("That product is not in the current catalog view."); return; }
+      const existing = cart.find(item => item.productId === productId);
+      if (existing) existing.quantity += 1;
+      else cart.push({ productId, name: product.productName, price: product.productPrice, quantity: 1 });
+      renderCart();
+    }
+
+    async function loadAccountView() {
+      const view = document.getElementById("accountView");
+      view.innerHTML = `<p style="color:var(--muted);">Loading your account...</p>`;
+
+      const [profileResponse, ordersResponse, addressesResponse, waitlistResponse] = await Promise.all([
+        authFetch(`${BASE_URL}/customer/profile?phno=${encodeURIComponent(customerPhno)}`),
+        authFetch(`${BASE_URL}/cart/history?${orderHistoryQuery()}`),
+        authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`),
+        authFetch(`${BASE_URL}/waitlist/byphno?phno=${encodeURIComponent(customerPhno)}`)
+      ]);
+      const subscriptionsResponse = await authFetch(`${BASE_URL}/subscriptions/mine?phno=${encodeURIComponent(customerPhno)}`);
+      const mySubscriptions = subscriptionsResponse.ok ? await subscriptionsResponse.json() : [];
+      const feedbackResponse = await authFetch(`${BASE_URL}/feedback/mine?phno=${encodeURIComponent(customerPhno)}`);
+      ratedOrderIds = new Set((feedbackResponse.ok ? await feedbackResponse.json() : []).map(f => f.orderId));
+      const profile = profileResponse.ok ? await profileResponse.json() : null;
+      const historyPage = ordersResponse.ok ? await ordersResponse.json() : null;
+      const orders = historyPage ? historyPage.orders : [];
+      accountOrders = orders;
+      const addresses = addressesResponse.ok ? await addressesResponse.json() : [];
+      const waitlist = waitlistResponse.ok ? await waitlistResponse.json() : [];
+      const referralResponse = await authFetch(`${BASE_URL}/referral/mine?phno=${encodeURIComponent(customerPhno)}`);
+      const referral = referralResponse.ok ? await referralResponse.json() : null;
+      const ticketsResponse = await authFetch(`${BASE_URL}/support/tickets/mine?phno=${encodeURIComponent(customerPhno)}`);
+      const supportTickets = ticketsResponse.ok ? await ticketsResponse.json() : [];
+      const creditResponse = await authFetch(`${BASE_URL}/storecredit/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const storeCredit = creditResponse.ok ? await creditResponse.json() : null;
+      const prefsResponse = await authFetch(`${BASE_URL}/prefs/mine?phno=${encodeURIComponent(customerPhno)}`);
+      const emailPrefs = prefsResponse.ok ? await prefsResponse.json() : null;
+      const birthdayResponse = await authFetch(`${BASE_URL}/customer/birthday?phno=${encodeURIComponent(customerPhno)}`);
+      const myBirthday = birthdayResponse.ok ? (await birthdayResponse.json()).birthday : null;
+      const exchangesResponse = await authFetch(`${BASE_URL}/cart/exchanges/mine?phno=${encodeURIComponent(customerPhno)}`);
+      myExchanges = exchangesResponse.ok ? await exchangesResponse.json() : [];
+      const recommendationsResponse = await authFetch(`${BASE_URL}/cart/recommendations?phno=${encodeURIComponent(customerPhno)}&limit=8`);
+      const recommendations = recommendationsResponse.ok ? await recommendationsResponse.json() : [];
+
+      const profileHtml = profile ? `
+        <div class="account-summary">
+          <div><span class="value">${profile.totalOrders}</span><span class="label">Orders</span></div>
+          <div><span class="value">${profile.wishlistCount}</span><span class="label">Wishlisted</span></div>
+          <div><span class="value">${profile.loyaltyPointsBalance}</span><span class="label">Points</span></div>
+          <div><span class="value">${escapeHtml(profile.loyaltyTier)}</span><span class="label">Tier</span></div>
+          <div><span class="value">${profile.reviewCount}</span><span class="label">Reviews written</span></div>
+        </div>
+      ` : "";
+
+      const ordersHtml = orders.length ? orders.map(order => `
+        <div class="order-row">
+          <div>
+            <strong>Order #${order.orderId}</strong>
+            <span class="meta">${escapeHtml(order.status)} &middot; ${escapeHtml(order.paymentMethod)}${order.paymentMethod === "CASH" ? (order.paid ? " (paid)" : order.status === "CANCELLED" ? "" : " (unpaid)") : ""}</span>
+            ${orderStepperHtml(order.status)}
+            ${order.status === "SHIPPED" && order.expectedDeliveryDate ? `<span class="meta">Running late &mdash; now expected by ${escapeHtml(order.expectedDeliveryDate)}${order.delayReason ? " (" + escapeHtml(order.delayReason) + ")" : ""}</span>` : ""}
+            ${order.giftWrap || order.giftMessage ? `<span class="meta">Gift${order.giftWrap ? ", wrapped" : ""}${order.giftMessage ? ": &ldquo;" + escapeHtml(order.giftMessage) + "&rdquo;" : ""}</span>` : ""}
+            ${order.carrier || order.trackingNumber ? `<span class="meta">Shipped${order.carrier ? " via " + escapeHtml(order.carrier) : ""}${order.trackingNumber ? ", tracking " + escapeHtml(order.trackingNumber) : ""}</span>` : ""}
+          </div>
+          <div class="price">₹${order.totalPrice.toFixed(2)}${order.refundedAmount > 0 ? `<span class="meta">₹${order.refundedAmount.toFixed(2)} ${order.paymentMethod === "CASH" ? "taken off" : "refunded"}</span>` : ""}</div>
+          <button class="secondary" style="width:auto;" onclick="toggleOrderTimeline(${order.orderId}, this)">Timeline</button>
+          ${order.refundedAmount > 0 || order.status === "CANCELLED" || order.status === "RETURNED" ? `<button class="secondary" style="width:auto;" onclick="showRefundStatus(${order.orderId})">Refund status</button>` : ""}
+          <button class="secondary" style="width:auto;" onclick="showInvoice(${order.orderId})">Invoice</button>
+          <button class="secondary" style="width:auto;" onclick="downloadInvoicePdf(${order.orderId})">Download PDF</button>
+          <button class="secondary" style="width:auto;" onclick="emailInvoice(${order.orderId})">Email invoice</button>
+          ${order.giftWrap || order.giftMessage ? `<button class="secondary" style="width:auto;" onclick="printGiftReceipt(${order.orderId})">Gift receipt</button>` : ""}
+          <button class="secondary" style="width:auto;" onclick="reorderMyOrder(${order.orderId})">Buy again</button>
+          ${order.status === "PLACED" || order.status === "SHIPPED" ? `<button class="secondary" style="width:auto;" onclick="shareOrderStatus(${order.orderId})">Share status</button>
+            <button class="secondary" style="width:auto;" onclick="stopSharingOrder(${order.orderId})">Stop sharing</button>` : ""}
+          ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeDelivery(${order.orderId})">Change delivery</button>` : ""}
+          ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="changeOrderAddressTo(${order.orderId})">Change address</button>` : ""}
+          ${order.status === "PLACED" && order.paymentMethod === "CASH" && !order.discountAmount && !order.pointsRedeemed && !order.storeCreditUsed && !order.subscriptionId ? `<button class="secondary" style="width:auto;" onclick="addItemToMyOrder(${order.orderId})">Add item</button>` : ""}
+          ${order.status === "PLACED" ? `<button class="secondary" style="width:auto;" onclick="cancelMyOrder(${order.orderId}, '${order.paymentMethod}')">Cancel</button>` : ""}
+          ${order.status === "DELIVERED" ? returnControls(order) : ""}
+          ${order.status === "DELIVERED" ? (ratedOrderIds.has(order.orderId)
+              ? `<span class="meta">Thanks for your feedback</span>`
+              : `<button class="secondary" style="width:auto;" onclick="rateMyOrder(${order.orderId})">Rate this order</button>`) : ""}
+          ${order.status !== "PENDING_PAYMENT" ? `<button class="secondary" style="width:auto;" onclick="reportProblem(${order.orderId})">Report a problem</button>` : ""}
+        </div>
+        ${orderItemsHtml(order)}
+        ${exchangeLinesHtml(order)}
+      `).join("") : `<p style="color:var(--muted);">${orderFilter.status || orderFilter.from || orderFilter.to ? "No orders match these filters." : "No orders yet."}</p>`;
+
+      const addressesHtml = addresses.map(a => `
+        <div class="order-row">
+          <div>
+            <strong>${escapeHtml(a.label || "Address")}</strong>${a.isDefault ? ' <span class="meta">(default)</span>' : ""}
+            <span class="meta">${escapeHtml(a.line1)}, ${escapeHtml(a.city)}, ${escapeHtml(a.state)} ${escapeHtml(a.pincode)}</span>
+          </div>
+          ${a.isDefault ? "" : `<button class="secondary" style="width:auto;" onclick="makeAddressDefault(${a.id})">Make default</button>`}
+          <button class="secondary" style="width:auto;" onclick="editAddress(${a.id})">Edit</button>
+          <button class="secondary" style="width:auto;" onclick="removeAddress(${a.id})">Remove</button>
+        </div>
+      `).join("");
+      accountAddresses = addresses;
+      editingAddressId = null;
+
+      await loadSearchWatches();
+      const alertsListHtml = alertsHtml(waitlist);
+
+      view.innerHTML = `
+        ${profileHtml}
+        ${recommendationsHtml(recommendations)}
+        <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="downloadMyData()">Download my data</button>
+          <span class="meta">Everything we store about you, as a JSON file.</span></p>
+        <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="startAccountDeletion()">Delete my account</button>
+          <span class="meta">Erases your addresses, wishlist, alerts and saved cart and unlinks your email. Needs a code we email you.</span></p>
+        ${storeCreditHtml(storeCredit)}${giftCardRedeemHtml()}
+        ${emailPrefs ? `<p style="margin:8px 0;"><label style="display:flex; align-items:center; gap:8px;">
+          <input type="checkbox" id="marketingEmails" style="width:auto;" ${emailPrefs.marketingEmails ? "checked" : ""} onchange="setMarketingEmails(this)" />
+          Email me cart reminders, restock / price-drop alerts and points-expiry warnings</label>
+          <span class="meta">Emails about your own orders and sign-in codes are always sent.</span></p>` : ""}
+        ${myBirthday === null ? "" : birthdayHtml(myBirthday)}
+        ${referralHtml(referral)}
+        <h3 style="margin:16px 0 10px;">Order history</h3>
+        ${orderFilterBarHtml(historyPage)}
+        ${ordersHtml}
+        ${supportTickets.length ? `<h3 style="margin:20px 0 10px;">Support requests</h3>${supportTickets.map(supportTicketHtml).join("")}` : ""}
+        <h3 style="margin:20px 0 10px;">Subscriptions</h3>
+        ${mySubscriptions.length ? mySubscriptions.map(subscriptionRowHtml).join("") : `<p style="color:var(--muted);">No subscriptions - open a product and choose "Subscribe &amp; save" to get it delivered regularly at a discount.</p>`}
+        <h3 style="margin:20px 0 10px;">My alerts</h3>
+        <p style="font-size:13px; color:var(--muted); margin:-4px 0 10px;">Products you are watching for a restock or a price drop. Removing one also removes it from your wishlist / restock waitlist.</p>
+        ${alertsListHtml}
+        <h3 style="margin:20px 0 10px;">Saved addresses</h3>
+        ${addressesHtml || `<p style="color:var(--muted);">No saved addresses yet.</p>`}
+        <div id="addressForm" style="margin-top:12px;">
+          <h4 id="addressFormTitle" style="margin:0 0 8px;">Add an address</h4>
+          <input type="text" id="newAddrLabel" placeholder="Label, e.g. Home (optional)" />
+          <input type="text" id="newAddrLine1" placeholder="Address line 1" />
+          <input type="text" id="newAddrLine2" placeholder="Address line 2 (optional)" />
+          <input type="text" id="newAddrCity" placeholder="City" />
+          <input type="text" id="newAddrState" placeholder="State" />
+          <input type="text" id="newAddrPincode" placeholder="Pincode" maxlength="6" inputmode="numeric" oninput="autofillFromPincode()" />
+          <p id="newAddrPincodeHint" style="font-size:12px; color:var(--muted); margin:-6px 0 10px;"></p>
+          <label style="display:flex; align-items:center; gap:8px; margin:-4px 0 12px;">
+            <input type="checkbox" id="newAddrDefault" style="width:auto;" /> Make default
+          </label>
+          <div id="addAddressError" class="error-text hidden"></div>
+          <button id="addressSubmit" onclick="addAddress()">Add address</button>
+          <button id="addressCancel" class="secondary hidden" style="width:auto;" onclick="cancelAddressEdit()">Cancel</button>
+        </div>
+      `;
+    }
+
+    let myExchanges = [];
+    const EXCHANGE_STATUS_TEXT = {
+      REQUESTED: "Waiting for approval", APPROVED: "Approved - replacement on its way",
+      RECEIVED: "Complete", REJECTED: "Not approved", CANCELLED: "Withdrawn"
+    };
+
+    // This order's exchange requests, newest first, with a Withdraw button while one is still waiting for approval.
+    function exchangeLinesHtml(order) {
+      const mine = myExchanges.filter(x => x.orderId === order.orderId);
+      if (!mine.length) return "";
+      const name = id => { const p = products.find(p => p.productId === id); return p ? p.productName : `product #${id}`; };
+      return `<div class="order-items">${mine.map(x => {
+        const diff = x.priceDifference > 0 ? `, Rs. ${Number(x.priceDifference).toFixed(2)} from store credit`
+          : x.priceDifference < 0 ? `, Rs. ${Number(-x.priceDifference).toFixed(2)} back as store credit` : "";
+        return `<div class="order-item-line"><span>Exchange: ${x.quantity} &times; ${escapeHtml(name(x.productId))} &rarr; ${escapeHtml(name(x.replacementProductId))}
+          <span class="meta">(${escapeHtml(EXCHANGE_STATUS_TEXT[x.status] || x.status)}${diff})</span></span>
+          ${x.status === "REQUESTED" ? `<button class="link-button" onclick="withdrawMyExchange(${x.id})">Withdraw</button>` : ""}</div>`;
+      }).join("")}</div>`;
+    }
+
+    async function withdrawMyExchange(id) {
+      if (!await askConfirm("Withdraw this exchange request?")) return;
+      const response = await authFetch(`${BASE_URL}/cart/exchanges/${encodeURIComponent(id)}/withdraw`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Could not withdraw the exchange."); return; }
+      loadAccountView();
+    }
+
+    // One line per item, with cancel (PLACED) / return (DELIVERED) buttons for single items. Orders placed before
+    // per-item prices were recorded (unitPrice null) can only be cancelled/returned whole, so they get no buttons.
+    function orderItemsHtml(order) {
+      if (!order.orderItems || !order.orderItems.length) return "";
+      const nameById = new Map(products.map(p => [p.productId, p.productName]));
+      const perItemPossible = order.orderItems.every(i => i.unitPrice != null);
+      const totalOutstanding = order.orderItems.reduce((sum, i) => sum + i.outstandingQuantity, 0);
+      return `<div class="order-items">${order.orderItems.map(i => {
+        const name = escapeHtml(nameById.get(i.productId) || `Product #${i.productId}`);
+        const notes = [];
+        if (i.cancelledQuantity) notes.push(`${i.cancelledQuantity} cancelled`);
+        if (i.returnedQuantity) notes.push(`${i.returnedQuantity} returned`);
+        let action = "";
+        let exchange = "";
+        if (perItemPossible && i.outstandingQuantity > 0 && order.status === "DELIVERED") {
+          exchange = `<button class="link-button" onclick="exchangeMyItem(${order.orderId}, ${i.productId}, ${i.outstandingQuantity}, ${i.unitPrice})">Exchange</button>`;
+        }
+        // With only one unit left in the whole order, the order-level button does the same thing.
+        if (perItemPossible && i.outstandingQuantity > 0 && totalOutstanding > 1) {
+          if (order.status === "PLACED") {
+            action = `<button class="link-button" onclick="changeMyItem('cancel', ${order.orderId}, ${i.productId}, ${i.outstandingQuantity}, '${order.paymentMethod}')">Cancel item</button>`;
+          } else if (order.status === "DELIVERED") {
+            action = `<button class="link-button" onclick="changeMyItem('return', ${order.orderId}, ${i.productId}, ${i.outstandingQuantity}, '${order.paymentMethod}')">Return item</button>`;
+          }
+        }
+        return `<div class="order-item-line"><span>${i.productQuantity} × ${name}${notes.length ? ` <span class="meta">(${notes.join(", ")})</span>` : ""}</span><span>${action} ${exchange}</span></div>`;
+      }).join("")}</div>`;
+    }
+
+    // Swap a delivered item for another one that costs the same or less (no money moves; staff approve it first).
+    async function exchangeMyItem(orderId, productId, outstanding, unitPrice) {
+      const options = products.filter(p => p.productStock > 0)
+        .sort((a, b) => Math.abs(a.productPrice - unitPrice) - Math.abs(b.productPrice - unitPrice)).slice(0, 12);
+      if (!options.length) { alert("Nothing is in stock to exchange for right now."); return; }
+      const diffNote = p => {
+        const d = p.productPrice - unitPrice;
+        return Math.abs(d) < 0.005 ? "" : d > 0 ? ` - Rs. ${d.toFixed(2)} more per unit, from store credit` : ` - Rs. ${(-d).toFixed(2)} back per unit as store credit`;
+      };
+      const pick = await askText("Exchange for which product? Type its number:\n" +
+        options.map(p => `${p.productId}: ${p.productName} (Rs. ${Number(p.productPrice).toFixed(2)})${diffNote(p)}`).join("\n"));
+      if (pick === null) return;
+      const replacementProductId = Number(pick);
+      if (!options.some(p => p.productId === replacementProductId)) { alert("Pick one of the numbers listed."); return; }
+      let quantity = 1;
+      if (outstanding > 1) {
+        quantity = Number(await askText(`How many to exchange? (1-${outstanding})`, "1"));
+        if (!Number.isInteger(quantity) || quantity < 1 || quantity > outstanding) { alert(`Enter a whole number from 1 to ${outstanding}.`); return; }
+      }
+      const reason = await askText("Why are you exchanging this item?");
+      if (!reason) return;
+      const params = new URLSearchParams({ productId, quantity, replacementProductId, reason });
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/exchange?${params}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Could not request the exchange."); return; }
+      alert("Exchange requested. We'll email you once it's approved.");
+      loadAccountView();
+    }
+
+    async function changeMyItem(kind, orderId, productId, outstanding, paymentMethod) {
+      let quantity = 1;
+      if (outstanding > 1) {
+        const answer = await askText(`How many to ${kind}? (1-${outstanding})`, "1");
+        if (answer === null) return;
+        quantity = Number(answer);
+        if (!Number.isInteger(quantity) || quantity < 1 || quantity > outstanding) {
+          alert(`Enter a whole number from 1 to ${outstanding}.`);
+          return;
+        }
+      }
+      const params = new URLSearchParams({ quantity: String(quantity) });
+      if (kind === "return") {
+        const reason = await askText("Why are you returning this item?");
+        if (!reason) return;
+        params.set("reason", reason);
+      } else if (!await askConfirm(`Cancel ${quantity} of this item? This can't be undone.`)) {
+        return;
+      }
+      if (paymentMethod !== "CASH") {
+        const choice = await refundChoiceParams(kind === "return" && returnPolicy.pickup);
+        if (!choice) return;
+        Object.entries(choice).forEach(([k, v]) => params.set(k, v));
+      }
+      const response = await authFetch(
+        `${BASE_URL}/cart/${encodeURIComponent(orderId)}/items/${encodeURIComponent(productId)}/${kind}?${params}`,
+        { method: "POST" });
+      if (!response.ok) {
+        alert((await response.text()) || `Could not ${kind} this item.`);
+        return;
+      }
+      if (kind === "return" && returnPolicy.pickup) alert("Pickup booked. We'll refund you once the item reaches us.");
+      loadAccountView();
+    }
+
+    // Downloads everything we hold about this customer as a JSON file. fetch + blob (not a plain link) because the
+    // request needs the X-Customer-Token header.
+    async function downloadMyData() {
+      const response = await authFetch(`${BASE_URL}/customer/export?phno=${encodeURIComponent(customerPhno)}`);
+      if (!response.ok) { alert("Couldn't prepare your data right now. Please try again."); return; }
+      const blob = await response.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `my-data-${customerPhno}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
+    }
+
+    // Delete my account: preview what would happen (and anything that blocks it), email a code, then confirm with it.
+    // Loyalty points and store credit are lost, so the customer is told the amounts and must accept that first.
+    async function startAccountDeletion() {
+      const previewResponse = await authFetch(`${BASE_URL}/customer/account/delete/preview`);
+      if (!previewResponse.ok) { alert("Couldn't check your account right now. Please try again."); return; }
+      const preview = await previewResponse.json();
+      if (!preview.canDelete) {
+        alert("Your account can't be deleted yet:\n\n" + (preview.blockers.length ? preview.blockers.join("\n\n") : "There is no account to delete."));
+        return;
+      }
+      const forfeits = [];
+      if (preview.loyaltyPoints > 0) forfeits.push(`${preview.loyaltyPoints} loyalty point(s)`);
+      if (preview.storeCredit > 0) forfeits.push(`store credit of ₹${preview.storeCredit.toFixed(2)}`);
+      if (!await askConfirm("Delete your account?\n\n"
+          + "This permanently erases your saved addresses, wishlist, stock alerts, saved cart"
+          + (preview.activeSubscriptions > 0 ? `, ${preview.activeSubscriptions} subscription(s)` : "") + " and support requests, and unlinks " + preview.email + ".\n"
+          + "Your past orders are kept for invoices, without your name or phone number.\n"
+          + (forfeits.length ? "\nYou will LOSE " + forfeits.join(" and ") + ".\n" : "")
+          + "\nWe will email a confirmation code to " + preview.email + ". This cannot be undone.")) return;
+      const requestResponse = await authFetch(`${BASE_URL}/customer/account/delete/request`, { method: "POST" });
+      if (!requestResponse.ok) { alert((await requestResponse.text()) || "Couldn't send the code. Please try again."); return; }
+      const code = await askText(`We emailed a 6-digit code to ${preview.email}. Enter it to permanently delete your account:`);
+      if (code === null || !code.trim()) return;
+      const confirmResponse = await authFetch(`${BASE_URL}/customer/account/delete/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: code.trim(), acknowledgeForfeit: forfeits.length > 0 })
+      });
+      if (!confirmResponse.ok) { alert((await confirmResponse.text()) || "Couldn't delete the account. Please try again."); return; }
+      // endSession keeps the saved cart in this browser for the next login; for a deleted account nothing should stay.
+      try {
+        localStorage.removeItem(cartStorageKey());
+        localStorage.removeItem("pendingCartAdds");
+        localStorage.removeItem("shopRecentlyViewed");
+      } catch (e) {}
+      endSession("Your account has been deleted.");
+    }
+
+    const SUPPORT_CATEGORIES = [
+      ["DAMAGED", "Item arrived damaged"], ["MISSING_ITEM", "Item missing from the order"], ["WRONG_ITEM", "Received the wrong item"],
+      ["NOT_DELIVERED", "Order not delivered"], ["PAYMENT", "Payment or refund problem"], ["OTHER", "Something else"]
+    ];
+    const SUPPORT_STATUS = { OPEN: "Waiting for us", ANSWERED: "We replied", RESOLVED: "Resolved" };
+
+    // "Report a problem" on an order: what kind, which item (optional), what happened, and an optional photo link.
+    async function reportProblem(orderId) {
+      const order = accountOrders.find(o => o.orderId === orderId);
+      const choice = await askText("What's the problem? (Many answers are in the Help tab.) Enter a number:\n" + SUPPORT_CATEGORIES.map((c, i) => `${i + 1}. ${c[1]}`).join("\n"));
+      if (choice === null) return;
+      const category = SUPPORT_CATEGORIES[Number(choice) - 1];
+      if (!category) { alert("Please enter one of the numbers shown."); return; }
+      let productId = null;
+      if (order && order.orderItems && order.orderItems.length > 1) {
+        const nameById = new Map(products.map(p => [p.productId, p.productName]));
+        const pick = await askText("Which item is it about? Enter a number, or leave blank for the whole order:\n"
+          + order.orderItems.map((it, i) => `${i + 1}. ${nameById.get(it.productId) || "Product #" + it.productId}`).join("\n"));
+        if (pick === null) return;
+        if (pick.trim()) {
+          const item = order.orderItems[Number(pick) - 1];
+          if (!item) { alert("Please enter one of the numbers shown."); return; }
+          productId = item.productId;
+        }
+      } else if (order && order.orderItems && order.orderItems.length === 1) {
+        productId = order.orderItems[0].productId;
+      }
+      const message = await askText("Tell us what happened (at least 5 characters):");
+      if (message === null) return;
+      const photoUrl = await askText("Optional: a link to a photo of the problem (leave blank to skip):", "");
+      if (photoUrl === null) return;
+      const response = await authFetch(`${BASE_URL}/support/tickets`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customerPhno: Number(customerPhno), orderId, category: category[0], productId,
+          message: message.trim(), photoUrl: photoUrl.trim() || null })
+      });
+      if (!response.ok) { alert((await response.text()) || "Couldn't send your request. Please try again."); return; }
+      const created = await response.json();
+      alert(`Thanks - your request #${created.ticket.id} has been sent. We'll email you when we reply.`);
+      loadAccountView();
+    }
+
+    function supportTicketHtml(view) {
+      const t = view.ticket;
+      const category = (SUPPORT_CATEGORIES.find(c => c[0] === t.category) || [t.category, t.category])[1];
+      const thread = view.messages.map(m => `
+        <div class="meta" style="margin:4px 0;"><strong>${m.author === "STAFF" ? "Charan Mart" : "You"}</strong>
+          &middot; ${new Date(m.createdAt).toLocaleString()}<br>${escapeHtml(m.body)}</div>`).join("");
+      return `<div class="order-row" style="display:block;">
+        <div><strong>Request #${t.id}</strong> &middot; Order #${t.orderId} &middot; ${escapeHtml(category)}
+          <span class="meta">${SUPPORT_STATUS[t.status] || escapeHtml(t.status)}${t.resolutionNote ? " - " + escapeHtml(t.resolutionNote) : ""}</span></div>
+        ${thread}
+        <button class="secondary" style="width:auto; margin-top:6px;" onclick="replyToTicket(${t.id})">${t.status === "RESOLVED" ? "Reopen with a message" : "Add a message"}</button>
+      </div>`;
+    }
+
+    async function replyToTicket(ticketId) {
+      const message = await askText("Your message:");
+      if (!message) return;
+      const response = await authFetch(`${BASE_URL}/support/tickets/${ticketId}/reply?phno=${encodeURIComponent(customerPhno)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: message.trim() })
+      });
+      if (!response.ok) { alert((await response.text()) || "Couldn't send your message. Please try again."); return; }
+      loadAccountView();
+    }
+
+    // Always shown in My account: anyone can be handed a gift card, with or without a wallet yet.
+    function giftCardRedeemHtml() {
+      return `<div style="margin:12px 0;"><strong>Gift card</strong>
+        <span class="meta">Have a Charan Mart gift card? Enter its code to add its value to your store credit.</span>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:6px;">
+          <input type="text" id="giftCardCode" placeholder="GC-XXXX-XXXX-XXXX-XXXX" autocomplete="off" style="flex:1 1 220px; text-transform:uppercase;" />
+          <button onclick="redeemGiftCard()">Redeem</button>
+        </div></div>`;
+    }
+
+    async function redeemGiftCard() {
+      const code = document.getElementById("giftCardCode").value.trim();
+      if (!code) { alert("Enter your gift card code."); return; }
+      const response = await authFetch(`${BASE_URL}/giftcards/redeem`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: Number(customerPhno), code })
+      });
+      if (!response.ok) { alert((await response.text()) || "Couldn't redeem that gift card. Please try again."); return; }
+      const result = await response.json();
+      alert(`₹${result.amount.toFixed(2)} added to your store credit. Your balance is now ₹${result.balance.toFixed(2)}.`);
+      loadStoreCredit();
+      loadAccountView();
+    }
+
+    function storeCreditHtml(credit) {
+      if (!credit || (credit.balance <= 0 && !credit.transactions.length)) return "";
+      const label = { REFUND: "Refund", SPENT: "Used at checkout", REVERSED: "Returned (payment failed)", ADJUSTED: "Adjustment", GIFT_CARD: "Gift card" };
+      const rows = credit.transactions.slice(0, 5).map(t => `
+        <div class="meta">${new Date(t.createdAt).toLocaleDateString()} &middot; ${label[t.type] || escapeHtml(t.type)}${t.orderId ? " (order #" + t.orderId + ")" : ""}
+          &middot; ${t.amount >= 0 ? "+" : "-"}₹${Math.abs(t.amount).toFixed(2)}</div>`).join("");
+      return `<div style="margin:12px 0;"><strong>Store credit: ₹${credit.balance.toFixed(2)}</strong>
+        <span class="meta">Use it at checkout. Refunds can be taken as store credit instantly.</span>${rows}</div>`;
+    }
+
+    // Birthday (day and month only): once a year, around it, we email a single-use coupon if marketing email is on.
+    const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    function birthdayHtml(saved) {
+      const [m, d] = saved ? saved.split("-").map(Number) : [0, 0];
+      return `<p style="margin:8px 0;"><strong>Birthday</strong> <span class="meta">${saved ? "Saved: " + d + " " + MONTH_NAMES[m - 1] + "." : "Add yours for a birthday treat."}</span><br />
+        <select id="birthMonth" aria-label="Birthday month" style="width:auto;">${MONTH_NAMES.map((n, i) => `<option value="${i + 1}" ${i + 1 === m ? "selected" : ""}>${n}</option>`).join("")}</select>
+        <input type="number" id="birthDay" min="1" max="31" placeholder="Day" aria-label="Birthday day" value="${d || ""}" style="width:80px;" />
+        <button class="secondary" style="width:auto;" onclick="saveBirthday()">Save</button>
+        ${saved ? `<button class="secondary" style="width:auto;" onclick="removeBirthday()">Remove</button>` : ""}</p>`;
+    }
+
+    async function saveBirthday() {
+      const month = Number(document.getElementById("birthMonth").value);
+      const day = Number(document.getElementById("birthDay").value);
+      if (!Number.isInteger(day) || day < 1 || day > 31) { alert("Enter the day of the month."); return; }
+      const response = await authFetch(`${BASE_URL}/customer/birthday?phno=${encodeURIComponent(customerPhno)}&month=${month}&day=${day}`, { method: "PUT" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't save your birthday."); return; }
+      showToast("Birthday saved.");
+      loadAccountView();
+    }
+
+    async function removeBirthday() {
+      const response = await authFetch(`${BASE_URL}/customer/birthday?phno=${encodeURIComponent(customerPhno)}`, { method: "DELETE" });
+      if (!response.ok) { alert("Couldn't remove your birthday."); return; }
+      showToast("Birthday removed.");
+      loadAccountView();
+    }
+
+    async function setMarketingEmails(box) {
+      const wanted = box.checked;
+      const response = await authFetch(`${BASE_URL}/prefs/mine?phno=${encodeURIComponent(customerPhno)}&marketingEmails=${wanted}`, { method: "PUT" });
+      if (!response.ok) {
+        box.checked = !wanted;
+        alert("Couldn't save your email preference. Please try again.");
+      }
+    }
+
+    // Orders the customer has already rated (loaded with the account view) - each order can be rated once.
+    let ratedOrderIds = new Set();
+
+    async function rateMyOrder(orderId) {
+      const rating = Number(await askText("How would you rate this order overall? (1 = poor, 5 = excellent)"));
+      if (!rating) return;
+      if (!Number.isInteger(rating) || rating < 1 || rating > 5) { alert("Please enter a whole number from 1 to 5."); return; }
+      const deliveryAnswer = await askText("How was the delivery? (1-5, or leave blank to skip)");
+      if (deliveryAnswer === null) return;
+      const comment = await askText("Anything else you'd like to tell us? (optional)");
+      if (comment === null) return;
+      let query = `phno=${encodeURIComponent(customerPhno)}&orderId=${orderId}&rating=${rating}`;
+      if (deliveryAnswer.trim()) query += `&deliveryRating=${encodeURIComponent(deliveryAnswer.trim())}`;
+      if (comment.trim()) query += `&comment=${encodeURIComponent(comment.trim())}`;
+      const response = await authFetch(`${BASE_URL}/feedback/submit?${query}`, { method: "POST" });
+      if (response.ok) {
+        await loadAccountView();
+      } else {
+        alert((await response.text()) || "Couldn't save your feedback. Please try again.");
+      }
+    }
+
+    // Changes the delivery window and/or instructions of an order that hasn't shipped yet.
+    async function changeDelivery(orderId) {
+      const slots = ["MORNING", "AFTERNOON", "EVENING"];
+      const slotAnswer = await askText("New delivery window? Enter 1 = Morning (9-12), 2 = Afternoon (12-4), 3 = Evening (4-8), 0 = any time.\nLeave blank to keep the current one.");
+      if (slotAnswer === null) return;
+      const note = await askText("New delivery instructions? Leave blank to keep the current ones, or type - to clear them.");
+      if (note === null) return;
+      const params = [];
+      if (slotAnswer.trim() !== "") {
+        const n = Number(slotAnswer);
+        if (!Number.isInteger(n) || n < 0 || n > 3) { alert("Please enter 0, 1, 2 or 3."); return; }
+        params.push(`deliverySlot=${n === 0 ? "" : slots[n - 1]}`);
+      }
+      if (note.trim() !== "") params.push(`deliveryNote=${note.trim() === "-" ? "" : encodeURIComponent(note.trim())}`);
+      if (!params.length) return;
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/delivery?${params.join("&")}`, { method: "PUT" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't change the delivery details."); return; }
+      loadAccountView();
+    }
+
+    // Moves an order that has not shipped to another saved address (picked by number from the customer's own list).
+    async function changeOrderAddressTo(orderId) {
+      const response = await authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const list = response.ok ? await response.json() : [];
+      if (!list.length) { alert("You have no saved addresses yet - add one under My account first."); return; }
+      const n = Number(await askText("Deliver this order to which address?\n" + list.map((a, i) =>
+        `${i + 1}. ${a.label ? a.label + ": " : ""}${a.line1}, ${a.city} ${a.pincode}`).join("\n")));
+      if (!Number.isInteger(n) || n < 1 || n > list.length) return;
+      const result = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/address?addressId=${list[n - 1].id}`, { method: "PUT" });
+      if (!result.ok) { alert((await result.text()) || "Couldn't change the address."); return; }
+      loadAccountView();
+    }
+
+    // Adds units of an in-stock product to a not-yet-shipped cash order. Picks the product by name from the loaded catalog.
+    async function addItemToMyOrder(orderId) {
+      const term = await askText("Which product do you want to add? Type part of its name.");
+      if (!term || !term.trim()) return;
+      const matches = products.filter(p => p.productStock > 0 && p.productName.toLowerCase().includes(term.trim().toLowerCase())).slice(0, 8);
+      if (!matches.length) { alert("No in-stock product matches that."); return; }
+      let pick = matches[0];
+      if (matches.length > 1) {
+        const n = Number(await askText("Which one?\n" + matches.map((p, i) => `${i + 1}. ${p.productName} - \u20b9${p.productPrice}`).join("\n")));
+        if (!Number.isInteger(n) || n < 1 || n > matches.length) return;
+        pick = matches[n - 1];
+      }
+      const qty = Number(await askText(`How many of ${pick.productName} (\u20b9${pick.productPrice} each, ${pick.productStock} in stock)?`, "1"));
+      if (!Number.isInteger(qty) || qty < 1) return;
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/items/add?productId=${pick.productId}&quantity=${qty}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't add that item."); return; }
+      loadAccountView();
+    }
+
+    const CANCEL_REASONS = [
+      ["CHANGED_MIND", "I changed my mind"], ["ORDERED_BY_MISTAKE", "I ordered by mistake"],
+      ["FOUND_CHEAPER_ELSEWHERE", "I found it cheaper elsewhere"], ["DELIVERY_TOO_SLOW", "Delivery is too slow"],
+      ["WRONG_ADDRESS", "Wrong delivery address"], ["OTHER", "Something else"]
+    ];
+
+    let cancelPolicy = { freeMinutes: 0, lockMinutes: 0 };
+    async function loadCancelPolicy() {
+      try {
+        const response = await fetch(`${BASE_URL}/cart/cancelpolicy`);
+        if (response.ok) cancelPolicy = await response.json();
+      } catch (e) { /* no policy line */ }
+    }
+
+    function cancelPolicyText() {
+      const p = cancelPolicy;
+      if (!p.freeMinutes && !p.lockMinutes) return "";
+      return "\n\n" + (p.freeMinutes ? `Cancelling is free of questions for ${p.freeMinutes} minute(s) after you order; after that please give a reason. ` : "")
+        + (p.lockMinutes ? `After ${p.lockMinutes} minute(s) the order is being prepared and can't be cancelled online - contact support then.` : "");
+    }
+
+    async function cancelMyOrder(orderId, paymentMethod) {
+      if (!await askConfirm(`Cancel order #${orderId}? This can't be undone.${cancelPolicyText()}`)) return;
+      const choice = await askText("Why are you cancelling? Enter a number (or leave blank to skip):\n"
+        + CANCEL_REASONS.map((r, i) => `${i + 1}. ${r[1]}`).join("\n"));
+      if (choice === null) return;
+      const picked = CANCEL_REASONS[Number(choice) - 1];
+
+      let query = "";
+      if (paymentMethod !== "CASH") {
+        const choice = await refundChoiceParams();
+        if (!choice) return;
+        query = "?" + new URLSearchParams(choice);
+      }
+      if (picked) query += (query ? "&" : "?") + `reason=${picked[0]}`;
+
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/cancel${query}`, { method: "POST" });
+      if (!response.ok) {
+        const body = await response.text();
+        alert(body || "Could not cancel this order.");
+        return;
+      }
+      loadAccountView();
+    }
+
+    // With return approval on (GET /cart/returnpolicy) the customer asks first, staff decide, then the customer completes it.
+    let returnPolicy = { approvalRequired: false, pickup: false };
+    async function loadReturnPolicy() {
+      try {
+        const response = await fetch(`${BASE_URL}/cart/returnpolicy`);
+        if (response.ok) returnPolicy = await response.json();
+      } catch (e) { /* default: returns need no approval */ }
+    }
+
+    function returnControls(order) {
+      const id = order.orderId, pm = order.paymentMethod, st = order.returnRequestStatus;
+      if (order.returnPickupStatus === "AWAITING_PICKUP") return `<span class="meta">Return booked - waiting for pickup</span>`;
+      if (order.returnPickupStatus === "PICKED_UP") return `<span class="meta">Return picked up - refund follows when it reaches us</span>`;
+      if (!returnPolicy.approvalRequired) {
+        return `<button class="secondary" style="width:auto;" onclick="returnMyOrder(${id}, '${pm}')">Request return</button>`;
+      }
+      if (st === "REQUESTED") return `<span class="meta">Return requested - waiting for approval</span>`;
+      if (st === "APPROVED") return `<span class="meta">Return approved</span> <button class="secondary" style="width:auto;" onclick="returnMyOrder(${id}, '${pm}')">Complete return</button>`;
+      const rejected = st === "REJECTED"
+        ? `<span class="meta">Return not approved${order.returnRequestNote ? ": " + escapeHtml(order.returnRequestNote) : ""}</span> ` : "";
+      return `${rejected}<button class="secondary" style="width:auto;" onclick="requestMyReturn(${id})">${rejected ? "Ask again" : "Request return"}</button>`;
+    }
+
+    async function requestMyReturn(orderId) {
+      const reason = await askText("Why do you want to return this order?");
+      if (!reason) return;
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/return/request?reason=${encodeURIComponent(reason)}`, { method: "POST" });
+      if (!response.ok) {
+        alert((await response.text()) || "Could not send the return request.");
+        return;
+      }
+      loadAccountView();
+    }
+
+    async function returnMyOrder(orderId, paymentMethod) {
+      const reason = await askText("Why are you returning this order?");
+      if (!reason) return;
+
+      let query = `?reason=${encodeURIComponent(reason)}`;
+      if (paymentMethod !== "CASH") {
+        const choice = await refundChoiceParams(returnPolicy.pickup);
+        if (!choice) return;
+        query += "&" + new URLSearchParams(choice);
+      }
+
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/return${query}`, { method: "POST" });
+      if (!response.ok) {
+        const body = await response.text();
+        alert(body || "Could not return this order.");
+        return;
+      }
+      loadAccountView();
+    }
+
+    // Editing reuses the add form: Edit fills it from the saved address and switches the button to "Save changes";
+    // saving sends the address id, which the server treats as an update of that (own) address.
+    let accountAddresses = [];
+    let editingAddressId = null;
+
+    function editAddress(addressId) {
+      const a = accountAddresses.find(x => x.id === addressId);
+      if (!a) return;
+      editingAddressId = addressId;
+      document.getElementById("newAddrLabel").value = a.label || "";
+      document.getElementById("newAddrLine1").value = a.line1 || "";
+      document.getElementById("newAddrLine2").value = a.line2 || "";
+      document.getElementById("newAddrCity").value = a.city || "";
+      document.getElementById("newAddrState").value = a.state || "";
+      document.getElementById("newAddrPincode").value = a.pincode || "";
+      document.getElementById("newAddrDefault").checked = !!a.isDefault;
+      document.getElementById("addressFormTitle").textContent = "Edit address";
+      document.getElementById("addressSubmit").textContent = "Save changes";
+      document.getElementById("addressCancel").classList.remove("hidden");
+      document.getElementById("addAddressError").classList.add("hidden");
+      document.getElementById("addressForm").scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    function cancelAddressEdit() {
+      editingAddressId = null;
+      loadAccountView();
+    }
+
+    async function makeAddressDefault(addressId) {
+      const response = await authFetch(`${BASE_URL}/addresses/self/default?phno=${encodeURIComponent(customerPhno)}&addressId=${encodeURIComponent(addressId)}`, { method: "PUT" });
+      if (!response.ok) { alert("Could not change the default address."); return; }
+      loadAccountView();
+      loadAddressOptions();
+    }
+
+    async function addAddress() {
+      const line1 = document.getElementById("newAddrLine1").value.trim();
+      const city = document.getElementById("newAddrCity").value.trim();
+      const state = document.getElementById("newAddrState").value.trim();
+      const pincode = document.getElementById("newAddrPincode").value.trim();
+      const errorBox = document.getElementById("addAddressError");
+
+      if (!line1 || !city || !state || !pincode) {
+        errorBox.textContent = "Address line 1, city, state and pincode are required.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+      if (!/^[1-9][0-9]{5}$/.test(pincode)) {
+        errorBox.textContent = "Pincode must be 6 digits.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      const response = await authFetch(`${BASE_URL}/addresses/self/add`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingAddressId,
+          customerPhno: Number(customerPhno),
+          label: document.getElementById("newAddrLabel").value.trim() || null,
+          line1, city, state, pincode,
+          line2: document.getElementById("newAddrLine2").value.trim() || null,
+          isDefault: document.getElementById("newAddrDefault").checked
+        })
+      });
+
+      if (!response.ok) {
+        errorBox.textContent = await response.text();
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      loadAccountView();
+      loadAddressOptions();
+    }
+
+    async function removeAddress(addressId) {
+      await authFetch(`${BASE_URL}/addresses/self/remove?phno=${encodeURIComponent(customerPhno)}&addressId=${encodeURIComponent(addressId)}`, {
+        method: "DELETE"
+      });
+      loadAccountView();
+      loadAddressOptions();
+    }
+
+    async function toggleWishlist(productId) {
+      const isWishlisted = wishlistProductIds.has(productId);
+      const query = `phno=${encodeURIComponent(customerPhno)}&productId=${encodeURIComponent(productId)}`;
+      if (isWishlisted) {
+        await authFetch(`${BASE_URL}/wishlist/self/remove?${query}`, { method: "DELETE" });
+      } else {
+        await authFetch(`${BASE_URL}/wishlist/self/add?${query}`, { method: "POST" });
+      }
+      await loadWishlist();
+    }
+
+    // Typing a 6-digit pincode in the new-address form fills in a blank city/state from the store's pincode list
+    // (when the admin recorded them) and says whether we deliver there. Never overwrites what was already typed.
+    async function autofillFromPincode() {
+      const pin = document.getElementById("newAddrPincode").value.trim();
+      const hint = document.getElementById("newAddrPincodeHint");
+      if (!/^[1-9][0-9]{5}$/.test(pin)) { hint.textContent = ""; return; }
+      try {
+        const r = await fetch(`${BASE_URL}/pincodes/check?pincode=${encodeURIComponent(pin)}`);
+        if (!r.ok) { hint.textContent = ""; return; }
+        const d = await r.json();
+        if (document.getElementById("newAddrPincode").value.trim() !== pin) return; // typed on meanwhile
+        const city = document.getElementById("newAddrCity");
+        const state = document.getElementById("newAddrState");
+        if (d.city && !city.value.trim()) city.value = d.city;
+        if (d.state && !state.value.trim()) state.value = d.state;
+        hint.textContent = !d.serviceable ? `Sorry, we don't deliver to ${pin} yet.`
+          : d.deliveryDays ? `Delivers to ${pin} in about ${d.deliveryDays} day(s).` : "";
+      } catch (e) { hint.textContent = ""; }
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+    }
+
+    function resetPageAndRender() {
+      currentPage = 1;
+      renderProducts();
+    }
+
+    function goToPage(page) {
+      currentPage = page;
+      renderProducts();
+      document.getElementById("productGrid").scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function renderPager(totalItems) {
+      const pager = document.getElementById("productPager");
+      const totalPages = Math.max(1, Math.ceil(totalItems / PRODUCTS_PER_PAGE));
+      if (totalPages <= 1 || activeTab === "account" || activeTab === "notifications") {
+        pager.classList.add("hidden");
+        pager.innerHTML = "";
+        return;
+      }
+      const first = (currentPage - 1) * PRODUCTS_PER_PAGE + 1;
+      const last = Math.min(totalItems, currentPage * PRODUCTS_PER_PAGE);
+      pager.innerHTML = `
+        <button class="secondary" ${currentPage <= 1 ? "disabled" : ""} onclick="goToPage(${currentPage - 1})">&larr; Previous</button>
+        <span class="pager-info">Page ${currentPage} of ${totalPages} &middot; ${first}-${last} of ${totalItems}</span>
+        <button class="secondary" ${currentPage >= totalPages ? "disabled" : ""} onclick="goToPage(${currentPage + 1})">Next &rarr;</button>`;
+      pager.classList.remove("hidden");
+    }
+
+    // Which option of each group the shopper has chosen: variantGroup -> productId. Kept for the page's lifetime, so
+    // searching or paging doesn't reset the choice.
+    const selectedVariantByGroup = new Map();
+
+    // Turns the product list into cards. Products with no group, and groups of which only one option is on show (a
+    // search matched just that one), stay ordinary single-product cards under their own name.
+    function collapseVariants(list) {
+      const items = [];
+      const byGroup = new Map();
+      for (const p of list) {
+        if (!p.variantGroup) { items.push({ product: p, variants: [p] }); continue; }
+        let item = byGroup.get(p.variantGroup);
+        if (!item) { item = { variants: [], group: p.variantGroup }; byGroup.set(p.variantGroup, item); items.push(item); }
+        item.variants.push(p);
+      }
+      for (const item of items) {
+        if (!item.group) continue;
+        item.variants.sort((a, b) => a.productPrice - b.productPrice || a.productId - b.productId);
+        const chosen = item.variants.find(v => v.productId === selectedVariantByGroup.get(item.group));
+        // Default: the cheapest option that can be bought, else the cheapest.
+        item.product = chosen || item.variants.find(v => v.productStock > 0) || item.variants[0];
+      }
+      return items;
+    }
+
+    // A group's card is named after the product, not the option: "Dove Shampoo - 340 ml" -> "Dove Shampoo".
+    function cardTitle(item) {
+      const p = item.product;
+      if (item.variants.length < 2 || !p.variantLabel) return p.productName;
+      const name = p.productName, label = p.variantLabel;
+      if (name.toLowerCase().endsWith(label.toLowerCase())) {
+        const stripped = name.slice(0, name.length - label.length).replace(/[\s\-\u2013\u2014,:(]+$/, "");
+        if (stripped) return stripped;
+      }
+      return name;
+    }
+
+    function variantPickerHtml(item) {
+      if (item.variants.length < 2) return "";
+      const options = item.variants.map(v => `<option value="${v.productId}"${v.productId === item.product.productId ? " selected" : ""}>${escapeHtml(v.variantLabel || v.productName)} &mdash; ₹${v.productPrice}${v.productStock <= 0 ? " (out of stock)" : isLowStock(v) ? ` (only ${v.productStock} left)` : ""}</option>`).join("");
+      return `<select class="variant-picker" data-group="${escapeHtml(item.group)}" aria-label="Choose an option"
+                onchange="selectVariant(this.dataset.group, Number(this.value))">${options}</select>`;
+    }
+
+    function selectVariant(group, productId) {
+      selectedVariantByGroup.set(group, productId);
+      renderProducts();
+    }
+
+    function renderProducts() {
+      const grid = document.getElementById("productGrid");
+      const visibleProducts = activeTab === "wishlist"
+        ? products.filter(p => wishlistProductIds.has(p.productId))
+        : activeTab === "new"
+        ? products.filter(isNewProduct).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
+        : activeTab === "recent"
+        ? recentlyViewedIds().map(id => products.find(p => p.productId === id)).filter(Boolean)
+        : products;
+
+      // Client-side sort/filter on whatever the active tab/search produced (the hide-in-account-tabs logic in
+      // showTab() hides this row there too, since it only applies to the product grid).
+      const sortBy = document.getElementById("sortBy").value;
+      const inStockOnly = document.getElementById("inStockOnly").checked;
+      // Options of one product (sizes, packs...) collapse into a single card with a picker; each entry is
+      // {product: the option currently selected, variants: all the options being shown}. A group counts as in stock
+      // if any of its options is, and sorts by the option on show.
+      let shownProducts = collapseVariants(visibleProducts);
+      if (inStockOnly) shownProducts = shownProducts.filter(item => item.variants.some(v => v.productStock > 0));
+      // Price range: blank or invalid boxes mean "no limit". A grouped card passes if any of its options is in range.
+      const minPrice = parseFloat(document.getElementById("minPrice").value);
+      const maxPrice = parseFloat(document.getElementById("maxPrice").value);
+      if (!Number.isNaN(minPrice) || !Number.isNaN(maxPrice)) {
+        shownProducts = shownProducts.filter(item => item.variants.some(v =>
+          (Number.isNaN(minPrice) || v.productPrice >= minPrice) && (Number.isNaN(maxPrice) || v.productPrice <= maxPrice)));
+      }
+      const ratingOf = p => { const r = ratingsByProductId.get(p.productId); return r && r.reviewCount > 0 ? r.averageRating : -1; };
+      if (sortBy === "priceAsc") shownProducts.sort((a, b) => a.product.productPrice - b.product.productPrice);
+      else if (sortBy === "priceDesc") shownProducts.sort((a, b) => b.product.productPrice - a.product.productPrice);
+      else if (sortBy === "rating") shownProducts.sort((a, b) => ratingOf(b.product) - ratingOf(a.product));
+      else if (sortBy === "name") shownProducts.sort((a, b) => cardTitle(a).localeCompare(cardTitle(b)));
+
+      if (!shownProducts.length) {
+        grid.innerHTML = visibleProducts.length
+          ? `<p style="color:var(--muted);">No products match your filters.</p>`
+          : activeTab === "wishlist"
+          ? `<p style="color:var(--muted);">Nothing wishlisted yet - tap the heart on a product to save it here.</p>`
+          : activeTab === "new"
+          ? `<p style="color:var(--muted);">Nothing new in the last ${NEW_PRODUCT_DAYS} days - check back soon.</p>`
+          : activeTab === "recent"
+          ? `<p style="color:var(--muted);">No products viewed yet - open a product's details to see it here.</p>`
+          : document.getElementById("searchName").value.trim()
+          ? noSearchResultsHtml()
+          : catalogLoaded
+          ? `<p style="color:var(--muted);">No products available right now.</p>`
+          : skeletonCardsHtml(8);
+        renderPager(0);
+        return;
+      }
+
+      // Clamp: a wishlist removal or a new filter can leave the current page past the end.
+      const totalPages = Math.max(1, Math.ceil(shownProducts.length / PRODUCTS_PER_PAGE));
+      if (currentPage > totalPages) currentPage = totalPages;
+      const pageStart = (currentPage - 1) * PRODUCTS_PER_PAGE;
+      renderPager(shownProducts.length);
+
+      grid.innerHTML = shownProducts.slice(pageStart, pageStart + PRODUCTS_PER_PAGE).map(item => {
+        const p = item.product;
+        const isWishlisted = wishlistProductIds.has(p.productId);
+        const isWaitlisted = waitlistProductIds.has(p.productId);
+        const priceDrop = priceDropsByProductId.get(p.productId);
+        const rating = ratingsByProductId.get(p.productId);
+        return `
+        <div class="product-card">
+          <button class="wishlist-btn ${isWishlisted ? "active" : ""}" onclick="toggleWishlist(${p.productId})"
+                  aria-label="${isWishlisted ? "Remove from wishlist" : "Add to wishlist"}">${isWishlisted ? "&#9829;" : "&#9825;"}</button>
+          <div class="product-image ${p.productImageUrl ? "" : "placeholder"}" role="button" tabindex="0" aria-label="Quick view of ${escapeHtml(p.productName)}" onclick="openProductModal(${p.productId})" onkeydown="if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openProductModal(${p.productId}); }" ${p.productImageUrl ? "" : `style="--ph-h:${(Array.from(String(p.productCategory || p.productName)).reduce((a, c) => (a * 31 + c.charCodeAt(0)) % 360, 0))}"`}>
+            ${p.productImageUrl
+              ? `<img src="${escapeHtml(p.productImageUrl)}" alt="${escapeHtml(p.productName)}" loading="lazy" data-name="${escapeHtml(p.productName)}" data-cat="${escapeHtml(p.productCategory || "")}" onerror="imageFallback(this)" onload="imageLoaded(this)" />`
+              : placeholderTileHtml(p.productName, p.productCategory)}
+          </div>
+          <div class="product-body">
+            <h3>${escapeHtml(cardTitle(item))}${isNewProduct(p) ? `<span class="new-badge">New</span>` : ""}</h3>
+            ${variantPickerHtml(item)}
+            <div class="meta">${escapeHtml(p.productCategory)} &middot; ${stockLabelHtml(p)}</div>
+            ${rating && rating.reviewCount > 0
+              ? `<div class="rating-row"><span class="stars">${starsFor(rating.averageRating)}</span> (${rating.reviewCount})</div>`
+              : `<div class="rating-row">No reviews yet</div>`}
+            <button class="details-link" onclick="openProductModal(${p.productId})">Reviews &amp; similar items</button>
+            <label class="compare-check"><input type="checkbox" ${compareIds.has(p.productId) ? "checked" : ""}
+                   onchange="toggleCompare(${p.productId}, this)" /> Compare</label>
+            ${priceDrop ? `<div class="price-drop-badge">Price dropped ₹${priceDrop.priceDrop.toFixed(2)}</div>` : ""}
+            ${holdBadgeHtml(p.productId)}
+            <div class="price-row"><span class="price">₹${p.productPrice}</span>${saleHtml(p)}</div>
+            ${p.productStock <= 0
+              ? `<button class="secondary" style="width:auto;" onclick="toggleWaitlist(${p.productId})">${isWaitlisted ? "Notified when back ✓" : "Notify me"}</button>`
+              : `<div class="qty-row" id="qtyRow_${p.productId}">
+                  <input type="number" min="1" max="${p.productStock}" step="1" value="1" id="qty_${p.productId}" aria-label="Quantity of ${escapeHtml(p.productName)}" />
+                  <button style="width:auto;" onclick="addToCart(${p.productId})" aria-label="Add ${escapeHtml(p.productName)} to cart">Add</button>
+                </div><div class="card-stepper" id="stepper_${p.productId}" hidden></div>`}
+          </div>
+        </div>
+      `;
+      }).join("");
+      renderCompareBar();
+      syncCardSteppers();
+      renderBuyAgain();
+    }
+
+    // Swaps each card's Add row for a - n + stepper while that product is in the cart (and back when it is not).
+    function syncCardSteppers() {
+      document.querySelectorAll(".card-stepper").forEach(box => {
+        const id = Number(box.id.replace("stepper_", ""));
+        const item = cart.find(i => i.productId === id);
+        const row = document.getElementById("qtyRow_" + id);
+        if (!row) return;
+        box.hidden = !item;
+        row.hidden = !!item;
+        if (!item) return;
+        const name = escapeHtml(item.name);
+        box.innerHTML = `<button onclick="changeCartQuantity(${id}, -1)" aria-label="Decrease quantity of ${name}">&minus;</button>
+          <span>${item.quantity} in cart</span>
+          <button onclick="changeCartQuantity(${id}, 1)" aria-label="Increase quantity of ${name}">&plus;</button>`;
+      });
+    }
+
+    // ---------- compare ----------
+    // Up to 3 products picked from the grid (kept in memory only), shown side by side in a table. The better value in
+    // each comparable row (lowest price, highest rating, most stock) is highlighted.
+    const COMPARE_MAX = 3;
+    const compareIds = new Set();
+
+    function toggleCompare(productId, box) {
+      if (compareIds.has(productId)) compareIds.delete(productId);
+      else if (compareIds.size >= COMPARE_MAX) {
+        box.checked = false;
+        alert(`You can compare up to ${COMPARE_MAX} products at a time.`);
+        return;
+      } else compareIds.add(productId);
+      renderCompareBar();
+    }
+
+    function renderCompareBar() {
+      const bar = document.getElementById("compareBar");
+      bar.classList.toggle("hidden", compareIds.size === 0);
+      document.getElementById("compareCount").textContent = compareIds.size + " selected (max " + COMPARE_MAX + ")";
+    }
+
+    function clearCompare() {
+      compareIds.clear();
+      renderCompareBar();
+      renderProducts();
+    }
+
+    function closeCompare() {
+      document.getElementById("compareModal").classList.add("hidden");
+    }
+
+    function openCompare() {
+      const picked = [...compareIds].map(id => products.find(p => p.productId === id)).filter(Boolean);
+      if (picked.length < 2) { alert("Pick at least 2 products to compare."); return; }
+      document.getElementById("compareBody").innerHTML = compareTableHtml(picked);
+      document.getElementById("compareModal").classList.remove("hidden");
+    }
+
+    function compareTableHtml(picked) {
+      const ratingOf = p => { const r = ratingsByProductId.get(p.productId); return r && r.reviewCount > 0 ? r.averageRating : null; };
+      const available = picked.filter(p => p.productStock > 0);
+      const prices = (available.length ? available : picked).map(p => p.productPrice);
+      const ratings = picked.map(ratingOf);
+      const stocks = picked.map(p => p.productStock);
+      const bestPrice = Math.min(...prices);
+      const bestRating = Math.max(...ratings.map(r => r === null ? -1 : r));
+      const bestStock = Math.max(...stocks);
+      const row = (label, cells) => `<tr><th>${label}</th>${cells.map(c => `<td>${c}</td>`).join("")}</tr>`;
+      return `<table class="compare-table">
+        <tr><th></th>${picked.map(p => `<td>${p.productImageUrl ? `<img src="${escapeHtml(p.productImageUrl)}" alt="" onerror="this.remove()" />` : ""}</td>`).join("")}</tr>
+        ${row("Name", picked.map(p => `<strong>${escapeHtml(p.productName)}</strong>`))}
+        ${row("Category", picked.map(p => escapeHtml(p.productCategory || "-")))}
+        ${row("Price", picked.map(p => `<span class="${p.productPrice === bestPrice && (p.productStock > 0 || !available.length) ? "best" : ""}">₹${p.productPrice}</span>`))}
+        ${row("Rating", picked.map((p, i) => ratings[i] === null ? "No reviews yet"
+            : `<span class="${ratings[i] === bestRating ? "best" : ""}">${ratings[i].toFixed(1)} (${ratingsByProductId.get(p.productId).reviewCount})</span>`))}
+        ${row("In stock", picked.map(p => p.productStock <= 0 ? "Out of stock"
+            : `<span class="${p.productStock === bestStock ? "best" : ""}">${p.productStock} available</span>`))}
+        ${row("", picked.map(p => p.productStock > 0 ? `<button onclick="addToCart(${p.productId})">Add to cart</button>` : ""))}
+      </table>`;
+    }
+
+    // Per-browser only (localStorage), same as the phone-number login itself - no server-side storage, capped
+    // at the 10 most recent, most-recent-first, deduplicated (re-viewing a product moves it back to the front
+    // rather than creating a second entry).
+    const RECENTLY_VIEWED_LIMIT = 10;
+
+    function recentlyViewedIds() {
+      try {
+        return JSON.parse(localStorage.getItem("shopRecentlyViewed") || "[]");
+      } catch {
+        return [];
+      }
+    }
+
+    function recordRecentlyViewed(productId) {
+      const ids = recentlyViewedIds().filter(id => id !== productId);
+      ids.unshift(productId);
+      try {
+        localStorage.setItem("shopRecentlyViewed", JSON.stringify(ids.slice(0, RECENTLY_VIEWED_LIMIT)));
+      } catch {
+        // Private browsing / storage disabled - recently-viewed just won't persist, not worth failing the
+        // product view itself over.
+      }
+    }
+
+    async function openProductModal(productId) {
+      recordRecentlyViewed(productId);
+      modalProductId = productId;
+      setProductHash(productId);
+      document.getElementById("productLinkMsg").textContent = "";
+      const product = products.find(p => p.productId === productId);
+      document.getElementById("modalProductName").textContent = product ? product.productName : "";
+      document.getElementById("reviewFormError").classList.add("hidden");
+      document.getElementById("reviewerName").value = "";
+      document.getElementById("reviewComment").value = "";
+      document.getElementById("questionText").value = "";
+      document.getElementById("questionMessage").classList.add("hidden");
+      document.getElementById("productModal").classList.remove("hidden");
+
+      const rating = ratingsByProductId.get(productId);
+      document.getElementById("modalRatingSummary").innerHTML = rating && rating.reviewCount > 0
+        ? `<span class="stars">${starsFor(rating.averageRating)}</span> ${rating.averageRating.toFixed(1)} (${rating.reviewCount} reviews)`
+        : "No reviews yet";
+
+      renderSubscribeBox(product);
+      renderModalAlert(productId);
+      loadModalAlternatives(productId);
+      await Promise.all([loadModalReviews(productId), loadModalQuestions(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
+    }
+
+    // ---- in-stock alternatives for a sold-out product ----
+    // Same category, in stock, closest price first (up to 4), from the full catalog rather than the possibly
+    // search-narrowed grid. Options of the same variant group are skipped - the option picker already covers those.
+    let catalogCache = { at: 0, items: [] };
+    async function fullCatalog() {
+      if (Date.now() - catalogCache.at < 60000 && catalogCache.items.length) return catalogCache.items;
+      const response = await authFetch(`${BASE_URL}/cart/search`);
+      if (response.ok) catalogCache = { at: Date.now(), items: await response.json() };
+      return catalogCache.items;
+    }
+
+    async function loadModalAlternatives(productId) {
+      const box = document.getElementById("modalAlternatives");
+      box.classList.add("hidden");
+      box.innerHTML = "";
+      const product = products.find(p => p.productId === productId);
+      if (!product || product.productStock > 0 || !product.productCategory) return;
+      const catalog = await fullCatalog();
+      if (modalProductId !== productId) return; // the modal moved on while the catalog loaded
+      const category = product.productCategory.trim().toLowerCase();
+      const alternatives = catalog
+        .filter(p => p.productId !== productId && p.productStock > 0
+          && (p.productCategory || "").trim().toLowerCase() === category
+          && !(product.variantGroup && p.variantGroup === product.variantGroup))
+        .sort((a, b) => Math.abs(a.productPrice - product.productPrice) - Math.abs(b.productPrice - product.productPrice))
+        .slice(0, 4);
+      if (!alternatives.length) return;
+      box.innerHTML = `<h3>Available instead</h3><div class="fbt-strip">${alternatives.map(p => `
+        <button class="fbt-chip" style="cursor:pointer; text-align:left;" onclick="openAlternative(${p.productId})">
+          ${escapeHtml(p.productName)}
+          <div class="fbt-count">&#8377;${Number(p.productPrice).toFixed(2)} &middot; ${p.productStock} in stock</div>
+        </button>`).join("")}</div>`;
+      box.classList.remove("hidden");
+    }
+
+    // The grid may be narrowed by a search, so clear the filters first when the alternative is not in it.
+    async function openAlternative(productId) {
+      if (!products.some(p => p.productId === productId)) {
+        document.getElementById("searchName").value = "";
+        document.getElementById("searchCategory").value = "";
+        await loadProducts();
+      }
+      if (products.some(p => p.productId === productId)) openProductModal(productId);
+    }
+
+    // ---- one "Alert me" for restock and price drops ----
+    // Restock alerts live on the waitlist and price-drop alerts on the wishlist (that is where the "price when saved"
+    // baseline is kept), so the single control below simply keeps the right ones in step.
+    function productAlertActive(productId) {
+      return wishlistProductIds.has(productId) || waitlistProductIds.has(productId);
+    }
+
+    function renderModalAlert(productId) {
+      const box = document.getElementById("modalAlert");
+      const product = products.find(p => p.productId === productId);
+      if (!product) { box.innerHTML = ""; return; }
+      const outOfStock = product.productStock <= 0;
+      const active = productAlertActive(productId);
+      box.innerHTML = `<button class="${active ? "secondary" : ""}" style="width:auto;" onclick="setProductAlert(${productId}, ${!active})">${
+        active ? "Alerts on &#10003; - turn off" : outOfStock ? "Alert me when it is back or cheaper" : "Alert me if the price drops"}</button>
+        <span class="meta" style="display:block; margin-top:6px;">${outOfStock
+          ? "We email you when it is back in stock, and if its price drops."
+          : "We email you if its price drops below what it costs today."} Alerts use your wishlist${outOfStock ? " and restock waitlist" : ""}; turning them off removes it from both.</span>`;
+    }
+
+    async function setProductAlert(productId, on) {
+      const product = products.find(p => p.productId === productId);
+      const outOfStock = product && product.productStock <= 0;
+      const query = `phno=${encodeURIComponent(customerPhno)}&productId=${encodeURIComponent(productId)}`;
+      const calls = [];
+      if (on) {
+        if (outOfStock && !waitlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/waitlist/self/add?${query}`, { method: "POST" }));
+        if (!wishlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/wishlist/self/add?${query}`, { method: "POST" }));
+      } else {
+        if (waitlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/waitlist/self/remove?${query}`, { method: "DELETE" }));
+        if (wishlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/wishlist/self/remove?${query}`, { method: "DELETE" }));
+      }
+      await Promise.all(calls);
+      await Promise.all([loadWishlist(), loadWaitlist()]);
+      renderModalAlert(productId);
+    }
+
+    // "My alerts" in My account: every product being watched for a restock and/or a price drop, in one list.
+    function alertsHtml(waitlist) {
+      const ids = [...new Set([...wishlistItems.map(w => w.productId), ...waitlist.map(w => w.productId)])];
+      if (!ids.length && !searchWatches.length) {
+        return `<p style="color:var(--muted);">No alerts yet - open a product and tap "Alert me" to hear about restocks and price drops.</p>`;
+      }
+      return searchWatchRowsHtml() + ids.map(id => {
+        const waiting = waitlist.find(w => w.productId === id);
+        const saved = wishlistItems.find(w => w.productId === id);
+        const catalogProduct = products.find(p => p.productId === id);
+        const name = waiting ? waiting.productName : catalogProduct ? catalogProduct.productName : "Product #" + id;
+        const lines = [];
+        if (waiting) lines.push(`Restock: ${waiting.inStock ? `back in stock (${waiting.currentStock})` : "still out of stock"}${waiting.heldUntil ? ` - one is held for you until ${new Date(waiting.heldUntil).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : ""}`);
+        if (saved) {
+          const drop = priceDropsByProductId.get(id);
+          if (drop) lines.push(`Price: dropped &#8377;${drop.priceDrop.toFixed(2)} (was &#8377;${drop.priceWhenAdded.toFixed(2)}, now &#8377;${drop.currentPrice.toFixed(2)})`);
+          else if (saved.priceWhenAdded != null && catalogProduct) lines.push(`Price: &#8377;${Number(catalogProduct.productPrice).toFixed(2)} (no drop since &#8377;${Number(saved.priceWhenAdded).toFixed(2)})`);
+          else lines.push("Price: watching");
+        }
+        return `<div class="order-row">
+          <div><strong>${escapeHtml(name)}</strong>${lines.map(l => `<span class="meta">${l}</span>`).join("")}</div>
+          <button class="secondary" style="width:auto;" onclick="removeAlertInAccount(${id})">Remove</button>
+        </div>`;
+      }).join("");
+    }
+
+    async function removeAlertInAccount(productId) {
+      const query = `phno=${encodeURIComponent(customerPhno)}&productId=${encodeURIComponent(productId)}`;
+      const calls = [];
+      if (waitlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/waitlist/self/remove?${query}`, { method: "DELETE" }));
+      if (wishlistProductIds.has(productId)) calls.push(authFetch(`${BASE_URL}/wishlist/self/remove?${query}`, { method: "DELETE" }));
+      await Promise.all(calls);
+      await Promise.all([loadWishlist(), loadWaitlist()]);
+      loadAccountView();
+    }
+
+    // ---------- subscribe & save ----------
+    let subscriptionTerms = null;
+
+    async function loadSubscriptionTerms() {
+      if (subscriptionTerms) return subscriptionTerms;
+      const response = await fetch(`${BASE_URL}/subscriptions/terms`);
+      subscriptionTerms = response.ok ? await response.json() : { discountPercent: 0, intervalDays: [30], maxQuantity: 20 };
+      return subscriptionTerms;
+    }
+
+    async function renderSubscribeBox(product) {
+      const box = document.getElementById("modalSubscribe");
+      if (!product || product.productStock <= 0) { box.innerHTML = ""; return; }
+      const terms = await loadSubscriptionTerms();
+      if (!(terms.discountPercent > 0)) { box.innerHTML = ""; return; }
+      box.innerHTML = `
+        <strong>Subscribe &amp; save ${terms.discountPercent}%</strong>
+        <span class="meta"> &middot; cash on delivery, skip or cancel any time</span><br>
+        <input type="number" id="subQuantity" value="1" min="1" max="${terms.maxQuantity}" aria-label="Quantity" />
+        every
+        <select id="subInterval">${terms.intervalDays.map(d => `<option value="${d}"${d === 30 ? " selected" : ""}>${d} days</option>`).join("")}</select><br>
+        <label style="display:flex; align-items:center; gap:6px; margin:4px 0 8px;"><input type="checkbox" id="subStartNow" style="width:auto;" checked /> Send the first one now</label>
+        <button class="secondary" style="width:auto;" onclick="subscribeToProduct(${product.productId})">Subscribe</button>
+        <div id="subscribeMessage" class="meta"></div>`;
+    }
+
+    async function subscribeToProduct(productId) {
+      const message = document.getElementById("subscribeMessage");
+      const addressesResponse = await authFetch(`${BASE_URL}/addresses/byphno?phno=${encodeURIComponent(customerPhno)}`);
+      const addresses = addressesResponse.ok ? await addressesResponse.json() : [];
+      const address = addresses.find(a => a.isDefault) || addresses[0];
+      const response = await authFetch(`${BASE_URL}/subscriptions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phno: customerPhno,
+          productId,
+          quantity: Number(document.getElementById("subQuantity").value) || 1,
+          intervalDays: Number(document.getElementById("subInterval").value),
+          shippingAddressId: address ? address.id : null,
+          startNow: document.getElementById("subStartNow").checked
+        })
+      });
+      message.textContent = response.ok
+        ? "Subscribed! Find it under My account > Subscriptions." + (address ? "" : " (No saved address yet - add one in My account before the first delivery.)")
+        : ((await response.text()) || "Couldn't subscribe right now. Please try again.");
+    }
+
+    function subscriptionRowHtml(s) {
+      const product = products.find(p => p.productId === s.productId);
+      const name = product ? product.productName : "Product #" + s.productId;
+      const next = s.status === "ACTIVE" && s.nextRunAt ? ` &middot; next ${new Date(s.nextRunAt).toLocaleDateString()}` : "";
+      const buttons = s.status === "CANCELLED" ? "" : `
+        ${s.status === "ACTIVE"
+          ? `<button class="secondary" style="width:auto;" onclick="subscriptionAction(${s.id}, 'pause')">Pause</button>
+             <button class="secondary" style="width:auto;" onclick="subscriptionAction(${s.id}, 'skip')">Skip next</button>`
+          : `<button class="secondary" style="width:auto;" onclick="subscriptionAction(${s.id}, 'resume')">Resume</button>`}
+        <button class="secondary" style="width:auto;" onclick="subscriptionAction(${s.id}, 'cancel')">Cancel</button>`;
+      return `<div class="subscription-row">
+        <strong>${s.quantity} &times; ${escapeHtml(name)}</strong>
+        <span class="meta">every ${s.intervalDays} days &middot; ${s.discountPercent}% off &middot; ${escapeHtml(s.status)}${next} &middot; ${s.ordersPlaced} order(s) so far</span>
+        ${s.lastError && s.status !== "CANCELLED" ? `<div class="error-text">Last problem: ${escapeHtml(s.lastError)}</div>` : ""}
+        <div>${buttons}</div></div>`;
+    }
+
+    async function subscriptionAction(id, action) {
+      if (action === "cancel" && !await askConfirm("Cancel this subscription?")) return;
+      const url = `${BASE_URL}/subscriptions/${id}` + (action === "cancel" ? "" : "/" + action) + `?phno=${encodeURIComponent(customerPhno)}`;
+      const response = await authFetch(url, { method: action === "cancel" ? "DELETE" : "PUT" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't update the subscription."); return; }
+      loadAccountView();
+    }
+
+    function closeProductModal() {
+      document.getElementById("productModal").classList.add("hidden");
+      modalProductId = null;
+      if (productIdFromHash() !== null) setProductHash(null);
+    }
+
+    // Keyboard shortcuts: "/" jumps to the search box (unless you are already typing somewhere), Esc closes the
+    // top-most open dialog - the compare dialog sits above the product dialog, so it goes first.
+    document.addEventListener("keydown", event => {
+      if (event.ctrlKey || event.metaKey || event.altKey) return;
+      if (event.key === "Escape") {
+        const compare = document.getElementById("compareModal");
+        const product = document.getElementById("productModal");
+        if (!compare.classList.contains("hidden")) { closeCompare(); event.preventDefault(); }
+        else if (!product.classList.contains("hidden")) { closeProductModal(); event.preventDefault(); }
+        return;
+      }
+      if (event.key !== "/") return;
+      const target = event.target;
+      if (target && (/^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName) || target.isContentEditable)) return;
+      const search = document.getElementById("searchName");
+      const shop = document.getElementById("shopSection");
+      if (!search || !shop || shop.classList.contains("hidden")) return;
+      if (!document.getElementById("productModal").classList.contains("hidden")
+          || !document.getElementById("compareModal").classList.contains("hidden")) return;
+      event.preventDefault();
+      search.focus();
+      search.select();
+    });
+
+    async function loadModalQuestions(productId) {
+      const box = document.getElementById("modalQuestions");
+      const response = await authFetch(`${BASE_URL}/questions/product?productId=${productId}`);
+      const items = response.ok ? await response.json() : [];
+      box.innerHTML = items.length
+        ? items.map(q => `
+          <div class="review-item">
+            <div class="review-meta">Q: ${escapeHtml(q.question)}</div>
+            <div class="review-comment">A: ${escapeHtml(q.answer)}</div>
+          </div>`).join("")
+        : `<p style="color:var(--muted); font-size:14px;">No answered questions yet.</p>`;
+    }
+
+    // The question only becomes visible to other shoppers once the store has answered it.
+    async function askQuestion() {
+      const input = document.getElementById("questionText");
+      const message = document.getElementById("questionMessage");
+      const question = input.value.trim();
+      message.classList.remove("hidden");
+      message.style.color = "";
+      if (question.length < 5) { message.textContent = "Please write at least 5 characters."; return; }
+      const response = await authFetch(`${BASE_URL}/questions/ask?phno=${encodeURIComponent(customerPhno)}&productId=${modalProductId}&question=${encodeURIComponent(question)}`, { method: "POST" });
+      if (response.ok) {
+        input.value = "";
+        message.style.color = "var(--muted)";
+        message.textContent = "Thanks! Your question will show here once we've answered it.";
+      } else {
+        message.textContent = (await response.text()) || "Couldn't send your question. Please try again.";
+      }
+    }
+
+    // Reviews of one option are shown under every option of its group; say which option this one was written for
+    // (only when it is a different one from the product being looked at).
+    function reviewOptionLabel(review, viewedProductId) {
+      if (!review.productId || review.productId === viewedProductId) return "";
+      const option = products.find(p => p.productId === review.productId);
+      return option && option.variantLabel ? ` <span class="meta">(${escapeHtml(option.variantLabel)})</span>` : "";
+    }
+
+    // A review photo is only ever one we served (an http(s) URL); it opens full size in a new tab.
+    function reviewPhotoHtml(photoUrl) {
+      if (!photoUrl || !/^https?:\/\//i.test(photoUrl)) return "";
+      return `<a href="${escapeHtml(photoUrl)}" target="_blank" rel="noopener noreferrer" title="Open the photo">
+        <img class="review-photo" src="${escapeHtml(photoUrl)}" alt="Photo from this review" loading="lazy"
+             style="max-width:160px; max-height:160px; border-radius:8px; margin:6px 0; display:block;" onerror="this.parentElement.style.display='none'" /></a>`;
+    }
+
+    // Uploads the chosen picture (if any) and returns its URL; null when nothing was chosen. Throws a message on failure.
+    async function uploadReviewPhoto() {
+      const input = document.getElementById("reviewPhoto");
+      const file = input && input.files && input.files[0];
+      if (!file) return null;
+      if (!/^image\/(jpeg|png)$/.test(file.type)) throw new Error("Please choose a JPEG or PNG photo.");
+      if (file.size > 2 * 1024 * 1024) throw new Error("That photo is over 2 MB - please choose a smaller one.");
+      const form = new FormData();
+      form.append("file", file);
+      const response = await authFetch(`${BASE_URL}/cart/reviews/photo?phno=${encodeURIComponent(customerPhno)}`, { method: "POST", body: form });
+      if (!response.ok) {
+        const text = (await response.text()).trim();
+        throw new Error(text && text.length < 200 ? text : "The photo could not be uploaded.");
+      }
+      return (await response.json()).url;
+    }
+
+    async function loadModalReviews(productId) {
+      const box = document.getElementById("modalReviews");
+      const response = await authFetch(`${BASE_URL}/cart/reviews?productId=${productId}`);
+      const reviews = response.ok ? await response.json() : [];
+      box.innerHTML = reviews.length
+        ? reviews.map(r => `
+          <div class="review-item">
+            <div class="review-meta">${escapeHtml(r.reviewerName)} &middot; <span class="stars">${starsFor(r.rating)}</span>${reviewOptionLabel(r, productId)}${r.verifiedPurchase ? ' <span class="verified-badge" title="This reviewer bought this product from Charan Mart">&#10003; Verified purchase</span>' : ""}</div>
+            <div class="review-comment">${escapeHtml(r.comment || "")}</div>
+            ${reviewPhotoHtml(r.photoUrl)}
+            <button class="details-link" style="font-size:12px;" onclick="reportReview(${r.reviewId})">Report this review</button>
+          </div>
+        `).join("")
+        : `<p style="color:var(--muted); font-size:14px;">No reviews yet - be the first!</p>`;
+    }
+
+    // A report only queues the review for an admin to look at (the review stays visible until they hide it).
+    async function reportReview(reviewId) {
+      const reason = await askText("Why are you reporting this review? (optional)");
+      if (reason === null) return;
+      const response = await authFetch(`${BASE_URL}/cart/reviews/flag?productId=${modalProductId}&reviewId=${reviewId}`
+        + (reason.trim() ? `&reason=${encodeURIComponent(reason.trim())}` : ""), { method: "POST" });
+      alert(response.ok ? "Thanks - we'll take a look at this review." : "Couldn't send your report. Please try again.");
+    }
+
+    async function loadModalGallery(productId) {
+      const box = document.getElementById("modalGallery");
+      const response = await authFetch(`${BASE_URL}/cart/gallery?productId=${productId}`);
+      const images = response.ok ? await response.json() : [];
+      box.classList.toggle("hidden", images.length === 0);
+      box.innerHTML = images.map(img => `
+        <img src="${escapeHtml(img.imageUrl)}" alt="" style="width:100px; height:100px; object-fit:cover; border-radius:8px;" onerror="this.style.display='none'" />
+      `).join("");
+    }
+
+    async function loadModalFrequentlyBoughtTogether(productId) {
+      const box = document.getElementById("modalFbt");
+      const response = await authFetch(`${BASE_URL}/cart/frequentlyboughttogether?productId=${productId}`);
+      const items = response.ok ? await response.json() : [];
+      box.innerHTML = items.length
+        ? items.map(item => `
+          <div class="fbt-chip">
+            ${escapeHtml(item.productName)}
+            <div class="fbt-count">bought together ${item.timesBoughtTogether}&times;</div>
+          </div>
+        `).join("")
+        : `<p style="color:var(--muted); font-size:14px;">No pairing data yet.</p>`;
+    }
+
+    async function submitReview() {
+      const errorBox = document.getElementById("reviewFormError");
+      errorBox.classList.add("hidden");
+
+      const reviewerName = document.getElementById("reviewerName").value.trim();
+      // Reviews are posted under the signed-in phone number - the server rejects any other.
+      const reviewerPhno = customerPhno;
+      const rating = Number(document.getElementById("reviewRating").value);
+      const comment = document.getElementById("reviewComment").value.trim();
+
+      if (!reviewerName || !reviewerPhno) {
+        errorBox.textContent = "Please enter your name.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      let photoUrl = null;
+      try {
+        photoUrl = await uploadReviewPhoto();
+      } catch (e) {
+        errorBox.textContent = e.message;
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      const response = await authFetch(`${BASE_URL}/cart/reviews?productId=${modalProductId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewerName, reviewerPhno: Number(reviewerPhno), rating, comment, photoUrl })
+      });
+
+      if (!response.ok) {
+        errorBox.textContent = "Could not submit your review. You may have already reviewed this product.";
+        errorBox.classList.remove("hidden");
+        return;
+      }
+
+      document.getElementById("reviewerName").value = "";
+      document.getElementById("reviewComment").value = "";
+      document.getElementById("reviewPhoto").value = "";
+      await loadModalReviews(modalProductId);
+      await loadRatings();
+      const rating2 = ratingsByProductId.get(modalProductId);
+      document.getElementById("modalRatingSummary").innerHTML = rating2 && rating2.reviewCount > 0
+        ? `<span class="stars">${starsFor(rating2.averageRating)}</span> ${rating2.averageRating.toFixed(1)} (${rating2.reviewCount} reviews)`
+        : "No reviews yet";
+    }
+
+    // Small celebration when an order goes through. Pure CSS pieces that remove themselves; skipped for reduced motion.
+    function celebrate() {
+      if (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const colors = ["#7c3aed", "#f97316", "#16a34a", "#0ea5e9", "#eab308", "#ec4899"];
+      for (let i = 0; i < 70; i++) {
+        const piece = document.createElement("span");
+        piece.className = "confetti-piece";
+        piece.style.left = Math.random() * 100 + "vw";
+        piece.style.background = colors[i % colors.length];
+        piece.style.animationDuration = (1.8 + Math.random() * 1.6) + "s";
+        piece.style.animationDelay = (Math.random() * 0.5) + "s";
+        document.body.appendChild(piece);
+        setTimeout(() => piece.remove(), 4200);
+      }
+    }
+    // Phone-only bar pinned to the bottom; hidden while the cart panel itself is on screen or the cart is empty.
+    function updateCartBar() {
+      let bar = document.getElementById("cartBar");
+      if (!bar) {
+        bar = document.createElement("button");
+        bar.id = "cartBar";
+        bar.className = "cart-bar hidden";
+        bar.addEventListener("click", () => document.getElementById("cartPanel").scrollIntoView({ behavior: "smooth", block: "start" }));
+        document.body.appendChild(bar);
+        window.addEventListener("scroll", updateCartBar, { passive: true });
+        window.addEventListener("resize", updateCartBar);
+      }
+      const count = cart.reduce((sum, item) => sum + item.quantity, 0);
+      const panelRect = document.getElementById("cartPanel").getBoundingClientRect();
+      const cartOnScreen = panelRect.top < innerHeight * 0.85 && panelRect.bottom > 0;
+      bar.classList.toggle("hidden", !count || cartOnScreen);
+      bar.setAttribute("aria-label", `View cart: ${count} item${count === 1 ? "" : "s"}, ${document.getElementById("cartTotal").textContent}`);
+      bar.innerHTML = `<span>🛒 ${count} item${count === 1 ? "" : "s"}</span><span>${document.getElementById("cartTotal").textContent} · View cart →</span>`;
+    }
+    function bumpCart() {
+      const box = document.getElementById("cartLines");
+      const panel = box && box.closest("section, aside, .card, .panel") || box;
+      if (!panel) return;
+      panel.classList.remove("cart-bump"); void panel.offsetWidth; panel.classList.add("cart-bump");
+    }
+
+    function addToCart(productId) {
+      const product = products.find(p => p.productId === productId);
+      if (!product) return;
+      const qtyInput = document.getElementById(`qty_${productId}`);
+      // Whole units only, at least 1, and never more than is in stock (counting what is already in the cart).
+      const wanted = Math.max(1, Math.floor(Number(qtyInput ? qtyInput.value : 1)) || 1);
+      const existing = cart.find(item => item.productId === productId);
+      const room = Math.max(0, product.productStock - (existing ? existing.quantity : 0));
+      if (room <= 0) { showToast(`You already have all ${product.productStock} ${product.productName} in your cart.`, "error"); return; }
+      const quantity = Math.min(wanted, room);
+      if (quantity < wanted) showToast(`Only ${product.productStock} ${product.productName} in stock - added ${quantity}.`, "error");
+      else showToast(`Added ${quantity} × ${product.productName} to your cart`, "ok");
+      if (qtyInput) qtyInput.value = 1;
+      if (existing) {
+        existing.quantity += quantity;
+      } else {
+        cart.push({ productId, name: product.productName, price: product.productPrice, quantity });
+      }
+      renderCart();
+      bumpCart();
+    }
+
+    // Opens a print-friendly receipt for one of the logged-in customer's own orders in a new window (Print / Save
+    // as PDF via the browser). Data comes from GET /cart/{id}/invoice, which checks the phone number matches.
+    // Where this order's refund went - the server's own summary sentence plus when the order was last cancelled/returned.
+    // Inline story of one order (GET /cart/{id}/timeline), shown under its row; pressing the button again hides it.
+    async function toggleOrderTimeline(orderId, button) {
+      const row = button.closest(".order-row");
+      const existing = row.nextElementSibling;
+      if (existing && existing.classList.contains("order-timeline")) { existing.remove(); return; }
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/timeline?phno=${encodeURIComponent(customerPhno)}`);
+      if (!response.ok) { alert("Couldn't load the timeline for order #" + orderId + "."); return; }
+      const steps = await response.json();
+      const box = document.createElement("div");
+      box.className = "order-timeline";
+      box.style.cssText = "margin:-4px 0 12px 12px; padding:8px 12px; border-left:3px solid var(--border); font-size:13px;";
+      box.innerHTML = steps.length ? steps.map(s => `<div style="margin:4px 0;"><strong>${escapeHtml(s.title)}</strong>
+          <span class="meta">${new Date(s.at).toLocaleString()}</span></div>`).join("") : `<span class="meta">Nothing recorded yet.</span>`;
+      row.after(box);
+    }
+
+    async function showRefundStatus(orderId) {
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/refunds?phno=${encodeURIComponent(customerPhno)}`);
+      if (!response.ok) { alert("Couldn't load the refund details for order #" + orderId + "."); return; }
+      const refund = await response.json();
+      const when = refund.lastChangeAt ? "\n\nLast change: " + new Date(refund.lastChangeAt).toLocaleString() : "";
+      alert("Order #" + orderId + "\n\n" + refund.summary + when);
+    }
+
+    async function showInvoice(orderId) {
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/invoice?phno=${encodeURIComponent(customerPhno)}`);
+      if (!response.ok) { alert("Couldn't load the invoice for order #" + orderId + "."); return; }
+      const inv = await response.json();
+      const money = n => "₹" + Number(n).toFixed(2);
+      const rows = inv.lines.map(l => `<tr><td>${escapeHtml(l.productName)}</td><td class="r">${l.quantity}</td><td class="r">${money(l.unitPrice)}</td><td class="r">${money(l.lineTotal)}</td></tr>`).join("");
+      const adj = [];
+      if (inv.discountAmount > 0) adj.push(`<tr><td colspan="3" class="r">Coupon${inv.couponCode ? " (" + escapeHtml(inv.couponCode) + ")" : ""}</td><td class="r">-${money(inv.discountAmount)}</td></tr>`);
+      if (inv.deliveryFee > 0) adj.push(`<tr><td colspan="3" class="r">Delivery fee</td><td class="r">+${money(inv.deliveryFee)}</td></tr>`);
+      if (inv.pointsRedeemed > 0) adj.push(`<tr><td colspan="3" class="r">Loyalty points redeemed</td><td class="r">-${money(inv.pointsRedeemed)}</td></tr>`);
+      if (inv.storeCreditUsed > 0) adj.push(`<tr><td colspan="3" class="r">Store credit used</td><td class="r">-${money(inv.storeCreditUsed)}</td></tr>`);
+      // Cancelled/returned units since checkout - same wording as the order list ("taken off" for cash).
+      const refundRows = inv.refundedAmount > 0
+        ? `<tr><td colspan="3" class="r">${inv.paymentMethod === "CASH" ? "Taken off" : "Refunded"} for cancelled or returned items</td><td class="r">-${money(inv.refundedAmount)}</td></tr>`
+          + `<tr class="total"><td colspan="3" class="r">Net</td><td class="r">${money(inv.totalPrice - inv.refundedAmount)}</td></tr>`
+        : "";
+      const html =`<!doctype html><html><head><meta charset="utf-8"><title>Invoice #${inv.orderId}</title>
+        <style>body{font-family:Arial,sans-serif;max-width:640px;margin:30px auto;color:#222}h1{margin:0}table{width:100%;border-collapse:collapse;margin-top:16px}
+        th,td{padding:8px;border-bottom:1px solid #ddd;text-align:left}.r{text-align:right}.total td{font-weight:bold;border-top:2px solid #222}
+        .meta{color:#555;font-size:14px;line-height:1.6}button{margin-top:20px;padding:8px 16px}@media print{button{display:none}}</style></head><body>
+        <h1>${escapeHtml(inv.tax && inv.tax.sellerName || "Charan Mart")}</h1><div class="meta">${inv.tax && inv.tax.sellerGstin ? "GSTIN: " + escapeHtml(inv.tax.sellerGstin) + "<br>" : ""}
+        <strong>Tax invoice${inv.invoiceNumber ? " " + escapeHtml(inv.invoiceNumber) : ""}</strong>${inv.invoiceDate ? " &middot; " + new Date(inv.invoiceDate).toLocaleDateString() : ""}<br>
+        Order #${inv.orderId}<br>
+        ${inv.placedAt ? "Date: " + new Date(inv.placedAt).toLocaleString() + "<br>" : ""}
+        Customer: ${escapeHtml(inv.customerName || "")} (${inv.customerPhno})<br>
+        ${inv.shippingAddress ? "Ship to: " + escapeHtml(inv.shippingAddress) + "<br>" : ""}
+        ${inv.deliveryNote ? "Delivery instructions: " + escapeHtml(inv.deliveryNote) + "<br>" : ""}
+        ${inv.deliverySlot ? "Preferred delivery window: " + escapeHtml(inv.deliverySlot.charAt(0) + inv.deliverySlot.slice(1).toLowerCase()) + "<br>" : ""}
+        Payment: ${escapeHtml(inv.paymentMethod)} &middot; ${inv.paid ? "Paid" : "Unpaid"} &middot; Status: ${escapeHtml(inv.status)}</div>
+        <table><tr><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr>${rows}${adj.join("")}
+        <tr class="total"><td colspan="3" class="r">Total charged</td><td class="r">${money(inv.totalPrice)}</td></tr>${refundRows}</table>
+        ${gstTableHtml(inv.tax, money)}
+        ${creditNotesHtml(inv.creditNotes, money)}
+        <p class="meta">Item prices show today's catalog price; the total is what this order was actually charged.</p>
+        <button onclick="window.print()">Print / Save as PDF</button></body></html>`;
+      const w = window.open("", "_blank");
+      if (!w) { alert("Please allow pop-ups to view the invoice."); return; }
+      w.document.write(html);
+      w.document.close();
+    }
+
+    // The PDF endpoint needs the customer's session header, so fetch it as a blob and hand the browser a download.
+    async function downloadInvoicePdf(orderId) {
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/invoice.pdf?phno=${encodeURIComponent(customerPhno)}`);
+      if (!response.ok) { alert("Couldn't download the invoice for order #" + orderId + "."); return; }
+      const url = URL.createObjectURL(await response.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "invoice-order-" + orderId + ".pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    }
+
+    // A receipt with no prices, to hand over with a gift.
+    async function printGiftReceipt(orderId) {
+      const response = await authFetch(`${BASE_URL}/cart/${encodeURIComponent(orderId)}/gift-receipt`);
+      if (!response.ok) { alert((await response.text()) || "Could not prepare the gift receipt."); return; }
+      const g = await response.json();
+      const w = window.open("about:blank", "_blank");
+      if (!w) { alert("New tab blocked. Please allow popups for this page."); return; }
+      w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Gift receipt</title><style>
+        body{font-family:Georgia,serif;max-width:480px;margin:32px auto;color:#111;text-align:center}
+        .card{border:2px dashed #555;padding:16px;margin:16px 0;font-style:italic;font-size:18px}
+        ul{list-style:none;padding:0;text-align:left} li{padding:4px 0;border-bottom:1px solid #ddd}</style></head><body>
+        <h1>A gift for you</h1>
+        ${g.giftMessage ? `<div class="card">&ldquo;${escapeHtml(g.giftMessage)}&rdquo;</div>` : ""}
+        <ul>${g.lines.map(l => `<li>${l.quantity} &times; ${escapeHtml(l.name)}</li>`).join("")}</ul>
+        <p>Order #${g.orderId}</p></body></html>`);
+      w.document.close();
+      w.focus();
+      w.print();
+    }
+
+    async function emailInvoice(orderId) {
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/invoice/email?phno=${encodeURIComponent(customerPhno)}`, { method: "POST" });
+      if (response.ok) {
+        const result = await response.json();
+        alert("Invoice for order #" + orderId + " sent to " + result.sentTo + ".");
+        return;
+      }
+      let message = "Couldn't email the invoice right now. Please try again.";
+      message = (await response.text()) || message;
+      alert(message);
+    }
+
+    // GST breakdown for the printable invoice (prices include GST; this splits it out). Empty when nothing is left.
+    function gstTableHtml(tax, money) {
+      if (!tax || !tax.lines || !tax.lines.length) return "";
+      const head = tax.interState
+        ? "<th>Item</th><th>HSN</th><th class=\"r\">GST %</th><th class=\"r\">Taxable</th><th class=\"r\">IGST</th><th class=\"r\">Total</th>"
+        : "<th>Item</th><th>HSN</th><th class=\"r\">GST %</th><th class=\"r\">Taxable</th><th class=\"r\">CGST</th><th class=\"r\">SGST</th><th class=\"r\">Total</th>";
+      const row = l => `<tr><td>${escapeHtml(l.productName)} &times; ${l.quantity}</td><td>${escapeHtml(l.hsnCode || "-")}</td><td class="r">${l.gstRate}</td><td class="r">${money(l.taxableValue)}</td>`
+        + (tax.interState ? `<td class="r">${money(l.igst)}</td>` : `<td class="r">${money(l.cgst)}</td><td class="r">${money(l.sgst)}</td>`)
+        + `<td class="r">${money(l.total)}</td></tr>`;
+      const totals = `<tr class="total"><td colspan="3" class="r">Total</td><td class="r">${money(tax.taxableValue)}</td>`
+        + (tax.interState ? `<td class="r">${money(tax.igst)}</td>` : `<td class="r">${money(tax.cgst)}</td><td class="r">${money(tax.sgst)}</td>`)
+        + `<td class="r">${money(tax.taxableValue + tax.totalTax)}</td></tr>`;
+      return `<h3 style="margin-top:24px;">GST included in the prices</h3>
+        <div class="meta">${tax.placeOfSupply ? "Place of supply: " + escapeHtml(tax.placeOfSupply) + " &middot; " : ""}${tax.interState ? "Inter-state (IGST)" : "Within state (CGST + SGST)"}</div>
+        <table><tr>${head}</tr>${tax.lines.map(row).join("")}${totals}</table>
+        <p class="meta">Tax is worked out on what was supplied (cancelled or returned units are left out), after any coupon discount. Loyalty points and store credit are a way of paying, so they don't change it.</p>`;
+    }
+
+    // GST credit notes for units cancelled or returned after the invoice was issued (the tax table above already
+    // excludes those units; these are the documents that reverse the tax on the books).
+    function creditNotesHtml(notes, money) {
+      if (!notes || !notes.length) return "";
+      const gst = l => Number(l.cgst) + Number(l.sgst) + Number(l.igst);
+      const label = n => n.reason === "EXCHANGE" ? (n.kind === "SUPPLEMENTARY_INVOICE" ? "Supplementary invoice - exchange for a dearer item" : "Credit note - exchange for a cheaper item") : n.reason === "RETURNED" ? "Returned" : "Cancelled";
+      return `<h3 style="margin-top:24px;">${notes.some(n => n.kind === "SUPPLEMENTARY_INVOICE") ? "Credit notes and supplementary invoices" : "Credit notes"}</h3>` + notes.map(n => `
+        <div class="meta"><strong>${escapeHtml(n.number)}</strong> &middot; ${new Date(n.issuedAt).toLocaleDateString()} &middot; ${label(n)} &middot; against ${escapeHtml(n.invoiceNumber || "")}</div>
+        <table><tr><th>Item</th><th>HSN</th><th class="r">GST %</th><th class="r">Taxable</th><th class="r">GST</th><th class="r">Value</th></tr>
+        ${n.lines.map(l => `<tr><td>${escapeHtml(l.productName)} &times; ${l.quantity}</td><td>${escapeHtml(l.hsnCode || "-")}</td><td class="r">${l.gstRate}</td><td class="r">${money(l.taxableValue)}</td><td class="r">${money(gst(l))}</td><td class="r">${money(l.total)}</td></tr>`).join("")}
+        <tr class="total"><td colspan="3" class="r">Total</td><td class="r">${money(n.taxableValue)}</td><td class="r">${money(gst(n))}</td><td class="r">${money(n.total)}</td></tr></table>`).join("");
+    }
+
+    // "Buy again": copies a past order's lines back into the cart using the CURRENT catalog price/stock (not what
+    // was paid then). Lines whose product is gone or out of stock are skipped, and quantities are capped at
+    // current stock; the customer is told exactly what was adjusted. Purely client-side - checkout still
+    // revalidates everything server-side.
+    let accountOrders = [];
+    // ---- shared order status: shop.html#track=<token> ----
+    // A read-only link to one order's status and timeline (no address, items, prices or phone number). The token is the
+    // credential; it stops working after 30 days or when the customer taps Stop sharing.
+    async function shareOrderStatus(orderId) {
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/share?phno=${encodeURIComponent(customerPhno)}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't make a link. Please try again."); return; }
+      const link = await response.json();
+      const url = location.origin + "/shop.html#track=" + link.token;
+      const note = { textContent: "" };
+      await shareOrCopy({ title: `Order #${orderId} status`, text: `Follow my order #${orderId} from Charan Mart`, url }, note);
+      showToast(note.textContent || "Link ready to share.");
+    }
+
+    async function stopSharingOrder(orderId) {
+      const response = await authFetch(`${BASE_URL}/cart/${orderId}/share?phno=${encodeURIComponent(customerPhno)}`, { method: "DELETE" });
+      if (!response.ok) { alert("Couldn't stop sharing. Please try again."); return; }
+      const result = await response.json();
+      showToast(result.revoked ? "Sharing stopped - the link no longer works." : "This order wasn't being shared.");
+    }
+
+    function closeSharedTrack() {
+      document.getElementById("sharedTrackSection").classList.add("hidden");
+      try { history.replaceState(null, "", location.pathname + location.search); } catch (e) {}
+      if (!customerToken) document.getElementById("loginSection").classList.remove("hidden");
+    }
+
+    async function openSharedTrack() {
+      const m = /^#track=([0-9a-f]{32})$/.exec(location.hash);
+      if (!m) return;
+      document.getElementById("loginSection").classList.add("hidden");
+      const section = document.getElementById("sharedTrackSection");
+      const body = document.getElementById("sharedTrackBody");
+      section.classList.remove("hidden");
+      body.innerHTML = `<p style="color:var(--muted);">Loading...</p>`;
+      try {
+        const response = await fetch(`${BASE_URL}/track/${m[1]}`);
+        if (!response.ok) { body.innerHTML = `<p>This link is not valid any more. Ask the person who sent it for a new one.</p>`; return; }
+        const order = await response.json();
+        document.getElementById("sharedTrackTitle").textContent = `Order #${order.orderId}`;
+        body.innerHTML = `
+          ${orderStepperHtml(order.status, order.timeline)}
+          <div class="cart-line"><span>Status</span><span>${escapeHtml(order.status)}</span></div>
+          ${order.carrier || order.trackingNumber ? `<div class="cart-line"><span>Shipment</span><span>${order.carrier ? escapeHtml(order.carrier) : ""}${order.carrier && order.trackingNumber ? ", " : ""}${order.trackingNumber ? "tracking " + escapeHtml(order.trackingNumber) : ""}</span></div>` : ""}
+          ${order.status === "SHIPPED" && order.expectedDeliveryDate ? `<div class="cart-line"><span>Expected by</span><span>${escapeHtml(order.expectedDeliveryDate)}</span></div>` : ""}
+          ${order.timeline.map(e => `<div class="cart-line"><span>${escapeHtml(e.status)}</span><span>${new Date(e.timestamp).toLocaleString()}</span></div>`).join("")}`;
+      } catch (e) {
+        body.innerHTML = `<p>Couldn't load this order right now. Please try again.</p>`;
+      }
+    }
+
+    async function reorderMyOrder(orderId) {
+      const order = accountOrders.find(o => o.orderId === orderId);
+      if (!order || !order.orderItems || !order.orderItems.length) return;
+      // The grid's `products` may be narrowed by a search/category filter, so look prices/stock up in the full catalog.
+      const catalogResponse = await authFetch(`${BASE_URL}/cart/search`);
+      if (!catalogResponse.ok) { alert("Couldn't load the catalog - please try again."); return; }
+      const catalog = await catalogResponse.json();
+      const notes = [];
+      let added = 0;
+      order.orderItems.forEach(line => {
+        const product = catalog.find(p => p.productId === line.productId);
+        if (!product) { notes.push(`Product #${line.productId} is no longer available.`); return; }
+        const existing = cart.find(i => i.productId === product.productId);
+        const room = product.productStock - (existing ? existing.quantity : 0);
+        if (room <= 0) { notes.push(`${product.productName} is out of stock.`); return; }
+        const qty = Math.min(line.productQuantity, room);
+        if (qty < line.productQuantity) notes.push(`${product.productName}: only ${qty} of ${line.productQuantity} available.`);
+        if (existing) {
+          existing.quantity += qty;
+        } else {
+          cart.push({ productId: product.productId, name: product.productName, price: product.productPrice, quantity: qty });
+        }
+        added++;
+      });
+      renderCart();
+      alert((added ? `Added ${added} item(s) from order #${orderId} to your cart.` : `Nothing from order #${orderId} could be added.`)
+        + (notes.length ? "\n\n" + notes.join("\n") : ""));
+    }
+
+    function removeFromCart(productId) {
+      cart = cart.filter(item => item.productId !== productId);
+      renderCart();
+    }
+
+    // Adjusts an already-added line's quantity by +1/-1 rather than making the customer remove and re-add it.
+    // Dropping to 0 removes the line entirely, same as the existing remove button. Clamped against the
+    // product's known stock client-side as a convenience - the real limit is still enforced server-side at
+    // checkout regardless.
+    function changeCartQuantity(productId, delta) {
+      const item = cart.find(i => i.productId === productId);
+      if (!item) return;
+      const product = products.find(p => p.productId === productId);
+      const maxStock = product ? product.productStock : Infinity;
+      item.quantity = Math.min(maxStock, item.quantity + delta);
+      if (item.quantity <= 0) {
+        cart = cart.filter(i => i.productId !== productId);
+      }
+      renderCart();
+    }
+
+    // ---- Save for later ----
+    // Lines parked out of the cart (not in the total, not checked out). Kept per phone number in localStorage only -
+    // it is a convenience list, so a browser that loses it just loses the parking spot, never an order.
+    let savedForLater = []; // {productId, name, price, quantity}
+    const laterStorageKey = () => `shopLater_${customerPhno}`;
+
+    function loadSavedForLater() {
+      try { savedForLater = JSON.parse(localStorage.getItem(laterStorageKey()) || "[]"); } catch (e) { savedForLater = []; }
+      if (!Array.isArray(savedForLater)) savedForLater = [];
+      renderLater();
+    }
+
+    function persistLater() {
+      if (!customerPhno) return;
+      try {
+        if (savedForLater.length) localStorage.setItem(laterStorageKey(), JSON.stringify(savedForLater));
+        else localStorage.removeItem(laterStorageKey());
+      } catch (e) { /* storage full/blocked - the list just won't persist */ }
+    }
+
+    function saveForLater(productId) {
+      const item = cart.find(i => i.productId === productId);
+      if (!item) return;
+      cart = cart.filter(i => i.productId !== productId);
+      const parked = savedForLater.find(i => i.productId === productId);
+      if (parked) parked.quantity += item.quantity;
+      else savedForLater.push({ productId: item.productId, name: item.name, price: item.price, quantity: item.quantity });
+      persistLater();
+      renderCart();
+    }
+
+    function removeLater(productId) {
+      savedForLater = savedForLater.filter(i => i.productId !== productId);
+      persistLater();
+      renderLater();
+    }
+
+    // Moving back re-checks the live catalog: the price may have changed and the stock may be gone.
+    async function moveLaterToCart(productId) {
+      const parked = savedForLater.find(i => i.productId === productId);
+      if (!parked) return;
+      const response = await authFetch(`${BASE_URL}/cart/search`);
+      if (!response.ok) { alert("Couldn't check stock - please try again."); return; }
+      const product = (await response.json()).find(p => p.productId === productId);
+      if (!product) { alert(`${parked.name} is no longer available.`); removeLater(productId); return; }
+      const existing = cart.find(i => i.productId === productId);
+      const room = product.productStock - (existing ? existing.quantity : 0);
+      if (room <= 0) { alert(`${product.productName} is out of stock right now. It stays saved.`); return; }
+      const quantity = Math.min(parked.quantity, room);
+      if (existing) existing.quantity += quantity;
+      else cart.push({ productId, name: product.productName, price: product.productPrice, quantity });
+      if (quantity < parked.quantity) {
+        parked.quantity -= quantity;
+        alert(`Only ${quantity} of ${product.productName} available - the rest stays saved.`);
+        persistLater();
+      } else {
+        savedForLater = savedForLater.filter(i => i.productId !== productId);
+        persistLater();
+      }
+      renderCart();
+    }
+
+    function renderLater() {
+      const box = document.getElementById("laterBox");
+      if (!box) return;
+      box.innerHTML = savedForLater.length
+        ? `<div class="later-title">Saved for later (${savedForLater.length})</div>` + savedForLater.map(item => `
+          <div class="cart-line">
+            <span>${escapeHtml(item.name)} <span class="meta">&times; ${item.quantity}</span></span>
+            <span><button class="later-btn" onclick="moveLaterToCart(${item.productId})">Move to cart</button>
+              <button onclick="removeLater(${item.productId})">&times;</button></span>
+          </div>`).join("")
+        : "";
+    }
+
+    // "Add Rs. X more for free delivery": only when a fee exists, the customer's threshold is a real amount and the cart is not empty.
+    function freeDeliveryProgress(goods, baseFee, freeAbove, hasItems) {
+      if (!hasItems || !(baseFee > 0) || !(freeAbove > 0)) return null;
+      if (goods >= freeAbove) return { done: true, percent: 100, text: "You have unlocked free delivery" };
+      const more = Math.ceil((freeAbove - goods) * 100) / 100;
+      return { done: false, percent: Math.max(4, Math.round(goods / freeAbove * 100)), text: `Add Rs. ${more.toFixed(2)} more for free delivery` };
+    }
+    function renderFreeDeliveryBar(goods, baseFee, freeAbove) {
+      const bar = document.getElementById("freeDeliveryBar");
+      const progress = freeDeliveryProgress(goods, baseFee, freeAbove, cart.length > 0);
+      bar.classList.toggle("hidden", !progress);
+      if (!progress) return;
+      bar.classList.toggle("done", progress.done);
+      document.getElementById("freeDeliveryText").textContent = progress.text;
+      document.getElementById("freeDeliveryFill").style.width = progress.percent + "%";
+    }
+    // Bundles: fixed-price sets. The server applies the discount at checkout (BundleService.discountFor); this mirrors
+    // its rule (biggest saving first, each unit used by one set) so the cart total shown here matches.
+    let bundles = [];
+    // "Buy it again": the products this customer has ordered most often (from their recent orders), shown above the grid
+    // on the plain All products view. Built from /cart/history and the catalog already in memory - no new endpoint.
+    let buyAgainCounts = new Map();
+    async function loadBuyAgain() {
+      try {
+        const response = await authFetch(`${BASE_URL}/cart/history?phno=${encodeURIComponent(customerPhno)}&page=0&size=20`);
+        const page = response.ok ? await response.json() : null;
+        const counts = new Map();
+        ((page && page.orders) || []).filter(o => o.status !== "CANCELLED" && o.status !== "PENDING_PAYMENT").forEach(o =>
+          (o.orderItems || []).forEach(line => counts.set(line.productId, (counts.get(line.productId) || 0) + (line.productQuantity || 1))));
+        buyAgainCounts = counts;
+      } catch (e) { buyAgainCounts = new Map(); }
+      renderBuyAgain();
+    }
+
+    function renderBuyAgain() {
+      const shelf = document.getElementById("buyAgainShelf");
+      if (!shelf) return;
+      const plain = activeTab === "all" && !document.getElementById("searchName").value.trim() && !document.getElementById("searchCategory").value;
+      const picks = plain ? products.filter(p => p.productStock > 0 && buyAgainCounts.has(p.productId))
+        .sort((a, b) => buyAgainCounts.get(b.productId) - buyAgainCounts.get(a.productId)).slice(0, 6) : [];
+      shelf.classList.toggle("hidden", !picks.length);
+      if (!picks.length) { shelf.innerHTML = ""; return; }
+      shelf.className = "buy-again";
+      shelf.innerHTML = `<h3>Buy it again</h3><div class="buy-again-row">${picks.map(p => `
+        <div class="buy-again-card"><strong title="${escapeHtml(p.productName)}">${escapeHtml(p.productName)}</strong>
+          <span class="price">&#8377;${p.productPrice}</span>
+          <button style="width:auto;" onclick="buyAgainAdd(${p.productId})" aria-label="Add ${escapeHtml(p.productName)} to cart">Add</button></div>`).join("")}</div>`;
+    }
+
+    function buyAgainAdd(productId) {
+      const qty = document.getElementById("qty_" + productId);
+      if (qty) qty.value = 1;
+      addToCart(productId);
+    }
+
+    async function loadBundles() {
+      try {
+        const response = await authFetch(`${BASE_URL}/bundles`);
+        bundles = response.ok ? await response.json() : [];
+      } catch (e) { bundles = []; }
+      renderBundleShelf();
+      renderCart();
+    }
+
+    function bundleSavingsFor(lines) {
+      const left = {};
+      const prices = {};
+      lines.forEach(l => { left[l.productId] = (left[l.productId] || 0) + l.quantity; prices[l.productId] = l.price; });
+      const usable = bundles
+        .map(b => {
+          const parts = b.items.reduce((sum, i) => sum + i.quantity * (prices[i.productId] ?? i.unitPrice), 0);
+          return { b, saving: parts - b.bundlePrice };
+        })
+        .filter(x => x.saving > 0.004)
+        .sort((a, c) => c.saving - a.saving);
+      let total = 0;
+      usable.forEach(({ b, saving }) => {
+        const sets = Math.min(...b.items.map(i => Math.floor((left[i.productId] || 0) / i.quantity)));
+        if (!(sets > 0)) return;
+        b.items.forEach(i => { left[i.productId] -= sets * i.quantity; });
+        total += sets * saving;
+      });
+      return Math.round(total * 100) / 100;
+    }
+
+    function renderBundleShelf() {
+      const shelf = document.getElementById("bundleShelf");
+      const shown = bundles.filter(b => b.savings > 0);
+      shelf.classList.toggle("hidden", !shown.length);
+      if (!shown.length) { shelf.innerHTML = ""; return; }
+      shelf.className = "bundle-shelf";
+      shelf.innerHTML = `<h3>Bundle deals</h3><div class="bundle-row">${shown.map(b => `
+        <div class="bundle-card">
+          <strong>${escapeHtml(b.name)}</strong>
+          <ul>${b.items.map(i => `<li>${i.quantity} &times; ${escapeHtml(i.productName)}</li>`).join("")}</ul>
+          <div><span class="price">&#8377;${b.bundlePrice.toFixed(2)}</span><span class="sale-was">&#8377;${b.regularTotal.toFixed(2)}</span></div>
+          <div class="meta" style="margin-bottom:6px;">Save &#8377;${b.savings.toFixed(2)}</div>
+          <button ${b.available ? "" : "disabled"} onclick="addBundleToCart(${b.id})">${b.available ? "Add bundle" : "Out of stock"}</button>
+        </div>`).join("")}</div>`;
+    }
+
+    function addBundleToCart(bundleId) {
+      const bundle = bundles.find(b => b.id === bundleId);
+      if (!bundle) return;
+      bundle.items.forEach(i => {
+        const existing = cart.find(item => item.productId === i.productId);
+        if (existing) existing.quantity += i.quantity;
+        else cart.push({ productId: i.productId, name: i.productName, price: i.unitPrice, quantity: i.quantity });
+      });
+      renderCart();
+      showToast(`${bundle.name} added to your cart.`);
+    }
+
+    function renderCart() {
+      const linesBox = document.getElementById("cartLines");
+      if (!cart.length) {
+        linesBox.innerHTML = `<p style="color:var(--muted); font-size:14px;">Your cart is empty.</p>`;
+      } else {
+        linesBox.innerHTML = cart.map(item => `
+          <div class="cart-line">
+            <span>${escapeHtml(item.name)}</span>
+            <span class="qty-stepper">
+              <button onclick="changeCartQuantity(${item.productId}, -1)" aria-label="Decrease quantity of ${escapeHtml(item.name)}">&minus;</button>
+              <span>${item.quantity}</span>
+              <button onclick="changeCartQuantity(${item.productId}, 1)" aria-label="Increase quantity of ${escapeHtml(item.name)}">&plus;</button>
+            </span>
+            <span>₹${(item.price * item.quantity).toFixed(2)} <button class="later-btn" onclick="saveForLater(${item.productId})" aria-label="Save ${escapeHtml(item.name)} for later">Save for later</button> <button onclick="removeFromCart(${item.productId})" aria-label="Remove ${escapeHtml(item.name)} from cart">&times;</button></span>
+          </div>
+        `).join("");
+      }
+      renderLater();
+      document.getElementById("cartShare").classList.toggle("hidden", !cart.length);
+      const goods = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+      // The server decides on the goods value after any coupon, so this preview can differ when a coupon is applied.
+      const baseFee = zoneFee !== null ? zoneFee : deliveryTerms.fee;
+      const freeAbove = myFreeAbove();
+      const fee = cart.length && baseFee > 0 && !(freeAbove < 0 || (freeAbove > 0 && goods >= freeAbove)) ? baseFee : 0;
+      const feeRow = document.getElementById("cartDeliveryRow");
+      feeRow.classList.toggle("hidden", !(cart.length && baseFee > 0));
+      document.getElementById("cartDelivery").textContent = fee > 0 ? `₹${fee.toFixed(2)}` : "Free";
+      document.getElementById("cartDeliveryLabel").textContent = fee > 0 && freeAbove > 0
+        ? `Delivery (free from ₹${freeAbove.toFixed(0)}${myTier !== "BRONZE" && freeAbove < deliveryTerms.freeAbove ? " for " + myTier.toLowerCase() + " members" : ""})` : "Delivery";
+      const bundleSaving = cart.length ? bundleSavingsFor(cart) : 0;
+      document.getElementById("cartBundleRow").classList.toggle("hidden", !(bundleSaving > 0));
+      document.getElementById("cartBundleSavings").textContent = `-₹${bundleSaving.toFixed(2)}`;
+      document.getElementById("cartTotal").textContent = `₹${(goods - bundleSaving + fee).toFixed(2)}`;
+      renderFreeDeliveryBar(goods, baseFee, freeAbove);
+      renderCouponSuggestions();
+      saveCart();
+      updateCartBar();
+      syncCardSteppers();
+    }
+
+    // Whether cash on delivery is open to this customer (see CodRiskService). Checkout enforces it server-side anyway;
+    // this only greys the option out up front and explains why, instead of failing at "Place order".
+    let codEligibility = null;
+    async function loadCodEligibility() {
+      codEligibility = null;
+      try {
+        const response = await authFetch(`${BASE_URL}/customer/cod?phno=${encodeURIComponent(customerPhno)}`);
+        if (response.ok) codEligibility = await response.json();
+      } catch (e) { /* leave it to checkout */ }
+      applyCodEligibility();
+    }
+
+    function applyCodEligibility() {
+      const radio = document.querySelector('input[name="payMethod"][value="CASH"]');
+      const hint = document.getElementById("codHint");
+      const blocked = codEligibility && !codEligibility.available;
+      radio.disabled = !!blocked;
+      document.getElementById("payCashOption").style.opacity = blocked ? "0.5" : "";
+      if (blocked && radio.checked) {
+        document.querySelector('input[name="payMethod"][value="PHONEPE"]').checked = true;
+        onPaymentMethodChange();
+      }
+      let text = "";
+      if (blocked) text = codEligibility.reason;
+      else if (codEligibility && codEligibility.maxAmount) text = `Cash on delivery is available for orders up to ₹${codEligibility.maxAmount.toFixed(0)} until your first order is delivered.`;
+      hint.textContent = text;
+      hint.classList.toggle("hidden", !text);
+    }
+
+    // Greys out delivery windows that have reached their open-order cap (delivery.slot-capacity); with no cap set
+    // nothing is ever full. Checkout enforces the cap server-side regardless - this only saves a failed attempt.
+    async function loadSlotAvailability() {
+      try {
+        const response = await fetch(`${BASE_URL}/pincodes/slots/availability`);
+        if (!response.ok) return;
+        const slots = await response.json();
+        const select = document.getElementById("deliverySlot");
+        slots.forEach(slot => {
+          const option = [...select.options].find(o => o.value === slot.slot);
+          if (!option) return;
+          const base = option.textContent.replace(/ - full$/, "");
+          option.disabled = slot.full;
+          option.textContent = slot.full ? base + " - full" : base;
+          if (slot.full && select.value === slot.slot) select.value = "";
+        });
+      } catch (e) { /* leave the options as they are; checkout re-checks */ }
+    }
+
+    function onPaymentMethodChange() {
+      const method = document.querySelector('input[name="payMethod"]:checked').value;
+      document.getElementById("payPhonepeOption").classList.toggle("selected", method === "PHONEPE");
+      document.getElementById("payUpiOption").classList.toggle("selected", method === "UPI");
+      document.getElementById("payCashOption").classList.toggle("selected", method === "CASH");
+      document.getElementById("phonepeFields").classList.toggle("hidden", method !== "PHONEPE");
+      document.getElementById("upiFields").classList.toggle("hidden", method !== "UPI");
+    }
+
+    function setCheckoutError(message) {
+      const box = document.getElementById("checkoutError");
+      if (!message) {
+        box.classList.add("hidden");
+        box.textContent = "";
+        return;
+      }
+      box.textContent = message;
+      box.classList.remove("hidden");
+    }
+
+    function toggleForgotPin() {
+      const panel = document.getElementById("forgotPinPanel");
+      const opening = panel.classList.contains("hidden");
+      panel.classList.toggle("hidden");
+      if (opening) {
+        document.getElementById("resetPinStep").classList.add("hidden");
+        document.getElementById("forgotPinError").classList.add("hidden");
+        document.getElementById("forgotPinStatus").textContent = "";
+        document.getElementById("forgotPinPhno").value = document.getElementById("payerPhno").value || "";
+      }
+    }
+
+    function setForgotPinError(message) {
+      const box = document.getElementById("forgotPinError");
+      if (!message) {
+        box.classList.add("hidden");
+        box.textContent = "";
+        return;
+      }
+      box.textContent = message;
+      box.classList.remove("hidden");
+    }
+
+    // Pure proxy to PhonepayService's forgot-PIN flow (which itself proxies to Bankapplication) - shop.html
+    // can only call its own origin, see OrderController.forgotPinRequest/forgotPinReset.
+    async function requestPinReset() {
+      const phno = document.getElementById("forgotPinPhno").value.trim();
+      setForgotPinError(null);
+      if (!/^[6-9][0-9]{9}$/.test(phno)) {
+        setForgotPinError("Enter a valid 10-digit phone number.");
+        return;
+      }
+
+      const response = await authFetch(`${BASE_URL}/cart/forgotpin/request`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: Number(phno) })
+      });
+
+      if (!response.ok) {
+        setForgotPinError(await response.text());
+        return;
+      }
+      document.getElementById("resetPinStep").classList.remove("hidden");
+      // Always the same message regardless of whether the account/email actually exists - the bank is
+      // deliberately silent about that (see Bankapplication's PinResetService), so this page can't reveal it either.
+      document.getElementById("forgotPinStatus").textContent =
+        "If that account has an email on file, a reset code has been sent to it.";
+    }
+
+    async function submitPinReset() {
+      const phno = document.getElementById("forgotPinPhno").value.trim();
+      const otp = document.getElementById("resetPinOtp").value.trim();
+      const newPin = document.getElementById("resetPinNewPin").value.trim();
+      setForgotPinError(null);
+      if (!otp || !newPin) {
+        setForgotPinError("Enter the code and a new PIN.");
+        return;
+      }
+
+      const response = await authFetch(`${BASE_URL}/cart/forgotpin/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: Number(phno), otp, newPin })
+      });
+
+      if (!response.ok) {
+        setForgotPinError(await response.text());
+        return;
+      }
+      document.getElementById("resetPinOtp").value = "";
+      document.getElementById("resetPinNewPin").value = "";
+      document.getElementById("forgotPinStatus").textContent = "PIN reset. You can now pay with your new PIN.";
+      document.getElementById("resetPinStep").classList.add("hidden");
+    }
+
+    function setCheckoutStatus(message, kind) {
+      const box = document.getElementById("checkoutStatus");
+      box.className = "status-banner " + (kind || "");
+      box.textContent = message || "";
+    }
+
+    async function placeOrder() {
+      setCheckoutError(null);
+      setCheckoutStatus("");
+
+      if (!cart.length) {
+        setCheckoutError("Your cart is empty.");
+        return;
+      }
+
+      const method = document.querySelector('input[name="payMethod"]:checked').value;
+      let payerPhno = null;
+      let payerPin = null;
+      let payerUpiId = null;
+
+      if (method === "PHONEPE") {
+        payerPhno = document.getElementById("payerPhno").value.trim();
+        payerPin = document.getElementById("payerPin").value.trim();
+        if (!/^[6-9][0-9]{9}$/.test(payerPhno) || !payerPin) {
+          setCheckoutError("Enter the PhonePe phone number and PIN, or switch to cash on delivery.");
+          return;
+        }
+      } else if (method === "UPI") {
+        payerUpiId = document.getElementById("payerUpiId").value.trim();
+        if (!payerUpiId.includes("@")) {
+          setCheckoutError("Enter a valid UPI ID, e.g. 9876543210@charanpe.");
+          return;
+        }
+      }
+
+      const couponCode = document.getElementById("couponCode").value.trim();
+      const pointsRedeemed = document.getElementById("pointsRedeemed").value.trim();
+      const shippingAddressId = document.getElementById("shippingAddressId").value;
+
+      const cartPayload = {
+        customerPhno: Number(customerPhno),
+        orderItems: cart.map(item => ({ productId: item.productId, productQuantity: item.quantity })),
+        // The UPI-collect flow is still a PHONEPE order server-side (see OrderService.order()'s payerUpiId
+        // branch) - "UPI" above is only this form's own way of picking which payerXxx param to send below.
+        paymentMethod: method === "UPI" ? "PHONEPE" : method,
+        couponCode: couponCode || null,
+        pointsRedeemed: pointsRedeemed ? Number(pointsRedeemed) : null,
+        storeCreditUsed: document.getElementById("storeCreditToUse").value.trim() ? Number(document.getElementById("storeCreditToUse").value) : null,
+        shippingAddressId: shippingAddressId ? Number(shippingAddressId) : null,
+        deliveryNote: document.getElementById("deliveryNote").value.trim() || null,
+        giftWrap: document.getElementById("giftWrap").checked,
+        giftMessage: document.getElementById("giftMessage").value.trim() || null,
+        deliverySlot: document.getElementById("deliverySlot").value || null
+      };
+
+      let query = "";
+      if (method === "PHONEPE") {
+        query = `?payerPhno=${encodeURIComponent(payerPhno)}&payerPin=${encodeURIComponent(payerPin)}`;
+      } else if (method === "UPI") {
+        query = `?payerUpiId=${encodeURIComponent(payerUpiId)}`;
+      }
+
+      setCheckoutStatus("Placing your order...", "info");
+      try {
+        const response = await authFetch(`${BASE_URL}/cart/checkout${query}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Idempotency-Key": crypto.randomUUID()
+          },
+          body: JSON.stringify(cartPayload)
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || `Request failed (${response.status})`);
+        }
+
+        const order = await response.json();
+        cart = [];
+        renderCart();
+        document.getElementById("payerPin").value = "";
+        document.getElementById("payerUpiId").value = "";
+        document.getElementById("couponCode").value = "";
+        couponAutoApplyOff = false;
+        couponAutoApplied = null;
+        loadCouponSuggestions(); // usage limits may have changed with this order
+        document.getElementById("deliveryNote").value = "";
+        document.getElementById("giftWrap").checked = false;
+        document.getElementById("giftMessage").value = "";
+        document.getElementById("deliverySlot").value = "";
+        document.getElementById("pointsRedeemed").value = "";
+        document.getElementById("storeCreditToUse").value = "";
+        loadStoreCredit();
+
+        if (order.status === "PENDING_PAYMENT") {
+          setCheckoutStatus(
+            `Order #${order.orderId} created - approve the payment request in PhonePe within 4 minutes.`,
+            "info"
+          );
+          pollUpiPayment(order.orderId);
+        } else {
+          setCheckoutStatus(
+            `Order #${order.orderId} placed${method === "CASH" ? " - pay on delivery." : ", paid via PhonePe."}`,
+            "success"
+          );
+          celebrate();
+        }
+        loadProducts();
+        loadLoyaltyBalance();
+      loadCouponSuggestions();
+      } catch (error) {
+        setCheckoutStatus("");
+        setCheckoutError(error.message);
+      }
+    }
+
+    // Polls GET /cart/{orderId}/paymentstatus (which itself lazily resolves the order against PhonepayService -
+    // see OrderService.checkPendingPayment()) every 5s until the order leaves PENDING_PAYMENT, or gives up after
+    // the same 4-minute window the backend enforces so this never polls forever on a dropped connection.
+    const UPI_POLL_INTERVAL_MS = 5000;
+    const UPI_POLL_TIMEOUT_MS = 4 * 60 * 1000 + 15000;
+
+    async function pollUpiPayment(orderId) {
+      const deadline = Date.now() + UPI_POLL_TIMEOUT_MS;
+
+      const poll = async () => {
+        if (Date.now() > deadline) {
+          setCheckoutStatus(`Order #${orderId}: payment window expired.`, "error");
+          loadProducts();
+          return;
+        }
+        try {
+          const response = await authFetch(`${BASE_URL}/cart/${orderId}/paymentstatus`);
+          if (!response.ok) {
+            setTimeout(poll, UPI_POLL_INTERVAL_MS);
+            return;
+          }
+          const order = await response.json();
+          if (order.status === "PLACED") {
+            setCheckoutStatus(`Order #${orderId} paid and placed via UPI.`, "success");
+            celebrate();
+            loadProducts();
+            loadLoyaltyBalance();
+      loadCouponSuggestions();
+            return;
+          }
+          if (order.status === "CANCELLED") {
+            setCheckoutStatus(`Order #${orderId} was cancelled - payment declined or the approval window expired.`, "error");
+            loadProducts();
+            return;
+          }
+          setTimeout(poll, UPI_POLL_INTERVAL_MS);
+        } catch (error) {
+          setTimeout(poll, UPI_POLL_INTERVAL_MS);
+        }
+      };
+
+      setTimeout(poll, UPI_POLL_INTERVAL_MS);
+    }
+
+    openSharedTrack();
+
+    (async () => {
+      let savedToken = null;
+      try { savedToken = localStorage.getItem("shopCustomerToken"); } catch (e) {}
+      if (!savedToken) {
+        localStorage.removeItem("shopCustomerPhno"); // an old phone-only "login" from before verified sign-in
+        return;
+      }
+      customerToken = savedToken;
+      try {
+        const response = await authFetch(`${BASE_URL}/customer/session`);
+        if (!response.ok) return; // authFetch already ended the session on a 401
+        const session = await response.json();
+        customerPhno = String(session.phno);
+        enterShop();
+      } catch (e) {
+        endSession("Couldn't reach the shop. Please sign in again.");
+      }
+    })();

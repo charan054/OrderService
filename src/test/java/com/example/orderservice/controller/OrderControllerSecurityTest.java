@@ -156,6 +156,13 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void dashboardStylesheetsAndScriptsArePublic() throws Exception {
+        mockMvc.perform(get("/css/shop.css")).andExpect(status().isOk());
+        mockMvc.perform(get("/js/shop.js")).andExpect(status().isOk());
+        mockMvc.perform(get("/js/cart.js")).andExpect(status().isOk());
+    }
+
+    @Test
     void lookingUpOwnOrdersWithOwnSessionSucceeds() throws Exception {
         mockMvc.perform(get("/cart/byphno").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }

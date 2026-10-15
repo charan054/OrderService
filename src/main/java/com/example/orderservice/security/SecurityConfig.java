@@ -78,6 +78,8 @@ public class SecurityConfig {
                         // The static dashboards themselves - just the HTML/JS shell; every call they make is
                         // authorized on its own.
                         .requestMatchers(HttpMethod.GET, "/cart.html", "/shop.html", "/wishlist.html").permitAll()
+                        // Their stylesheets and scripts (static/css, static/js) - code only, no data.
+                        .requestMatchers(HttpMethod.GET, "/css/*.css", "/js/*.js").permitAll()
                         // A controller-level failure (e.g. a missing required header) triggers an internal
                         // dispatch to /error; the auth filters don't re-run on that dispatch (OncePerRequestFilter
                         // skips ERROR dispatches by default), so without this the real error status gets clobbered

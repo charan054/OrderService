@@ -49,6 +49,39 @@ class StaticPageScriptTest {
         assertEquals(List.of(), problems);
     }
 
+    /** The pages' own scripts live in static/js/*.js (loaded with <script src>), so they get the same scan. */
+    @Test
+    void everyStaticScriptFileIsWellFormed() throws IOException {
+        List<String> problems = new ArrayList<>();
+        int files = 0;
+        Path jsDir = STATIC.resolve("js");
+        try (Stream<Path> scripts = Files.list(jsDir)) {
+            for (Path file : scripts.filter(p -> p.toString().endsWith(".js")).sorted().toList()) {
+                files++;
+                for (String problem : check(Files.readString(file, StandardCharsets.UTF_8))) {
+                    problems.add(file.getFileName() + ": " + problem);
+                }
+            }
+        }
+        assertTrue(files > 0, "found no script files to check");
+        assertEquals(List.of(), problems);
+    }
+
+    @Test
+    void everyReferencedStylesheetAndScriptFileExists() throws IOException {
+        Pattern ref = Pattern.compile("(?i)(?:href|src)=\"/((?:css|js)/[^\"]+)\"");
+        List<String> missing = new ArrayList<>();
+        try (Stream<Path> files = Files.list(STATIC)) {
+            for (Path page : files.filter(p -> p.toString().endsWith(".html")).sorted().toList()) {
+                Matcher m = ref.matcher(Files.readString(page, StandardCharsets.UTF_8));
+                while (m.find()) {
+                    if (!Files.exists(STATIC.resolve(m.group(1)))) missing.add(page.getFileName() + " -> " + m.group(1));
+                }
+            }
+        }
+        assertEquals(List.of(), missing);
+    }
+
     @Test
     void theScannerCatchesTheMistakesItExistsFor() {
         assertEquals(1, check("var a = \"first\nsecond\";").size());
