@@ -68,6 +68,7 @@ public final class AdminPolicy {
             rule(GET, "/cart/all", AdminRole.SUPPORT),
             rule(GET, "/cart/orders/search", AdminRole.SUPPORT),
             rule(GET, "/cart/history", AdminRole.SUPPORT),
+            rule(GET, "/cart/history/export", AdminRole.SUPPORT),
             rule(GET, "/cart/{orderId}/invoice", AdminRole.SUPPORT),
             rule(GET, "/cart/{orderId}/refunds", AdminRole.SUPPORT),
             rule(GET, "/cart/{orderId}/paymentstatus", AdminRole.SUPPORT),

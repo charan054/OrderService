@@ -64,6 +64,8 @@ import java.util.List;
 @RequestMapping("/cart")
 public class OrderController {
     @Autowired
+    private com.example.orderservice.service.CustomerOrderCsvService customerOrderCsvService;
+    @Autowired
     private com.example.orderservice.service.OrderTimelineService orderTimelineService;
     @Autowired
     private com.example.orderservice.service.ReturnApprovalService returnApprovalService;
@@ -462,6 +464,14 @@ public class OrderController {
                                     @RequestParam(defaultValue = "10") int size){
         CustomerAccess.requireSelfOrService(phno);
         return orderService.getOrderHistory(phno, status, from, to, product, page, size);
+    }
+    // Signed-in customer (own phone number only) or service: every item line of that customer's orders as a CSV file.
+    @GetMapping(value = "/history/export", produces = "text/csv")
+    public org.springframework.http.ResponseEntity<String> exportHistory(@RequestParam long phno){
+        CustomerAccess.requireSelfOrService(phno);
+        return org.springframework.http.ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=\"my-orders-" + phno + ".csv\"")
+                .body(customerOrderCsvService.export(phno));
     }
     @GetMapping("/all")
     public List<Cart> getAll(){
