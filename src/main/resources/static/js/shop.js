@@ -32,8 +32,10 @@
       } catch (e) { /* a sandboxed page may refuse; the link just will not follow the modal */ }
     }
 
+    // The shared link is /p/ID, a small page with the picture, name and price for chat link cards that then opens the
+    // storefront on this product (a bare #product=ID address shows nothing in a link card).
     function productLink(productId) {
-      return location.origin + location.pathname + "#product=" + productId;
+      return location.origin + "/p/" + productId;
     }
 
     function copyProductLink() {

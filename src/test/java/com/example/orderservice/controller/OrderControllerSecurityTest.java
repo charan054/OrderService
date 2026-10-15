@@ -191,6 +191,24 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void sharedProductPreviewPageIsPublic() throws Exception {
+        Product p = new Product();
+        p.setProductId(7);
+        p.setProductName("Cetaphil");
+        p.setProductPrice(500);
+        p.setProductStock(3);
+        when(productClient.getProductById(7)).thenReturn(p);
+        when(productClient.getProductById(8)).thenReturn(null);
+
+        mockMvc.perform(get("/p/7"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Type", org.hamcrest.Matchers.containsString("text/html")))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.content()
+                        .string(org.hamcrest.Matchers.containsString("og:title")));
+        mockMvc.perform(get("/p/8")).andExpect(status().isNotFound());
+    }
+
+    @Test
     void installableAppFilesArePublic() throws Exception {
         mockMvc.perform(get("/manifest.webmanifest")).andExpect(status().isOk());
         mockMvc.perform(get("/icon.svg")).andExpect(status().isOk());
