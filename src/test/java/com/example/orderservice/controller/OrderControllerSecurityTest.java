@@ -163,6 +163,14 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void installableAppFilesArePublic() throws Exception {
+        mockMvc.perform(get("/manifest.webmanifest")).andExpect(status().isOk());
+        mockMvc.perform(get("/icon.svg")).andExpect(status().isOk());
+        mockMvc.perform(get("/offline.html")).andExpect(status().isOk());
+        mockMvc.perform(get("/sw.js")).andExpect(status().isOk());
+    }
+
+    @Test
     void lookingUpOwnOrdersWithOwnSessionSucceeds() throws Exception {
         mockMvc.perform(get("/cart/byphno").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }

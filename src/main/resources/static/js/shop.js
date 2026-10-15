@@ -3744,3 +3744,8 @@
         endSession("Couldn't reach the shop. Please sign in again.");
       }
     })();
+
+// Lets browsers offer "Add to home screen"; sw.js only caches the offline page.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => { navigator.serviceWorker.register("/sw.js").catch(() => {}); });
+}

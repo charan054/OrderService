@@ -80,6 +80,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/cart.html", "/shop.html", "/wishlist.html").permitAll()
                         // Their stylesheets and scripts (static/css, static/js) - code only, no data.
                         .requestMatchers(HttpMethod.GET, "/css/*.css", "/js/*.js").permitAll()
+                        // Installable-app files: manifest, icon, offline page and the service worker (no data).
+                        .requestMatchers(HttpMethod.GET, "/manifest.webmanifest", "/icon.svg", "/offline.html", "/sw.js").permitAll()
                         // A controller-level failure (e.g. a missing required header) triggers an internal
                         // dispatch to /error; the auth filters don't re-run on that dispatch (OncePerRequestFilter
                         // skips ERROR dispatches by default), so without this the real error status gets clobbered
