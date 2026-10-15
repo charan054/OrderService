@@ -112,6 +112,31 @@ public class CustomerNotifier {
         });
     }
 
+    /**
+     * The store's answer to a price-match request. Email only (there is no order to hang a notification row on), sent in
+     * the background; a customer with no verified email just sees the answer on the product page.
+     */
+    public void notifyPriceMatchDecision(long phno, String productName, double theirPrice, boolean approved, String note) {
+        String email = accounts.findById(phno).map(CustomerAccount::getEmail).orElse(null);
+        if (email == null || email.isBlank()) {
+            log.info("Price-match decision for {}: no verified email on file, nobody emailed", phno);
+            return;
+        }
+        String price = String.format(Locale.ROOT, "%.2f", theirPrice);
+        String subject = "Your price-match request for " + productName + " was " + (approved ? "approved" : "declined");
+        String body = "Hi,\n\nYou told us you found " + productName + " for Rs. " + price + " elsewhere. "
+                + (approved ? "We have approved your request." : "We are sorry, we could not match that price this time.")
+                + (note == null || note.isBlank() ? "" : "\n\nNote from the store: " + note)
+                + "\n\nYou can see this on the product page in the shop.\n";
+        mailExecutor.execute(() -> {
+            try {
+                log.info("Price-match decision email for {}: {}", phno, mailService.send(email, subject, body) ? "emailed" : "email failed");
+            } catch (RuntimeException e) {
+                log.warn("Price-match decision email for {} failed: {}", phno, e.getMessage());
+            }
+        });
+    }
+
     private NotificationLog deliver(Cart order, OrderStatus status, String subject, String body) {
         String email = accounts.findById(order.getCustomerPhno()).map(CustomerAccount::getEmail).orElse(null);
         boolean hasEmail = email != null && !email.isBlank();

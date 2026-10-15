@@ -34,12 +34,14 @@ class PriceMatchServiceTest {
     private PriceMatchRequestRepository requests;
     @Mock
     private ProductClient productClient;
+    @Mock
+    private CustomerNotifier notifier;
 
     private PriceMatchService service;
 
     @BeforeEach
     void setUp() {
-        service = new PriceMatchService(requests, productClient, Clock.fixed(NOW, ZoneOffset.UTC));
+        service = new PriceMatchService(requests, productClient, Clock.fixed(NOW, ZoneOffset.UTC), notifier);
     }
 
     private void productAt(double price) {
@@ -120,6 +122,38 @@ class PriceMatchServiceTest {
         assertEquals(PriceMatchRequest.Status.APPROVED, out.getStatus());
         assertEquals("Sale starts tomorrow", out.getAdminNote());
         assertEquals(NOW, out.getResolvedAt());
+    }
+
+    @Test
+    void resolvingEmailsTheCustomerWithTheDecisionAndNote() {
+        PriceMatchRequest r = open(7);
+        r.setCustomerPhno(CUSTOMER);
+        r.setProductId(1);
+        r.setCompetitorPrice(80);
+        when(requests.findById(7L)).thenReturn(Optional.of(r));
+        when(requests.save(r)).thenReturn(r);
+        Product named = new Product();
+        named.setProductName("Soap");
+        when(productClient.getProductById(1)).thenReturn(named);
+
+        service.resolve(7, false, "Different size");
+
+        verify(notifier).notifyPriceMatchDecision(CUSTOMER, "Soap", 80, false, "Different size");
+    }
+
+    @Test
+    void aCatalogOutageDoesNotBlockTheDecisionOrItsEmail() {
+        PriceMatchRequest r = open(7);
+        r.setCustomerPhno(CUSTOMER);
+        r.setProductId(1);
+        r.setCompetitorPrice(80);
+        when(requests.findById(7L)).thenReturn(Optional.of(r));
+        when(requests.save(r)).thenReturn(r);
+        when(productClient.getProductById(1)).thenThrow(new RuntimeException("down"));
+
+        service.resolve(7, true, null);
+
+        verify(notifier).notifyPriceMatchDecision(CUSTOMER, "product #1", 80, true, null);
     }
 
     @Test
