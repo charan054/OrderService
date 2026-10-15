@@ -475,6 +475,54 @@
       document.getElementById("revViewToggle").textContent = showTable ? "View as chart" : "View as table";
     }
 
+    // ---------- price-match requests ----------
+    const PM_URL = "http://localhost:8083/pricematch";
+    let priceMatches = [];
+
+    function renderPriceMatches() {
+      const wrap = document.getElementById("pmTableWrap");
+      if (!priceMatches.length) {
+        wrap.innerHTML = "<p>No open price-match requests.</p>";
+        return;
+      }
+      wrap.innerHTML = `<table class="orders-table"><thead><tr>
+        <th>#</th><th>Product</th><th>Customer</th><th>Our price</th><th>Their price</th><th>Link</th><th>Note to customer</th><th>Action</th>
+      </tr></thead><tbody>${priceMatches.map((r, i) => `
+        <tr>
+          <td>${r.id}</td>
+          <td>${r.productId}</td>
+          <td>${r.customerPhno}</td>
+          <td>${Number(r.ourPrice).toFixed(2)}</td>
+          <td>${Number(r.competitorPrice).toFixed(2)}</td>
+          <td style="white-space:normal; max-width:220px; word-break:break-all;">${/^https?:\/\//i.test(r.competitorUrl || "") ? `<a href="${escapeHtml(r.competitorUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(r.competitorUrl)}</a>` : escapeHtml(r.competitorUrl || "")}</td>
+          <td><input type="text" id="pmNote${i}" maxlength="300" placeholder="Optional note" /></td>
+          <td><button class="blue" onclick="resolvePriceMatch(${i}, true)">Approve</button>
+              <button onclick="resolvePriceMatch(${i}, false)">Decline</button></td>
+        </tr>`).join("")}</tbody></table>`;
+    }
+
+    async function loadPriceMatches() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      priceMatches = (await apiCall(`${PM_URL}/open`, { headers: { "X-Service-Key": serviceKey } })) || [];
+      renderPriceMatches();
+      showStatus(`${priceMatches.length} open price-match request(s).`, "success");
+    }
+
+    async function resolvePriceMatch(index, approved) {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const r = priceMatches[index];
+      const note = document.getElementById("pmNote" + index).value.trim();
+      await apiCall(`${PM_URL}/${r.id}/resolve?approved=${approved}&note=${encodeURIComponent(note)}`, {
+        method: "PUT",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      priceMatches.splice(index, 1);
+      renderPriceMatches();
+      showStatus(`Request #${r.id} ${approved ? "approved" : "declined"}.`, "success");
+    }
+
     // ---------- customer questions ----------
     const QA_URL = "http://localhost:8083/questions";
     let pendingQuestions = [];
@@ -1204,6 +1252,7 @@
     const ATTENTION_TARGETS = {
       supportTickets: { card: "card-support", open: () => { document.getElementById("supportStatus").value = "OPEN"; return loadSupportQueue(); } },
       unansweredQuestions: { card: "card-questions", open: () => loadPendingQuestions() },
+      priceMatches: { card: "card-pricematch", open: () => loadPriceMatches() },
       flaggedReviews: { card: "card-moderation", open: () => loadFlaggedReviews() },
       lowStock: { card: "card-lowstock", open: () => getLowStockReport() },
       stuckPayments: { card: "card-orders", open: () => { document.getElementById("ordersStatus").value = "PENDING_PAYMENT"; return loadOrdersTable(); } },

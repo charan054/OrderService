@@ -2493,7 +2493,7 @@
       renderSubscribeBox(product);
       renderModalAlert(productId);
       loadModalAlternatives(productId);
-      await Promise.all([loadModalReviews(productId), loadModalQuestions(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
+      await Promise.all([loadModalReviews(productId), loadModalQuestions(productId), loadModalPriceMatch(productId), loadModalFrequentlyBoughtTogether(productId), loadModalGallery(productId)]);
     }
 
     // ---- in-stock alternatives for a sold-out product ----
@@ -2728,6 +2728,41 @@
             <div class="review-comment">A: ${escapeHtml(q.answer)}</div>
           </div>`).join("")
         : `<p style="color:var(--muted); font-size:14px;">No answered questions yet.</p>`;
+    }
+
+    // Price-match requests the signed-in customer has already sent for this product, with the store's decision.
+    async function loadModalPriceMatch(productId) {
+      const box = document.getElementById("modalPriceMatch");
+      box.innerHTML = "";
+      if (!customerPhno) return;
+      const response = await authFetch(`${BASE_URL}/pricematch/mine?phno=${encodeURIComponent(customerPhno)}`);
+      const mine = response.ok ? (await response.json()).filter(r => r.productId === productId) : [];
+      box.innerHTML = mine.map(r => `
+        <div class="review-item">
+          <div class="review-meta">You found it at &#8377;${Number(r.competitorPrice).toFixed(2)} &middot; ${escapeHtml(r.status === "OPEN" ? "Waiting for our reply" : r.status === "APPROVED" ? "Approved" : "Declined")}</div>
+          ${r.adminNote ? `<div class="review-comment">${escapeHtml(r.adminNote)}</div>` : ""}
+        </div>`).join("");
+    }
+
+    async function submitPriceMatch() {
+      const message = document.getElementById("priceMatchMessage");
+      const price = parseFloat(document.getElementById("priceMatchPrice").value);
+      const url = document.getElementById("priceMatchUrl").value.trim();
+      message.classList.remove("hidden");
+      message.style.color = "";
+      if (!customerPhno) { message.textContent = "Please sign in first."; return; }
+      if (!(price > 0)) { message.textContent = "Enter the price you found."; return; }
+      if (!/^https?:\/\//i.test(url)) { message.textContent = "Add the web link, starting with http:// or https://."; return; }
+      const response = await authFetch(`${BASE_URL}/pricematch/request?phno=${encodeURIComponent(customerPhno)}&productId=${modalProductId}&competitorPrice=${price}&competitorUrl=${encodeURIComponent(url)}`, { method: "POST" });
+      if (response.ok) {
+        document.getElementById("priceMatchPrice").value = "";
+        document.getElementById("priceMatchUrl").value = "";
+        message.style.color = "var(--muted)";
+        message.textContent = "Thanks! We'll look at it and reply here.";
+        loadModalPriceMatch(modalProductId);
+      } else {
+        message.textContent = (await response.text()) || "Couldn't send your request. Please try again.";
+      }
     }
 
     // The question only becomes visible to other shoppers once the store has answered it.
