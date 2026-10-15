@@ -1,6 +1,7 @@
 package com.example.orderservice.service;
 
 import static org.mockito.ArgumentMatchers.anyDouble;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import com.example.orderservice.entity.StoreCreditTransaction;
 import com.example.orderservice.client.PhonepeClient;
 import com.example.orderservice.client.ProductClient;
@@ -2762,6 +2763,32 @@ class OrderServiceTest {
 
         assertEquals(1, result.size());
         assertEquals("Alice", result.get(0).reviewerName());
+    }
+
+    @Test
+    void getProductReviewsWithASortAsksProductServiceForThatOrderAndCarriesTheHelpfulCount() {
+        when(productClient.getReviewsSorted(any(), eq(1L), eq(0), eq(20), eq("helpful"))).thenReturn(new ProductReviewsResult(List.of(
+                new ProductReview(7, "Alice", 9876543210L, 5, "Great!", LocalDateTime.now(), 1L, null, 4))));
+
+        List<StorefrontReview> result = service.getProductReviews(1, null, null, " helpful ");
+
+        assertEquals(4, result.get(0).helpfulCount());
+        verify(productClient, never()).getReviews(any(), anyLong(), anyInt(), anyInt());
+    }
+
+    @Test
+    void markingAReviewHelpfulRelaysTheVoteAndReturnsTheNewCount() {
+        when(productClient.setReviewHelpful(any(), eq(7L), eq(9876543210L), eq(true)))
+                .thenReturn(new com.example.orderservice.dto.ReviewHelpfulCount(2));
+
+        assertEquals(2, service.setReviewHelpful(7, 9876543210L, true));
+    }
+
+    @Test
+    void helpfulVotesRejectABadPhoneNumberBeforeCallingProductService() {
+        assertThrows(ProductException.class, () -> service.setReviewHelpful(7, 12345L, true));
+        assertThrows(ProductException.class, () -> service.getHelpfulReviewIds(12345L));
+        verify(productClient, never()).setReviewHelpful(any(), anyLong(), anyLong(), anyBoolean());
     }
 
     @Test

@@ -2837,18 +2837,37 @@
 
     async function loadModalReviews(productId) {
       const box = document.getElementById("modalReviews");
-      const response = await authFetch(`${BASE_URL}/cart/reviews?productId=${productId}`);
+      const sortSelect = document.getElementById("reviewSort");
+      const sort = sortSelect ? sortSelect.value : "newest";
+      const response = await authFetch(`${BASE_URL}/cart/reviews?productId=${productId}&sort=${encodeURIComponent(sort)}`);
       const reviews = response.ok ? await response.json() : [];
+      // Which reviews this customer already marked helpful (so those buttons show pressed); nothing when signed out.
+      let mine = new Set();
+      if (customerPhno) {
+        try {
+          const voted = await authFetch(`${BASE_URL}/cart/reviews/helpful/mine?phno=${encodeURIComponent(customerPhno)}`);
+          if (voted.ok) mine = new Set(await voted.json());
+        } catch (e) { /* the list still works without it */ }
+      }
       box.innerHTML = reviews.length
         ? reviews.map(r => `
           <div class="review-item">
             <div class="review-meta">${escapeHtml(r.reviewerName)} &middot; <span class="stars">${starsFor(r.rating)}</span>${reviewOptionLabel(r, productId)}${r.verifiedPurchase ? ' <span class="verified-badge" title="This reviewer bought this product from Charan Mart">&#10003; Verified purchase</span>' : ""}</div>
             <div class="review-comment">${escapeHtml(r.comment || "")}</div>
             ${reviewPhotoHtml(r.photoUrl)}
+            <button class="details-link" style="font-size:12px;" aria-pressed="${mine.has(r.reviewId)}" onclick="toggleHelpful(${r.reviewId}, ${mine.has(r.reviewId)})">${mine.has(r.reviewId) ? "&#10003; Marked helpful" : "Helpful?"}${r.helpfulCount ? ` (${r.helpfulCount})` : ""}</button>
             <button class="details-link" style="font-size:12px;" onclick="reportReview(${r.reviewId})">Report this review</button>
           </div>
         `).join("")
         : `<p style="color:var(--muted); font-size:14px;">No reviews yet - be the first!</p>`;
+    }
+
+    // Marks a review helpful, or takes the mark back if it was already marked. Needs a signed-in customer.
+    async function toggleHelpful(reviewId, alreadyMarked) {
+      if (!customerPhno) { alert("Please sign in to mark a review helpful."); return; }
+      const response = await authFetch(`${BASE_URL}/cart/reviews/helpful?reviewId=${reviewId}&phno=${encodeURIComponent(customerPhno)}&helpful=${!alreadyMarked}`, { method: "POST" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't save that. Please try again."); return; }
+      loadModalReviews(modalProductId);
     }
 
     // A report only queues the review for an admin to look at (the review stays visible until they hide it).

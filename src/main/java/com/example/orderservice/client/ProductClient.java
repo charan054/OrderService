@@ -69,6 +69,19 @@ public interface ProductClient {
     ProductReviewsResult getReviews(@RequestHeader("X-Service-Key") String serviceKey, @PathVariable long productId,
                                     @RequestParam int page, @RequestParam int size);
 
+    // The same listing in another order: sort = newest | helpful | highest | lowest.
+    @GetMapping("/product/internal/{productId}/reviews")
+    ProductReviewsResult getReviewsSorted(@RequestHeader("X-Service-Key") String serviceKey, @PathVariable long productId,
+                                          @RequestParam int page, @RequestParam int size, @RequestParam String sort);
+
+    // "Helpful" votes (X-Service-Key only on ProductService's side; OrderService votes for a signed-in customer).
+    @PutMapping("/product/reviews/{reviewId}/helpful")
+    com.example.orderservice.dto.ReviewHelpfulCount setReviewHelpful(@RequestHeader("X-Service-Key") String serviceKey, @PathVariable long reviewId,
+                                   @RequestParam long voterPhno, @RequestParam boolean helpful);
+
+    @GetMapping("/product/reviews/helpful/mine")
+    List<Long> getHelpfulReviewIds(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam long voterPhno);
+
     // Every photo link a review (hidden ones too) still uses - X-Service-Key only. ReviewPhotoTidyService deletes
     // the uploaded files that nothing in this list names.
     @GetMapping("/product/reviews/photos")

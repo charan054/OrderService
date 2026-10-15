@@ -6,6 +6,7 @@ import com.example.orderservice.client.StockMovementContext;
 import com.example.orderservice.dto.AdminOrderPage;
 import com.example.orderservice.dto.AdminOrderRow;
 import com.example.orderservice.dto.CouponSuggestion;
+import com.example.orderservice.dto.ProductReviewsResult;
 import com.example.orderservice.dto.CreateUpiCollectRequest;
 import com.example.orderservice.dto.CustomerProfile;
 import com.example.orderservice.dto.FrequentlyBoughtTogether;
@@ -2528,12 +2529,20 @@ public class OrderService {
     // origin (see searchProducts()/getRatingSummaries() above for the same reasoning), so OrderService fronts it.
     // Each review is annotated with verifiedPurchase (see StorefrontReview) and stripped of the reviewer's phone.
     public List<StorefrontReview> getProductReviews(long productId, Integer page, Integer size) {
+        return getProductReviews(productId, page, size, null);
+    }
+
+    // sort = newest (default) | helpful | highest | lowest; ProductService applies it and rejects anything else.
+    public List<StorefrontReview> getProductReviews(long productId, Integer page, Integer size, String sort) {
         int effectivePage = (page == null || page < 0) ? 0 : page;
         int effectiveSize = (size == null || size <= 0) ? DEFAULT_REVIEWS_PAGE_SIZE : size;
         // A review may belong to another option of the same variant group (ProductService rolls the group up), so the
         // Verified-purchase check is against the option that review is actually for.
         Map<String, Boolean> verified = new HashMap<>();
-        return productClient.getReviews(serviceApiKey, productId, effectivePage, effectiveSize).content().stream()
+        ProductReviewsResult listing = sort == null || sort.isBlank()
+                ? productClient.getReviews(serviceApiKey, productId, effectivePage, effectiveSize)
+                : productClient.getReviewsSorted(serviceApiKey, productId, effectivePage, effectiveSize, sort.trim());
+        return listing.content().stream()
                 .map(r -> {
                     long reviewedProduct = r.productId() != null ? r.productId() : productId;
                     return toStorefrontReview(r, productId,
@@ -2557,7 +2566,20 @@ public class OrderService {
 
     private static StorefrontReview toStorefrontReview(ProductReview r, long productId, boolean verified) {
         return new StorefrontReview(r.reviewId(), r.reviewerName(), r.rating(), r.comment(), r.createdAt(), verified,
-                r.productId() != null ? r.productId() : productId, r.photoUrl());
+                r.productId() != null ? r.productId() : productId, r.photoUrl(), r.helpfulCount());
+    }
+
+    // Marks a review helpful (or takes the mark back) on behalf of a signed-in customer. ProductService enforces one
+    // vote each and refuses your own review; this only relays it.
+    public int setReviewHelpful(long reviewId, long voterPhno, boolean helpful) {
+        validatePhno(voterPhno);
+        return productClient.setReviewHelpful(serviceApiKey, reviewId, voterPhno, helpful).helpfulCount();
+    }
+
+    // The review ids this customer has already marked helpful, so the storefront can show those buttons pressed.
+    public List<Long> getHelpfulReviewIds(long voterPhno) {
+        validatePhno(voterPhno);
+        return productClient.getHelpfulReviewIds(serviceApiKey, voterPhno);
     }
 
     // "Kept" = an order that was actually placed and not later cancelled; a returned order still counts (they did
