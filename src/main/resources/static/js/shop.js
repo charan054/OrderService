@@ -1525,6 +1525,8 @@
       view.innerHTML = `
         ${profileHtml}
         ${recommendationsHtml(recommendations)}
+        <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="downloadMyOrdersCsv()">Download my orders (CSV)</button>
+          <span class="meta">One row per item you bought, to open in a spreadsheet.</span></p>
         <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="downloadMyData()">Download my data</button>
           <span class="meta">Everything we store about you, as a JSON file.</span></p>
         <p style="margin:8px 0;"><button class="secondary" style="width:auto;" onclick="startAccountDeletion()">Delete my account</button>
@@ -1685,6 +1687,20 @@
       }
       if (kind === "return" && returnPolicy.pickup) alert("Pickup booked. We'll refund you once the item reaches us.");
       loadAccountView();
+    }
+
+    // Order history as a spreadsheet. fetch + blob for the same reason as downloadMyData below (needs the token header).
+    async function downloadMyOrdersCsv() {
+      const response = await authFetch(`${BASE_URL}/cart/history/export?phno=${encodeURIComponent(customerPhno)}`);
+      if (!response.ok) { alert("Couldn't prepare your orders right now. Please try again."); return; }
+      const blob = await response.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `my-orders-${customerPhno}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
     }
 
     // Downloads everything we hold about this customer as a JSON file. fetch + blob (not a plain link) because the

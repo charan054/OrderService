@@ -171,6 +171,14 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void orderHistoryCsvNeedsTheCustomersOwnSession() throws Exception {
+        mockMvc.perform(get("/cart/history/export").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/history/export").param("phno", "9876543210").with(customer()))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Content-Disposition", org.hamcrest.Matchers.containsString("my-orders-9876543210.csv")));
+    }
+
+    @Test
     void lookingUpOwnOrdersWithOwnSessionSucceeds() throws Exception {
         mockMvc.perform(get("/cart/byphno").param("phno", "9876543210").with(customer())).andExpect(status().isOk());
     }
