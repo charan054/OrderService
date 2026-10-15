@@ -9,6 +9,9 @@
       try { const t = localStorage.getItem("theme"); if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t); } catch (e) {}
     </script>
 
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0f766e" />
     <link rel="stylesheet" href="/css/shop.css" />
 </head>
 <body>
