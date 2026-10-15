@@ -26,8 +26,11 @@ public class PriceMatchService {
     private final PriceMatchRequestRepository requests;
     private final ProductClient productClient;
     private final Clock clock;
+    private final CustomerNotifier notifier;
 
-    public PriceMatchService(PriceMatchRequestRepository requests, ProductClient productClient, Clock clock) {
+    public PriceMatchService(PriceMatchRequestRepository requests, ProductClient productClient, Clock clock,
+                             CustomerNotifier notifier) {
+        this.notifier = notifier;
         this.requests = requests;
         this.productClient = productClient;
         this.clock = clock;
@@ -94,7 +97,23 @@ public class PriceMatchService {
         r.setStatus(approved ? PriceMatchRequest.Status.APPROVED : PriceMatchRequest.Status.DECLINED);
         r.setAdminNote(text.isEmpty() ? null : text);
         r.setResolvedAt(Instant.now(clock));
-        return requests.save(r);
+        PriceMatchRequest saved = requests.save(r);
+        notifier.notifyPriceMatchDecision(saved.getCustomerPhno(), productNameOf(saved.getProductId()),
+                saved.getCompetitorPrice(), approved, saved.getAdminNote());
+        return saved;
+    }
+
+    // The name for the email; a product that has since gone (or a catalog that is down) must not block the decision.
+    private String productNameOf(int productId) {
+        try {
+            Product p = productClient.getProductById(productId);
+            if (p != null && p.getProductName() != null && !p.getProductName().isBlank()) {
+                return p.getProductName();
+            }
+        } catch (RuntimeException e) {
+            // fall through
+        }
+        return "product #" + productId;
     }
 
     private static void validatePhno(long phno) {
