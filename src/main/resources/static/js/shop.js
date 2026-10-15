@@ -1132,6 +1132,7 @@
       activeTab = tab;
       document.getElementById("tabAll").classList.toggle("active", tab === "all");
       document.getElementById("tabNew").classList.toggle("active", tab === "new");
+      document.getElementById("tabSale").classList.toggle("active", tab === "sale");
       document.getElementById("tabWishlist").classList.toggle("active", tab === "wishlist");
       document.getElementById("tabAccount").classList.toggle("active", tab === "account");
       document.getElementById("tabNotifications").classList.toggle("active", tab === "notifications");
@@ -2251,10 +2252,25 @@
       renderProducts();
     }
 
+    // Percent off for a product that is on sale (0 when it is not), used to put the biggest discounts first.
+    function saleDiscountPercent(p) {
+      return p.onSale && p.regularPrice > 0 ? (p.regularPrice - p.productPrice) / p.regularPrice * 100 : 0;
+    }
+
+    // The On sale tab only shows up while something is actually on sale (or while it is the tab being viewed).
+    function updateSaleTab() {
+      const count = products.filter(p => p.onSale).length;
+      document.getElementById("saleCount").textContent = count;
+      document.getElementById("tabSale").hidden = count === 0 && activeTab !== "sale";
+    }
+
     function renderProducts() {
+      updateSaleTab();
       const grid = document.getElementById("productGrid");
       const visibleProducts = activeTab === "wishlist"
         ? products.filter(p => wishlistProductIds.has(p.productId))
+        : activeTab === "sale"
+        ? products.filter(p => p.onSale).sort((a, b) => saleDiscountPercent(b) - saleDiscountPercent(a))
         : activeTab === "new"
         ? products.filter(isNewProduct).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
         : activeTab === "recent"
@@ -2288,6 +2304,8 @@
           ? `<p style="color:var(--muted);">No products match your filters.</p>`
           : activeTab === "wishlist"
           ? `<p style="color:var(--muted);">Nothing wishlisted yet - tap the heart on a product to save it here.</p>`
+          : activeTab === "sale"
+          ? `<p style="color:var(--muted);">No sales running right now - check back soon.</p>`
           : activeTab === "new"
           ? `<p style="color:var(--muted);">Nothing new in the last ${NEW_PRODUCT_DAYS} days - check back soon.</p>`
           : activeTab === "recent"
