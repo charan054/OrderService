@@ -139,6 +139,25 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void markingAReviewHelpfulNeedsTheCustomersOwnSession() throws Exception {
+        when(productClient.setReviewHelpful(any(), eq(7L), eq(9876543210L), eq(true)))
+                .thenReturn(new com.example.orderservice.dto.ReviewHelpfulCount(2));
+        when(productClient.getHelpfulReviewIds(any(), eq(9876543210L))).thenReturn(List.of(7L));
+
+        mockMvc.perform(post("/cart/reviews/helpful").param("reviewId", "7").param("phno", "9876543210"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/cart/reviews/helpful").param("reviewId", "7").param("phno", "9123456780").with(customer()))
+                .andExpect(status().isForbidden());
+        mockMvc.perform(post("/cart/reviews/helpful").param("reviewId", "7").param("phno", "9876543210").with(customer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.helpfulCount").value(2));
+        mockMvc.perform(get("/cart/reviews/helpful/mine").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/reviews/helpful/mine").param("phno", "9876543210").with(customer()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0]").value(7));
+    }
+
+    @Test
     void postingAReviewWithOwnSessionSucceeds() throws Exception {
         when(productClient.addReview(eq(1L), any()))
                 .thenReturn(new ProductReview(1, "Alice", 9876543210L, 5, "Great!", LocalDateTime.now()));

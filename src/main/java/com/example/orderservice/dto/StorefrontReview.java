@@ -8,14 +8,20 @@ import java.time.LocalDateTime;
 // productId is the option the review was written for (see ProductReview), so a group card can say which one.
 // photoUrl is the optional photo the reviewer attached (null when none).
 public record StorefrontReview(long reviewId, String reviewerName, int rating, String comment,
-                               LocalDateTime createdAt, boolean verifiedPurchase, Long productId, String photoUrl) {
+                               LocalDateTime createdAt, boolean verifiedPurchase, Long productId, String photoUrl,
+                               int helpfulCount) {
+    public StorefrontReview(long reviewId, String reviewerName, int rating, String comment,
+                            LocalDateTime createdAt, boolean verifiedPurchase, Long productId, String photoUrl) {
+        this(reviewId, reviewerName, rating, comment, createdAt, verifiedPurchase, productId, photoUrl, 0);
+    }
+
     public StorefrontReview(long reviewId, String reviewerName, int rating, String comment,
                             LocalDateTime createdAt, boolean verifiedPurchase, Long productId) {
-        this(reviewId, reviewerName, rating, comment, createdAt, verifiedPurchase, productId, null);
+        this(reviewId, reviewerName, rating, comment, createdAt, verifiedPurchase, productId, null, 0);
     }
 
     public StorefrontReview(long reviewId, String reviewerName, int rating, String comment,
                             LocalDateTime createdAt, boolean verifiedPurchase) {
-        this(reviewId, reviewerName, rating, comment, createdAt, verifiedPurchase, null, null);
+        this(reviewId, reviewerName, rating, comment, createdAt, verifiedPurchase, null, null, 0);
     }
 }

@@ -244,6 +244,13 @@
             </div>
 
             <h3>Reviews</h3>
+            <label class="meta" for="reviewSort">Sort by </label>
+            <select id="reviewSort" onchange="loadModalReviews(modalProductId)" style="width:auto;">
+                <option value="newest">Newest</option>
+                <option value="helpful">Most helpful</option>
+                <option value="highest">Highest rated</option>
+                <option value="lowest">Lowest rated</option>
+            </select>
             <div id="modalReviews"></div>
 
             <h3>Write a review</h3>

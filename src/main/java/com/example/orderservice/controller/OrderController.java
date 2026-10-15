@@ -410,8 +410,21 @@ public class OrderController {
     @GetMapping("/reviews")
     public List<StorefrontReview> getReviews(@RequestParam long productId,
                                            @RequestParam(required = false) Integer page,
-                                           @RequestParam(required = false) Integer size) {
-        return orderService.getProductReviews(productId, page, size);
+                                           @RequestParam(required = false) Integer size,
+                                           @RequestParam(required = false) String sort) {
+        return orderService.getProductReviews(productId, page, size, sort);
+    }
+    // Signed-in customer (own phone number only) or service: mark a review helpful, or take the mark back.
+    @PostMapping("/reviews/helpful")
+    public java.util.Map<String, Integer> setReviewHelpful(@RequestParam long reviewId, @RequestParam long phno,
+                                                           @RequestParam(defaultValue = "true") boolean helpful) {
+        CustomerAccess.requireSelfOrService(phno);
+        return java.util.Map.of("helpfulCount", orderService.setReviewHelpful(reviewId, phno, helpful));
+    }
+    @GetMapping("/reviews/helpful/mine")
+    public List<Long> myHelpfulReviews(@RequestParam long phno) {
+        CustomerAccess.requireSelfOrService(phno);
+        return orderService.getHelpfulReviewIds(phno);
     }
     // Signed-in customer, posting only under their own phone number (or the service key).
     @PostMapping("/reviews")

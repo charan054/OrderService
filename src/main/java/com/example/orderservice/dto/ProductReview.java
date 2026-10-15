@@ -10,14 +10,19 @@ import java.time.LocalDateTime;
 // group under any of its options, so the review can belong to a sibling of the product that was asked for.
 // photoUrl is the optional photo the reviewer attached (null when none).
 public record ProductReview(long reviewId, String reviewerName, long reviewerPhno, int rating, String comment,
-                             LocalDateTime createdAt, Long productId, String photoUrl) {
+                             LocalDateTime createdAt, Long productId, String photoUrl, int helpfulCount) {
+    public ProductReview(long reviewId, String reviewerName, long reviewerPhno, int rating, String comment,
+                         LocalDateTime createdAt, Long productId, String photoUrl) {
+        this(reviewId, reviewerName, reviewerPhno, rating, comment, createdAt, productId, photoUrl, 0);
+    }
+
     public ProductReview(long reviewId, String reviewerName, long reviewerPhno, int rating, String comment,
                          LocalDateTime createdAt, Long productId) {
-        this(reviewId, reviewerName, reviewerPhno, rating, comment, createdAt, productId, null);
+        this(reviewId, reviewerName, reviewerPhno, rating, comment, createdAt, productId, null, 0);
     }
 
     public ProductReview(long reviewId, String reviewerName, long reviewerPhno, int rating, String comment,
                          LocalDateTime createdAt) {
-        this(reviewId, reviewerName, reviewerPhno, rating, comment, createdAt, null, null);
+        this(reviewId, reviewerName, reviewerPhno, rating, comment, createdAt, null, null, 0);
     }
 }
