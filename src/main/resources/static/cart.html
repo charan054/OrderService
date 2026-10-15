@@ -1101,6 +1101,20 @@
             <div id="photoTidyOut"></div>
         </div>
         <div class="card wide">
+            <div class="card-header" id="card-pricematch">
+                <div class="icon">&#127991;</div>
+                <div class="title-wrap">
+                    <h2>Price-Match Requests</h2>
+                    <span class="method">GET / PUT</span>
+                </div>
+            </div>
+            <p>Customers who found a product cheaper elsewhere, oldest first, with their price and link. Approving or declining sends your note back to the customer on the product page; it does not change any price (start a sale for that). Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadPriceMatches()">Load Open Requests</button>
+            </div>
+            <div id="pmTableWrap" class="orders-table-wrap"></div>
+        </div>
+        <div class="card wide">
             <div class="card-header" id="card-questions">
                 <div class="icon">&#10067;</div>
                 <div class="title-wrap">

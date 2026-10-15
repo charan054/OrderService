@@ -234,6 +234,15 @@
                 <button onclick="askQuestion()">Ask</button>
             </div>
 
+            <h3>Found it cheaper elsewhere?</h3>
+            <div id="modalPriceMatch"></div>
+            <div class="review-form">
+                <input type="number" id="priceMatchPrice" min="1" step="0.01" placeholder="Price you found (Rs.)" />
+                <input type="url" id="priceMatchUrl" maxlength="500" placeholder="Web link where you saw it (https://...)" />
+                <div id="priceMatchMessage" class="error-text hidden"></div>
+                <button onclick="submitPriceMatch()">Ask us to match it</button>
+            </div>
+
             <h3>Reviews</h3>
             <div id="modalReviews"></div>
 

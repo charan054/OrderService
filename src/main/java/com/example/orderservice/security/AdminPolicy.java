@@ -85,6 +85,8 @@ public final class AdminPolicy {
             rule(GET_POST, "/ordernotes", AdminRole.SUPPORT),
             rule(GET, "/questions/pending", AdminRole.SUPPORT),
             rule(PUT, "/questions/{id}/answer", AdminRole.SUPPORT),
+            rule(GET, "/pricematch/open", AdminRole.SUPPORT),
+            rule(PUT, "/pricematch/{id}/resolve", AdminRole.SUPPORT),
             rule(GET, "/support/admin/tickets", AdminRole.SUPPORT),
             rule(GET, "/support/admin/tickets/{id}", AdminRole.SUPPORT),
             rule(POST, "/support/admin/tickets/{id}/reply", AdminRole.SUPPORT),

@@ -6,9 +6,11 @@ import com.example.orderservice.dto.NeedsAttention.Item;
 import com.example.orderservice.entity.Cart;
 import com.example.orderservice.entity.NotificationLog;
 import com.example.orderservice.entity.OrderStatus;
+import com.example.orderservice.entity.PriceMatchRequest;
 import com.example.orderservice.entity.SupportTicket;
 import com.example.orderservice.repository.CartRepository;
 import com.example.orderservice.repository.NotificationLogRepository;
+import com.example.orderservice.repository.PriceMatchRequestRepository;
 import com.example.orderservice.repository.ProductQuestionRepository;
 import com.example.orderservice.repository.RefundFailureRepository;
 import com.example.orderservice.repository.SupportTicketRepository;
@@ -47,11 +49,14 @@ public class NeedsAttentionService {
     private final Clock clock;
     private final CodCollectionService codCollection;
     private final PackingSlipService packing;
+    private final PriceMatchRequestRepository priceMatches;
 
     public NeedsAttentionService(SupportTicketRepository tickets, ProductQuestionRepository questions,
                                  CartRepository carts, NotificationLogRepository notifications,
                                  RefundFailureRepository refundFailures, OrderService orderService, Clock clock,
-                                 CodCollectionService codCollection, PackingSlipService packing) {
+                                 CodCollectionService codCollection, PackingSlipService packing,
+                                 PriceMatchRequestRepository priceMatches) {
+        this.priceMatches = priceMatches;
         this.packing = packing;
         this.tickets = tickets;
         this.questions = questions;
@@ -109,6 +114,10 @@ public class NeedsAttentionService {
                 "Placed more than " + PACK_STALE_HOURS + " hours ago and not ticked off as packed (" + pack.unpacked()
                         + " unpacked in all, " + pack.packedWaiting() + " packed and waiting to ship) - print the packing slips.",
                 pack.staleUnpacked().stream().limit(MAX_ORDER_IDS).toList()));
+
+        long matches = priceMatches.countByStatus(PriceMatchRequest.Status.OPEN);
+        items.add(new Item("priceMatches", "Price-match requests waiting for a decision", (int) matches, false, false,
+                "Customers who found a product cheaper elsewhere - approve or decline with a note (approving does not change the price by itself).", List.of()));
 
         int total = items.stream().filter(i -> i.count() != null).mapToInt(Item::count).sum();
         return new NeedsAttention(now, total, items);

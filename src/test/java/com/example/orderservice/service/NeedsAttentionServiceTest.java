@@ -44,6 +44,7 @@ class NeedsAttentionServiceTest {
 
     private CodCollectionService codCollection;
     private PackingSlipService packing;
+    private com.example.orderservice.repository.PriceMatchRequestRepository priceMatches;
 
     @BeforeEach
     void setUp() {
@@ -55,10 +56,11 @@ class NeedsAttentionServiceTest {
         refundFailures = mock(com.example.orderservice.repository.RefundFailureRepository.class);
         codCollection = mock(CodCollectionService.class);
         packing = mock(PackingSlipService.class);
+        priceMatches = mock(com.example.orderservice.repository.PriceMatchRequestRepository.class);
         when(packing.status(org.mockito.ArgumentMatchers.anyInt())).thenReturn(new PackingSlipService.PackingStatus(0, 0, 24, List.of()));
         when(codCollection.overdueOrderIds()).thenReturn(List.of());
         service = new NeedsAttentionService(tickets, questions, carts, notifications, refundFailures, orderService,
-                Clock.fixed(NOW, ZoneOffset.UTC), codCollection, packing);
+                Clock.fixed(NOW, ZoneOffset.UTC), codCollection, packing, priceMatches);
         when(refundFailures.findByResolvedAtIsNullOrderByIdAsc()).thenReturn(List.of());
         when(carts.findByStatusAndPaymentDeadlineBeforeOrderByPaymentDeadlineAsc(any(), any())).thenReturn(List.of());
         when(notifications.findByEmailedFalseAndSentAtAfterOrderBySentAtDesc(any())).thenReturn(List.of());
@@ -89,7 +91,7 @@ class NeedsAttentionServiceTest {
         assertEquals(0, result.total());
         assertEquals(NOW, result.generatedAt());
         assertEquals(List.of("supportTickets", "unansweredQuestions", "flaggedReviews", "lowStock", "stuckPayments",
-                "failedNotifications", "failedRefunds", "codOverdue", "unpacked"), result.items().stream().map(NeedsAttention.Item::key).toList());
+                "failedNotifications", "failedRefunds", "codOverdue", "unpacked", "priceMatches"), result.items().stream().map(NeedsAttention.Item::key).toList());
         assertTrue(result.items().stream().allMatch(i -> i.count() == 0 && !i.unavailable()));
     }
 
