@@ -116,7 +116,8 @@ public class CustomerNotifier {
      * The store's answer to a price-match request. Email only (there is no order to hang a notification row on), sent in
      * the background; a customer with no verified email just sees the answer on the product page.
      */
-    public void notifyPriceMatchDecision(long phno, String productName, double theirPrice, boolean approved, String note) {
+    public void notifyPriceMatchDecision(long phno, String productName, double theirPrice, boolean approved, String note,
+                                         Double salePrice, java.time.Instant saleEndsAt) {
         String email = accounts.findById(phno).map(CustomerAccount::getEmail).orElse(null);
         if (email == null || email.isBlank()) {
             log.info("Price-match decision for {}: no verified email on file, nobody emailed", phno);
@@ -126,6 +127,8 @@ public class CustomerNotifier {
         String subject = "Your price-match request for " + productName + " was " + (approved ? "approved" : "declined");
         String body = "Hi,\n\nYou told us you found " + productName + " for Rs. " + price + " elsewhere. "
                 + (approved ? "We have approved your request." : "We are sorry, we could not match that price this time.")
+                + (salePrice == null ? "" : "\n\n" + productName + " is now on sale for Rs. " + String.format(Locale.ROOT, "%.2f", salePrice)
+                        + (saleEndsAt == null ? "." : " until " + saleEndsAt.atZone(java.time.ZoneOffset.UTC).toLocalDate() + " (UTC)."))
                 + (note == null || note.isBlank() ? "" : "\n\nNote from the store: " + note)
                 + "\n\nYou can see this on the product page in the shop.\n";
         mailExecutor.execute(() -> {

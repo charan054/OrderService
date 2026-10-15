@@ -38,7 +38,9 @@ public class PriceMatchController {
 
     @PutMapping("/{id}/resolve")
     public PriceMatchRequest resolve(@PathVariable long id, @RequestParam boolean approved,
-                                     @RequestParam(required = false) String note) {
-        return service.resolve(id, approved, note);
+                                     @RequestParam(required = false) String note,
+                                     @RequestParam(required = false) Double salePrice,
+                                     @RequestParam(required = false) Integer saleDays) {
+        return service.resolve(id, approved, note, salePrice, saleDays);
     }
 }

@@ -2757,6 +2757,7 @@
         <div class="review-item">
           <div class="review-meta">You found it at &#8377;${Number(r.competitorPrice).toFixed(2)} &middot; ${escapeHtml(r.status === "OPEN" ? "Waiting for our reply" : r.status === "APPROVED" ? "Approved" : "Declined")}</div>
           ${r.adminNote ? `<div class="review-comment">${escapeHtml(r.adminNote)}</div>` : ""}
+          ${r.salePrice ? `<div class="review-comment">On sale for &#8377;${Number(r.salePrice).toFixed(2)}${r.saleEndsAt ? " until " + escapeHtml(new Date(r.saleEndsAt).toLocaleDateString()) : ""}</div>` : ""}
         </div>`).join("");
     }
 
