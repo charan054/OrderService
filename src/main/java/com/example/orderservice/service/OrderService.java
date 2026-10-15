@@ -109,6 +109,8 @@ public class OrderService {
     private com.example.orderservice.repository.ExchangeRequestRepository exchangeRepository;
     @Autowired(required = false)
     private com.example.orderservice.repository.BundleRepository bundleRepository;
+    @Autowired(required = false)
+    private com.example.orderservice.repository.QuantityBreakRepository quantityBreakRepository;
     @Autowired
     private CouponRepository couponRepository;
     @Autowired
@@ -269,8 +271,15 @@ public class OrderService {
         // Complete bundle sets come off first; a coupon's percentage then applies to what is left.
         double bundleDiscount = bundleRepository == null ? 0
                 : BundleService.discountFor(bundleRepository.findByActiveTrueOrderByIdAsc(), orderedQuantities, chargedPrices);
-        cart.setBundleDiscount(bundleDiscount > 0 ? bundleDiscount : null);
-        double discount = bundleDiscount + resolveDiscount(cart, price - bundleDiscount);
+        // Quantity breaks ("buy 3+, save 10%") are the other fixed kind of order discount. The order gets whichever of
+        // the two saves more - never both on the same goods.
+        double quantityDiscount = quantityBreakRepository == null ? 0
+                : QuantityBreakService.discountFor(quantityBreakRepository.findByActiveTrueOrderByProductIdAscMinQuantityAsc(), orderedQuantities, chargedPrices);
+        boolean useBreaks = quantityDiscount > bundleDiscount;
+        double setDiscount = useBreaks ? quantityDiscount : bundleDiscount;
+        cart.setBundleDiscount(!useBreaks && bundleDiscount > 0 ? bundleDiscount : null);
+        cart.setQuantityDiscount(useBreaks ? quantityDiscount : null);
+        double discount = setDiscount + resolveDiscount(cart, price - setDiscount);
         if (subscription != null) {
             discount += roundMoney((price - discount) * subscription.discountPercent() / 100.0);
         }

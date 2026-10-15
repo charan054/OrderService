@@ -163,6 +163,15 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void quantityBreaksAreVisibleToEveryoneButOnlyTheServiceKeyChangesThem() throws Exception {
+        mockMvc.perform(get("/quantitybreaks")).andExpect(status().isOk());
+        mockMvc.perform(post("/quantitybreaks").param("productId", "1").param("minQuantity", "3").param("percentOff", "10"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/quantitybreaks").param("productId", "1").param("minQuantity", "3").param("percentOff", "10").with(customer()))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
     void installableAppFilesArePublic() throws Exception {
         mockMvc.perform(get("/manifest.webmanifest")).andExpect(status().isOk());
         mockMvc.perform(get("/icon.svg")).andExpect(status().isOk());
