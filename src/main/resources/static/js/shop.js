@@ -1,4 +1,4 @@
-    const BASE_URL = "http://localhost:8083";
+    const BASE_URL = "";
     let customerPhno = null;
     let products = [];
     let cart = []; // {productId, name, price, quantity, stock}
