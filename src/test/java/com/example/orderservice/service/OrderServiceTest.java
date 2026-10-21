@@ -2618,6 +2618,43 @@ class OrderServiceTest {
     }
 
     @Test
+    void deleteProductUsesTheChargedPriceAndKeepsTheDiscountShareAndDeliveryFee() {
+        OrderItem toRemove = item(1, 2);
+        toRemove.setId(101L);
+        toRemove.setUnitPrice(100.0);
+        OrderItem toKeep = item(2, 2);
+        toKeep.setId(102L);
+        toKeep.setUnitPrice(100.0);
+        Cart cart = cart(CUSTOMER, toRemove, toKeep);
+        // goods 400, 10% off = 360, plus a 40 delivery fee
+        cart.setDeliveryFee(40.0);
+        cart.setTotalPrice(400.0);
+        // the catalog price has since changed - it must not be used
+        lenient().when(productClient.getProductById(1)).thenReturn(product(1, 999.0, 8));
+        when(orderRepository.findBycustomerPhno(CUSTOMER)).thenReturn(List.of(cart));
+
+        List<Cart> result = service.deleteProduct(CUSTOMER, 1);
+
+        // the removed line was worth 200 at the charged price, scaled by 360/400 paid for goods = 180
+        assertEquals(220.0, result.get(0).getTotalPrice(), 0.001);
+    }
+
+    @Test
+    void deleteProductNeverLeavesANegativeTotal() {
+        OrderItem toRemove = item(1, 1);
+        toRemove.setId(101L);
+        Cart cart = cart(CUSTOMER, toRemove);
+        cart.setTotalPrice(10.0);
+        when(orderRepository.findBycustomerPhno(CUSTOMER)).thenReturn(List.of(cart));
+        when(productClient.getProductById(1)).thenReturn(null);
+
+        List<Cart> result = service.deleteProduct(CUSTOMER, 1);
+
+        assertEquals(10.0, result.get(0).getTotalPrice(), 0.001);
+        assertTrue(result.get(0).getTotalPrice() >= 0);
+    }
+
+    @Test
     void deleteProductLeavesNonPlacedOrdersAloneSoStockIsNotRestoredTwice() {
         OrderItem it = item(1, 2);
         it.setId(101L);
