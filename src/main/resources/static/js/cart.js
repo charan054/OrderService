@@ -4,14 +4,21 @@
 
     const serviceKeyInput = document.getElementById("serviceKey");
     const buyerAuthorizationInput = document.getElementById("buyerAuthorization");
-    serviceKeyInput.value = localStorage.getItem("cartServiceKey") || "";
-    buyerAuthorizationInput.value = localStorage.getItem("cartBuyerAuthorization") || "";
-    serviceKeyInput.addEventListener("input", () => {
-      localStorage.setItem("cartServiceKey", serviceKeyInput.value);
-    });
-    buyerAuthorizationInput.addEventListener("input", () => {
-      localStorage.setItem("cartBuyerAuthorization", buyerAuthorizationInput.value);
-    });
+    // The shared Service Key and the buyer token are secrets: keep them for this tab only (sessionStorage), never in
+    // localStorage where they would outlive the session and be readable by anything else that runs on this origin.
+    function readSecret(name) {
+      try {
+        localStorage.removeItem(name); // older versions stored it here
+        return sessionStorage.getItem(name) || "";
+      } catch (e) { return ""; }
+    }
+    function saveSecret(name, value) {
+      try { sessionStorage.setItem(name, value); } catch (e) { /* works for this page view only */ }
+    }
+    serviceKeyInput.value = readSecret("cartServiceKey");
+    buyerAuthorizationInput.value = readSecret("cartBuyerAuthorization");
+    serviceKeyInput.addEventListener("input", () => saveSecret("cartServiceKey", serviceKeyInput.value));
+    buyerAuthorizationInput.addEventListener("input", () => saveSecret("cartBuyerAuthorization", buyerAuthorizationInput.value));
 
     // ---------- admin sign-in (named accounts) ----------
     const ADMIN_ORIGIN = "";
@@ -106,7 +113,7 @@
         return;
       }
       if (namedLoginRequired) {
-        try { localStorage.removeItem("cartServiceKey"); } catch (e) { /* nothing stored */ }
+        try { sessionStorage.removeItem("cartServiceKey"); } catch (e) { /* nothing stored */ }
         serviceKeyInput.value = "";
         serviceKeyInput.disabled = true;
         serviceKeyInput.placeholder = "Not accepted in the browser - sign in with your admin account above";
