@@ -2639,35 +2639,22 @@ public class OrderService {
                 ? DEFAULT_FREQUENTLY_BOUGHT_TOGETHER_LIMIT
                 : Math.min(limit, MAX_FREQUENTLY_BOUGHT_TOGETHER_LIMIT);
 
-        Map<Integer, Integer> coOccurrence = new HashMap<>();
-        for (Cart cart : orderRepository.findAll()) {
-            if (cart.getStatus() == OrderStatus.CANCELLED) {
-                continue;
-            }
-            List<OrderItem> items = cart.getOrderItems();
-            if (items == null || items.stream().noneMatch(item -> item.getProductId() == productId)) {
-                continue;
-            }
-            for (OrderItem item : items) {
-                if (item.getProductId() == productId) {
-                    continue;
-                }
-                coOccurrence.merge(item.getProductId(), 1, Integer::sum);
-            }
-        }
+        // Counted in the database (ranked, top N only) rather than by loading every order: this is a public endpoint.
+        List<Object[]> coPurchased = orderRepository.findCoPurchasedProducts(productId,
+                org.springframework.data.domain.PageRequest.of(0, effectiveLimit));
 
-        return coOccurrence.entrySet().stream()
-                .sorted(Map.Entry.<Integer, Integer>comparingByValue().reversed())
-                .limit(effectiveLimit)
-                .map(entry -> {
+        return coPurchased.stream()
+                .map(row -> {
+                    int otherId = ((Number) row[0]).intValue();
+                    int times = ((Number) row[1]).intValue();
                     Product product;
                     try {
-                        product = productClient.getProductById(entry.getKey());
+                        product = productClient.getProductById(otherId);
                     } catch (FeignException e) {
                         return null;
                     }
                     return product == null ? null
-                            : new FrequentlyBoughtTogether(product.getProductId(), product.getProductName(), entry.getValue());
+                            : new FrequentlyBoughtTogether(product.getProductId(), product.getProductName(), times);
                 })
                 .filter(Objects::nonNull)
                 .toList();
