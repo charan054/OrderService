@@ -3245,6 +3245,30 @@ class OrderServiceTest {
     // ---------- getSalesAnalytics ----------
 
     @Test
+    void getSalesAnalyticsLooksUpEachProductsPriceOnlyOnce() {
+        Cart a = cart(CUSTOMER, item(1, 1), item(2, 1));
+        a.setTotalPrice(100.0);
+        a.setStatus(OrderStatus.PLACED);
+        Cart b = cart(CUSTOMER, item(1, 2));
+        b.setTotalPrice(100.0);
+        b.setStatus(OrderStatus.PLACED);
+        Cart c = cart(CUSTOMER, item(1, 3));
+        c.setTotalPrice(100.0);
+        c.setStatus(OrderStatus.DELIVERED);
+        when(orderRepository.findAll()).thenReturn(List.of(a, b, c));
+        when(productClient.getProductById(1)).thenReturn(product(1, 10.0, 5));
+        when(productClient.getProductById(2)).thenReturn(product(2, 20.0, 5));
+
+        SalesAnalytics result = service.getSalesAnalytics();
+
+        // One lookup to price each product plus one per top seller to name it - not one per order line.
+        verify(productClient, times(2)).getProductById(1);
+        verify(productClient, times(2)).getProductById(2);
+        assertEquals(6, result.topProducts().get(0).unitsSold());
+        assertEquals(60.0, result.topProducts().get(0).revenue(), 0.001);
+    }
+
+    @Test
     void getSalesAnalyticsExcludesCancelledOrdersFromRevenueButCountsThemByStatus() {
         Cart placed = cart(CUSTOMER, item(1, 1));
         placed.setTotalPrice(100.0);
