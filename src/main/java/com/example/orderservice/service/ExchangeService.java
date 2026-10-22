@@ -65,7 +65,7 @@ public class ExchangeService {
         if (reason == null || reason.isBlank()) {
             throw new ProductException("Please say why you want to exchange this item");
         }
-        synchronized (orderService.orderLock(orderId)) {
+        try (var ignoredLock = orderService.lockOrder(orderId)) {
             Cart cart = load(orderId);
             if (cart.getStatus() != OrderStatus.DELIVERED) {
                 throw new ProductException("Only items of a delivered order can be exchanged");
@@ -117,7 +117,7 @@ public class ExchangeService {
     /** Staff accept: the replacement units are set aside in stock right away. */
     public ExchangeRequest approve(long id) {
         ExchangeRequest r = find(id);
-        synchronized (orderService.orderLock(r.getOrderId())) {
+        try (var ignoredLock = orderService.lockOrder(r.getOrderId())) {
             r = find(id);
             requireStatus(r, REQUESTED, "Only a new exchange request can be approved");
             Product replacement = replacement(r.getReplacementProductId());
@@ -155,7 +155,7 @@ public class ExchangeService {
 
     public ExchangeRequest reject(long id, String note) {
         ExchangeRequest r = find(id);
-        synchronized (orderService.orderLock(r.getOrderId())) {
+        try (var ignoredLock = orderService.lockOrder(r.getOrderId())) {
             r = find(id);
             requireStatus(r, REQUESTED, "Only a new exchange request can be rejected");
             r.setStatus(REJECTED);
@@ -170,7 +170,7 @@ public class ExchangeService {
     /** The customer withdraws a request nobody has approved yet. */
     public ExchangeRequest cancel(long id) {
         ExchangeRequest r = find(id);
-        synchronized (orderService.orderLock(r.getOrderId())) {
+        try (var ignoredLock = orderService.lockOrder(r.getOrderId())) {
             r = find(id);
             requireStatus(r, REQUESTED, "Only a request that is still waiting can be withdrawn");
             r.setStatus(CANCELLED);
@@ -182,7 +182,7 @@ public class ExchangeService {
     /** The old units are back: they go back into stock and the exchange is complete. */
     public ExchangeRequest markReceived(long id) {
         ExchangeRequest r = find(id);
-        synchronized (orderService.orderLock(r.getOrderId())) {
+        try (var ignoredLock = orderService.lockOrder(r.getOrderId())) {
             r = find(id);
             requireStatus(r, APPROVED, "Approve the exchange first");
             try (StockMovementContext.Scope ignored = StockMovementContext.open(StockMovementContext.RETURN,

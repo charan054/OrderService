@@ -17,13 +17,20 @@ public class LoyaltyExpiryWarningScheduler {
     private static final Logger log = LoggerFactory.getLogger(LoyaltyExpiryWarningScheduler.class);
 
     private final LoyaltyExpiryWarningService service;
+    private final ClusterLocks locks;
 
-    public LoyaltyExpiryWarningScheduler(LoyaltyExpiryWarningService service) {
+    public LoyaltyExpiryWarningScheduler(LoyaltyExpiryWarningService service, ClusterLocks locks) {
+        this.locks = locks;
         this.service = service;
     }
 
     @Scheduled(cron = "${loyalty.warning.cron:0 30 9 * * *}", zone = "${loyalty.warning.zone:Asia/Kolkata}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("loyalty-expiry-warning-scheduler", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             service.run();
         } catch (RuntimeException e) {

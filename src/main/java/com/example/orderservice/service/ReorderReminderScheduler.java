@@ -17,13 +17,20 @@ public class ReorderReminderScheduler {
     private static final Logger log = LoggerFactory.getLogger(ReorderReminderScheduler.class);
 
     private final ReorderReminderService service;
+    private final ClusterLocks locks;
 
-    public ReorderReminderScheduler(ReorderReminderService service) {
+    public ReorderReminderScheduler(ReorderReminderService service, ClusterLocks locks) {
+        this.locks = locks;
         this.service = service;
     }
 
     @Scheduled(cron = "${reorder.reminder.cron:0 0 10 * * *}", zone = "${reorder.reminder.zone:Asia/Kolkata}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("reorder-reminder-scheduler", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             service.run();
         } catch (RuntimeException e) {

@@ -53,7 +53,7 @@ public class ReturnPickupService {
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A return reason is required");
         }
-        synchronized (orderService.orderLock(orderId)) {
+        try (var ignoredLock = orderService.lockOrder(orderId)) {
             Cart cart = load(orderId);
             if (cart.getStatus() != OrderStatus.DELIVERED) {
                 throw new ProductException("Only a delivered order can be returned");
@@ -77,7 +77,7 @@ public class ReturnPickupService {
     }
 
     public Cart markPickedUp(long orderId) {
-        synchronized (orderService.orderLock(orderId)) {
+        try (var ignoredLock = orderService.lockOrder(orderId)) {
             Cart cart = load(orderId);
             if (!AWAITING_PICKUP.equals(cart.getReturnPickupStatus())) {
                 throw new ProductException("This return is not waiting for pickup");
@@ -105,7 +105,7 @@ public class ReturnPickupService {
         if (reason == null || reason.isBlank()) {
             throw new ProductException("A return reason is required");
         }
-        synchronized (orderService.orderLock(orderId)) {
+        try (var ignoredLock = orderService.lockOrder(orderId)) {
             Cart cart = load(orderId);
             if (cart.getStatus() != OrderStatus.DELIVERED) {
                 throw new ProductException("Only items of a delivered order can be returned");
@@ -137,7 +137,7 @@ public class ReturnPickupService {
 
     public ItemReturnPickup markItemPickedUp(long pickupId) {
         ItemReturnPickup p = loadItem(pickupId);
-        synchronized (orderService.orderLock(p.getOrderId())) {
+        try (var ignoredLock = orderService.lockOrder(p.getOrderId())) {
             p = loadItem(pickupId);
             if (!AWAITING_PICKUP.equals(p.getStatus())) {
                 throw new ProductException("This return is not waiting for pickup");

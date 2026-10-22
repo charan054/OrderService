@@ -18,13 +18,20 @@ public class PendingPaymentSweeper {
     private static final Logger log = LoggerFactory.getLogger(PendingPaymentSweeper.class);
 
     private final OrderService orderService;
+    private final ClusterLocks locks;
 
-    public PendingPaymentSweeper(OrderService orderService) {
+    public PendingPaymentSweeper(OrderService orderService, ClusterLocks locks) {
+        this.locks = locks;
         this.orderService = orderService;
     }
 
     @Scheduled(initialDelayString = "${sweeper.initial-delay-ms:30000}", fixedDelayString = "${sweeper.interval-ms:60000}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("pending-payment-sweeper", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             orderService.sweepPendingPayments();
         } catch (RuntimeException e) {

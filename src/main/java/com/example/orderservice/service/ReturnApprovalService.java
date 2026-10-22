@@ -49,7 +49,7 @@ public class ReturnApprovalService {
         if (clean == null) {
             throw new ProductException("Please say why you want to return this order");
         }
-        synchronized (orderService.orderLock(orderId)) {
+        try (var ignoredLock = orderService.lockOrder(orderId)) {
             Cart cart = load(orderId);
             if (cart.getStatus() != OrderStatus.DELIVERED) {
                 throw new ProductException("Only a delivered order can be returned");
@@ -66,7 +66,7 @@ public class ReturnApprovalService {
     }
 
     public Cart approve(long orderId) {
-        synchronized (orderService.orderLock(orderId)) {
+        try (var ignoredLock = orderService.lockOrder(orderId)) {
             Cart cart = load(orderId);
             requireRequested(cart);
             cart.setReturnRequestStatus(APPROVED);
@@ -81,7 +81,7 @@ public class ReturnApprovalService {
 
     public Cart reject(long orderId, String note) {
         String clean = clean(note, "Note");
-        synchronized (orderService.orderLock(orderId)) {
+        try (var ignoredLock = orderService.lockOrder(orderId)) {
             Cart cart = load(orderId);
             requireRequested(cart);
             cart.setReturnRequestStatus(REJECTED);
