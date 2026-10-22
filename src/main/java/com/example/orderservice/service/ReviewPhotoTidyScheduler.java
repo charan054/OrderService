@@ -17,13 +17,20 @@ public class ReviewPhotoTidyScheduler {
     private static final Logger log = LoggerFactory.getLogger(ReviewPhotoTidyScheduler.class);
 
     private final ReviewPhotoTidyService service;
+    private final ClusterLocks locks;
 
-    public ReviewPhotoTidyScheduler(ReviewPhotoTidyService service) {
+    public ReviewPhotoTidyScheduler(ReviewPhotoTidyService service, ClusterLocks locks) {
+        this.locks = locks;
         this.service = service;
     }
 
     @Scheduled(cron = "${review-photo.tidy.cron:0 30 3 * * *}", zone = "${review-photo.tidy.zone:Asia/Kolkata}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("review-photo-tidy-scheduler", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             PhotoTidyResult r = service.tidy(false);
             log.info("Review photo tidy: {} photo(s), {} in use, {} too recent, {} removed ({} bytes)",

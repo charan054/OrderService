@@ -42,7 +42,6 @@ class ReturnPickupServiceTest {
                 java.time.Clock.fixed(java.time.Instant.parse("2026-10-12T10:00:00Z"), java.time.ZoneOffset.UTC), true);
         lenient().when(itemPickups.save(any(com.example.orderservice.entity.ItemReturnPickup.class))).thenAnswer(i -> i.getArgument(0));
         lenient().when(itemPickups.findByOrderIdAndStatusIn(org.mockito.ArgumentMatchers.anyLong(), any())).thenReturn(List.of());
-        lenient().when(orderService.orderLock(42L)).thenReturn(new Object());
         lenient().when(orders.save(any(Cart.class))).thenAnswer(i -> i.getArgument(0));
     }
 

@@ -39,7 +39,6 @@ class ReturnApprovalServiceTest {
     @BeforeEach
     void setUp() {
         service = new ReturnApprovalService(orders, orderService, notifier, true);
-        lenient().when(orderService.orderLock(42L)).thenReturn(new Object());
         lenient().when(orders.save(any(Cart.class))).thenAnswer(i -> i.getArgument(0));
     }
 

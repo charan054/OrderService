@@ -16,13 +16,20 @@ public class StockAlertScheduler {
     private static final Logger log = LoggerFactory.getLogger(StockAlertScheduler.class);
 
     private final StockAlertService stockAlertService;
+    private final ClusterLocks locks;
 
-    public StockAlertScheduler(StockAlertService stockAlertService) {
+    public StockAlertScheduler(StockAlertService stockAlertService, ClusterLocks locks) {
+        this.locks = locks;
         this.stockAlertService = stockAlertService;
     }
 
     @Scheduled(initialDelayString = "${alerts.initial-delay-ms:60000}", fixedDelayString = "${alerts.interval-ms:600000}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("stock-alert-scheduler", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             stockAlertService.run();
         } catch (RuntimeException e) {

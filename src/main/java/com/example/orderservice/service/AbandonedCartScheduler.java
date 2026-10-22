@@ -17,13 +17,20 @@ public class AbandonedCartScheduler {
     private static final Logger log = LoggerFactory.getLogger(AbandonedCartScheduler.class);
 
     private final AbandonedCartService service;
+    private final ClusterLocks locks;
 
-    public AbandonedCartScheduler(AbandonedCartService service) {
+    public AbandonedCartScheduler(AbandonedCartService service, ClusterLocks locks) {
+        this.locks = locks;
         this.service = service;
     }
 
     @Scheduled(cron = "${abandoned-cart.cron:0 15 * * * *}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("abandoned-cart-scheduler", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             service.run();
         } catch (RuntimeException e) {

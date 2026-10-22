@@ -621,26 +621,23 @@ public class OrderService {
     // A poll and a sweep can hit the same order at the same moment; both would then cancel it and put its stock
     // back twice. Striped locks make them take turns, and the order is re-read inside the lock so the loser sees
     // the winner's result and returns it.
-    private static final int PENDING_LOCK_STRIPES = 64;
-    private final Object[] pendingLocks = newLocks(PENDING_LOCK_STRIPES);
+    // Held across every OrderService instance on this database (ClusterLocks), not just within this JVM, and reentrant:
+    // the pending-payment paths above take it again from inside. One order is changed by one request at a time: two
+    // cancels (a double click) would each pass the status check and each put the stock back, and a ship racing a cancel
+    // would leave a refunded order marked shipped. Use in try-with-resources.
+    private ClusterLocks clusterLocks = ClusterLocks.localOnly();
 
-    private static Object[] newLocks(int count) {
-        Object[] locks = new Object[count];
-        for (int i = 0; i < count; i++) {
-            locks[i] = new Object();
-        }
-        return locks;
+    @Autowired(required = false)
+    void setClusterLocks(ClusterLocks clusterLocks) {
+        this.clusterLocks = clusterLocks;
     }
 
-    // One order is changed by one request at a time: two cancels (a double click) would each pass the status check and
-    // each put the stock back, and a ship racing a cancel would leave a refunded order marked shipped. The monitor is
-    // reentrant, so the pending-payment paths above can take it again from inside.
-    Object orderLock(long orderId) {
-        return pendingLocks[(int) Math.floorMod(orderId, (long) PENDING_LOCK_STRIPES)];
+    public ClusterLocks.Handle lockOrder(long orderId) {
+        return clusterLocks.lock("order-" + orderId);
     }
 
     public Cart checkPendingPayment(long orderId) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             return resolvePendingPayment(orderId);
         }
     }
@@ -800,14 +797,14 @@ public class OrderService {
                        String reason,
                        String note,
                        String refundTo) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             return cancelLocked(orderId, authorization, idempotencyKey, payerPhno, payerPin, reason, note, refundTo, false);
         }
     }
 
     /** A shipped order that could not be delivered goes back to stock and is refunded with the shop's own key. */
     public Cart cancelUndelivered(long orderId, String note) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             return cancelLocked(orderId, STAFF_REFUND, "undelivered-" + orderId, null, null, "OTHER", note, null, true);
         }
     }
@@ -907,7 +904,7 @@ public class OrderService {
     // per-item cancel/return arithmetic stays exact. The new units are sold at today's price and a line that already
     // exists must have been bought at that same price.
     public Cart addItem(long orderId, int productId, int quantity) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             return addItemLocked(orderId, productId, quantity);
         }
     }
@@ -1015,7 +1012,7 @@ public class OrderService {
                        Long payerPhno,
                        String payerPin,
                        String refundTo) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             return returnOrderLocked(orderId, authorization, idempotencyKey, reason, payerPhno, payerPin, refundTo);
         }
     }
@@ -1107,7 +1104,7 @@ public class OrderService {
                        Long payerPhno,
                        String payerPin,
                        String refundTo) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             return cancelItemLocked(orderId, productId, quantity, authorization, idempotencyKey, payerPhno, payerPin, refundTo);
         }
     }
@@ -1174,7 +1171,7 @@ public class OrderService {
                        Long payerPhno,
                        String payerPin,
                        String refundTo) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             return returnItemLocked(orderId, productId, quantity, reason, authorization, idempotencyKey, payerPhno, payerPin, refundTo);
         }
     }
@@ -2006,7 +2003,7 @@ public class OrderService {
     public Cart ship(long orderId,
                        String carrier,
                        String trackingNumber) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             return shipLocked(orderId, carrier, trackingNumber);
         }
     }
@@ -2059,7 +2056,7 @@ public class OrderService {
     }
 
     public Cart deliver(long orderId) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             return deliverLocked(orderId);
         }
     }
@@ -2144,7 +2141,7 @@ public class OrderService {
     // PHONEPE order is already paid the moment its charge succeeds (see order()), so marking it "paid" again
     // makes no sense and is rejected instead of silently accepted.
     public Cart markPaid(long orderId) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             return markPaidLocked(orderId);
         }
     }
@@ -3277,7 +3274,7 @@ public class OrderService {
     // Points a not-yet-shipped order at another of the customer's saved addresses. The new one goes through the same
     // checks as checkout (it is theirs, current, and in a pincode we deliver to).
     public Cart changeOrderAddress(long orderId, long addressId) {
-        synchronized (orderLock(orderId)) {
+        try (var ignoredLock = lockOrder(orderId)) {
             Cart cart = orderRepository.findById(orderId)
                     .orElseThrow(() -> new OrderNotFoundException("Order not found"));
             if (cart.getStatus() != OrderStatus.PLACED) {

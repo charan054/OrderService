@@ -17,13 +17,20 @@ public class BirthdayCouponScheduler {
     private static final Logger log = LoggerFactory.getLogger(BirthdayCouponScheduler.class);
 
     private final BirthdayCouponService service;
+    private final ClusterLocks locks;
 
-    public BirthdayCouponScheduler(BirthdayCouponService service) {
+    public BirthdayCouponScheduler(BirthdayCouponService service, ClusterLocks locks) {
+        this.locks = locks;
         this.service = service;
     }
 
     @Scheduled(cron = "${birthday.coupon.cron:0 0 9 * * *}", zone = "${birthday.coupon.zone:Asia/Kolkata}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("birthday-coupon-scheduler", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             service.run();
         } catch (RuntimeException e) {

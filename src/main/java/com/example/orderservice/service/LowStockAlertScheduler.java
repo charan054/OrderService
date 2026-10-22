@@ -13,14 +13,21 @@ public class LowStockAlertScheduler {
     private static final Logger log = LoggerFactory.getLogger(LowStockAlertScheduler.class);
 
     private final LowStockAlertService service;
+    private final ClusterLocks locks;
 
-    public LowStockAlertScheduler(LowStockAlertService service) {
+    public LowStockAlertScheduler(LowStockAlertService service, ClusterLocks locks) {
+        this.locks = locks;
         this.service = service;
     }
 
     @Scheduled(initialDelayString = "${lowstock.alert.initial-delay-ms:120000}",
             fixedDelayString = "${lowstock.alert.interval-ms:1800000}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("low-stock-alert-scheduler", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             service.run();
         } catch (RuntimeException e) {

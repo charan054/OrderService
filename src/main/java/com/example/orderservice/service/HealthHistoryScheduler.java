@@ -18,13 +18,20 @@ public class HealthHistoryScheduler {
     private static final Logger log = LoggerFactory.getLogger(HealthHistoryScheduler.class);
 
     private final HealthHistoryService history;
+    private final ClusterLocks locks;
 
-    public HealthHistoryScheduler(HealthHistoryService history) {
+    public HealthHistoryScheduler(HealthHistoryService history, ClusterLocks locks) {
+        this.locks = locks;
         this.history = history;
     }
 
     @Scheduled(initialDelayString = "${health.history.initial-delay-ms:60000}", fixedDelayString = "${health.history.interval-ms:300000}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("health-history-scheduler", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             history.record();
         } catch (RuntimeException e) {

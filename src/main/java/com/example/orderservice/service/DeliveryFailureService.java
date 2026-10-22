@@ -55,7 +55,7 @@ public class DeliveryFailureService {
         if (cleanNote != null && cleanNote.length() > MAX_NOTE) {
             throw new ProductException("Note must be at most " + MAX_NOTE + " characters");
         }
-        synchronized (orderService.orderLock(orderId)) {
+        try (var ignoredLock = orderService.lockOrder(orderId)) {
             Cart cart = load(orderId);
             if (cart.getStatus() != OrderStatus.SHIPPED) {
                 throw new ProductException("Only a shipped order can have a failed delivery");
@@ -91,7 +91,7 @@ public class DeliveryFailureService {
         if (clean.length() > MAX_NOTE) {
             throw new ProductException("The reason must be at most " + MAX_NOTE + " characters");
         }
-        synchronized (orderService.orderLock(orderId)) {
+        try (var ignoredLock = orderService.lockOrder(orderId)) {
             Cart cart = load(orderId);
             if (cart.getStatus() != OrderStatus.SHIPPED) {
                 throw new ProductException("Only a shipped order can be marked delayed");
@@ -107,7 +107,7 @@ public class DeliveryFailureService {
 
     /** Gives up on a shipped order that failed to deliver: it is cancelled, put back in stock and refunded. */
     public Cart returnToStock(long orderId, String note) {
-        synchronized (orderService.orderLock(orderId)) {
+        try (var ignoredLock = orderService.lockOrder(orderId)) {
             if (attempts.countByOrderId(orderId) == 0) {
                 throw new ProductException("Record a failed delivery attempt first");
             }

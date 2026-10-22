@@ -18,13 +18,20 @@ public class DigestScheduler {
     private static final Logger log = LoggerFactory.getLogger(DigestScheduler.class);
 
     private final DigestService digestService;
+    private final ClusterLocks locks;
 
-    public DigestScheduler(DigestService digestService) {
+    public DigestScheduler(DigestService digestService, ClusterLocks locks) {
+        this.locks = locks;
         this.digestService = digestService;
     }
 
     @Scheduled(cron = "${digest.cron:0 0 8 * * *}", zone = "${digest.zone:Asia/Kolkata}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("digest-scheduler", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             if (digestService.isConfigured()) {
                 digestService.send();

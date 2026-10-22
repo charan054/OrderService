@@ -51,7 +51,6 @@ class ExchangeServiceTest {
     void setUp() {
         service = new ExchangeService(exchanges, orders, orderService, productClient, notifier, storeCredit, creditNotes,
                 java.time.Clock.fixed(java.time.Instant.parse("2026-10-13T10:00:00Z"), java.time.ZoneOffset.UTC), "key");
-        lenient().when(orderService.orderLock(anyLong())).thenReturn(new Object());
         lenient().when(exchanges.save(any(ExchangeRequest.class))).thenAnswer(i -> i.getArgument(0));
         lenient().when(exchanges.findByOrderIdAndStatusIn(anyLong(), any())).thenReturn(List.of());
     }

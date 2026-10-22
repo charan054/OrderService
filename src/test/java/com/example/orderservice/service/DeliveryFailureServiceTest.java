@@ -47,7 +47,6 @@ class DeliveryFailureServiceTest {
         cart.setOrderId(9L);
         cart.setStatus(OrderStatus.SHIPPED);
         lenient().when(orders.findById(9L)).thenReturn(Optional.of(cart));
-        lenient().when(orderService.orderLock(anyLong())).thenReturn(new Object());
         lenient().when(attempts.save(any(DeliveryAttempt.class))).thenAnswer(i -> i.getArgument(0));
     }
 

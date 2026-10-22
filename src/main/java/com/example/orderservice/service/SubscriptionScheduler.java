@@ -16,13 +16,20 @@ public class SubscriptionScheduler {
     private static final Logger log = LoggerFactory.getLogger(SubscriptionScheduler.class);
 
     private final SubscriptionService service;
+    private final ClusterLocks locks;
 
-    public SubscriptionScheduler(SubscriptionService service) {
+    public SubscriptionScheduler(SubscriptionService service, ClusterLocks locks) {
+        this.locks = locks;
         this.service = service;
     }
 
     @Scheduled(fixedDelayString = "${subscription.interval-ms:3600000}", initialDelayString = "${subscription.initial-delay-ms:120000}")
     public void run() {
+        // Several instances on one database: only one runs each job.
+        locks.runExclusively("subscription-scheduler", this::runLocked);
+    }
+
+    private void runLocked() {
         try {
             var result = service.runDue();
             if (result.placed() + result.failed() > 0) {
