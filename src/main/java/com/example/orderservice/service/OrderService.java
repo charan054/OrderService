@@ -2823,6 +2823,11 @@ public class OrderService {
         }
     }
 
+    private double lineValue(OrderItem item) {
+        double unit = item.getUnitPrice() != null ? item.getUnitPrice() : productPriceOrZero(item.getProductId());
+        return unit * item.getProductQuantity();
+    }
+
     private double productPriceOrZero(int productId) {
         try {
             Product product = productClient.getProductById(productId);
@@ -2846,13 +2851,21 @@ public class OrderService {
             }
             List<OrderItem> orderItems = cart.getOrderItems();
             double price = cart.getTotalPrice();
+            // Lines are valued at the price this order was charged (unitPrice), not today's catalog price, and the
+            // removed line's share is scaled by what was actually paid for goods (after coupon/points/credit; the
+            // delivery fee is not goods). Orders from before unitPrice existed fall back to the catalog price.
+            double goodsValue = 0;
+            for (OrderItem line : orderItems) {
+                goodsValue += lineValue(line);
+            }
+            double paidForGoods = Math.max(0, cart.getTotalPrice() - cart.getDeliveryFee());
+            double paidShare = goodsValue > 0 ? Math.min(1.0, paidForGoods / goodsValue) : 1.0;
             for(int i=0;i<orderItems.size();i++)
             {
                 if(orderItems.get(i).getProductId()==productId)
                 {
                     long t=orderItems.get(i).getId();
-                    Product pro=productClient.getProductById(orderItems.get(i).getProductId());
-                    price=price-(orderItems.get(i).getProductQuantity()*pro.getProductPrice());
+                    price=price-roundMoney(lineValue(orderItems.get(i)) * paidShare);
                     moveStock(orderItems.get(i).getProductId(), orderItems.get(i).getProductQuantity(), StockMovementContext.CANCEL, cart.getOrderId(), "Product removed from the order");
                     orderItems.remove(i);
                     orderItemRepository.deleteById(t);
@@ -2860,7 +2873,7 @@ public class OrderService {
                 }
             }
 
-            cart.setTotalPrice(price);
+            cart.setTotalPrice(Math.max(0, price));
             orderRepository.save(cart);
         }
 
