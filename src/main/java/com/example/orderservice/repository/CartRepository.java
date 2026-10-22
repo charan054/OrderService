@@ -25,4 +25,17 @@ public interface CartRepository extends JpaRepository<Cart, Long> {
     // settled them. Oldest deadline first.
     List<Cart> findByStatusAndPaymentDeadlineBeforeOrderByPaymentDeadlineAsc(com.example.orderservice.entity.OrderStatus status,
                                                                              java.time.Instant before);
+
+    // Other products bought in the same (non-cancelled) orders as productId, most often first. Rows are
+    // [otherProductId, number of orders]; done in SQL so the public product page doesn't load every order ever placed.
+    @org.springframework.data.jpa.repository.Query("""
+            select b.productId, count(distinct c.orderId)
+            from Cart c join c.orderItems a join c.orderItems b
+            where a.productId = :productId and b.productId <> :productId
+              and (c.status is null or c.status <> com.example.orderservice.entity.OrderStatus.CANCELLED)
+            group by b.productId
+            order by count(distinct c.orderId) desc, b.productId asc
+            """)
+    List<Object[]> findCoPurchasedProducts(@org.springframework.data.repository.query.Param("productId") int productId,
+                                           org.springframework.data.domain.Pageable page);
 }

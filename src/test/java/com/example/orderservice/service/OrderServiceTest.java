@@ -2916,13 +2916,15 @@ class OrderServiceTest {
     }
 
     // ---------- getFrequentlyBoughtTogether ----------
+    // The counting itself is a database query - see CoPurchasedProductsQueryTest; here only what the service does with its rows.
+
+    private static List<Object[]> coRows(Object[]... rows) {
+        return new ArrayList<>(List.of(rows));
+    }
 
     @Test
-    void getFrequentlyBoughtTogetherRanksOtherProductsByCoOccurrenceCount() {
-        Cart cartA = cart(CUSTOMER, item(1, 1), item(2, 1));
-        Cart cartB = cart(CUSTOMER, item(1, 1), item(2, 1));
-        Cart cartC = cart(CUSTOMER, item(1, 1), item(3, 1));
-        when(orderRepository.findAll()).thenReturn(List.of(cartA, cartB, cartC));
+    void getFrequentlyBoughtTogetherKeepsTheQueryOrderAndCounts() {
+        when(orderRepository.findCoPurchasedProducts(eq(1), any())).thenReturn(coRows(new Object[]{2, 2L}, new Object[]{3, 1L}));
         when(productClient.getProductById(2)).thenReturn(product(2, 20.0, 5));
         when(productClient.getProductById(3)).thenReturn(product(3, 30.0, 5));
 
@@ -2936,43 +2938,32 @@ class OrderServiceTest {
     }
 
     @Test
-    void getFrequentlyBoughtTogetherExcludesCancelledOrders() {
-        Cart cancelled = cart(CUSTOMER, item(1, 1), item(2, 1));
-        cancelled.setStatus(OrderStatus.CANCELLED);
-        when(orderRepository.findAll()).thenReturn(List.of(cancelled));
+    void getFrequentlyBoughtTogetherReturnsNothingWhenNoOrderMatches() {
+        when(orderRepository.findCoPurchasedProducts(eq(1), any())).thenReturn(List.of());
 
         assertTrue(service.getFrequentlyBoughtTogether(1, null).isEmpty());
         verifyNoInteractions(productClient);
     }
 
     @Test
-    void getFrequentlyBoughtTogetherIgnoresOrdersThatDontContainTheQueriedProduct() {
-        Cart cart = cart(CUSTOMER, item(2, 1), item(3, 1));
-        when(orderRepository.findAll()).thenReturn(List.of(cart));
-
-        assertTrue(service.getFrequentlyBoughtTogether(1, null).isEmpty());
-    }
-
-    @Test
     void getFrequentlyBoughtTogetherDefaultsToFiveAndCapsAtTwenty() {
-        List<Cart> carts = new ArrayList<>();
-        for (int productId = 2; productId <= 30; productId++) {
-            carts.add(cart(CUSTOMER, item(1, 1), item(productId, 1)));
-            lenient().when(productClient.getProductById(productId)).thenReturn(product(productId, 10.0, 5));
-        }
-        when(orderRepository.findAll()).thenReturn(carts);
+        when(orderRepository.findCoPurchasedProducts(eq(1), any())).thenReturn(List.of());
+        org.mockito.ArgumentCaptor<org.springframework.data.domain.Pageable> page =
+                org.mockito.ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
 
-        assertEquals(5, service.getFrequentlyBoughtTogether(1, null).size());
-        assertEquals(5, service.getFrequentlyBoughtTogether(1, 5).size());
-        assertEquals(20, service.getFrequentlyBoughtTogether(1, 1000).size());
+        service.getFrequentlyBoughtTogether(1, null);
+        service.getFrequentlyBoughtTogether(1, 5);
+        service.getFrequentlyBoughtTogether(1, 1000);
+
+        verify(orderRepository, times(3)).findCoPurchasedProducts(eq(1), page.capture());
+        assertEquals(List.of(5, 5, 20), page.getAllValues().stream().map(org.springframework.data.domain.Pageable::getPageSize).toList());
     }
 
     // A product that's since been removed from the catalog must not blow up the whole list - it's simply
     // skipped, same reasoning getPriceDropAlerts() already applies.
     @Test
     void getFrequentlyBoughtTogetherSkipsAProductWhoseLookupFails() {
-        Cart cart = cart(CUSTOMER, item(1, 1), item(2, 1));
-        when(orderRepository.findAll()).thenReturn(List.of(cart));
+        when(orderRepository.findCoPurchasedProducts(eq(1), any())).thenReturn(coRows(new Object[]{2, 1L}));
         when(productClient.getProductById(2)).thenThrow(declinedBy("byId", 404, "Product not found"));
 
         assertTrue(service.getFrequentlyBoughtTogether(1, null).isEmpty());
