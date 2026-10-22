@@ -2758,6 +2758,8 @@ public class OrderService {
                         Collectors.summingDouble(OrderService::netPaid)));
 
         Map<Integer, Integer> unitsSoldByProduct = new HashMap<>();
+        // One catalog lookup per product, not per order line: this walks every order ever placed.
+        Map<Integer, Double> priceCache = new HashMap<>();
         Map<Integer, Double> revenueByProduct = new HashMap<>();
         for (Cart cart : countedOrders) {
             List<OrderItem> items = cart.getOrderItems();
@@ -2768,7 +2770,7 @@ public class OrderService {
                 if (kept <= 0) continue;
                 unitsSoldByProduct.merge(item.getProductId(), kept, Integer::sum);
                 revenueByProduct.merge(item.getProductId(),
-                        kept * productPriceOrZero(item.getProductId()), Double::sum);
+                        kept * priceCache.computeIfAbsent(item.getProductId(), this::productPriceOrZero), Double::sum);
             }
         }
 
