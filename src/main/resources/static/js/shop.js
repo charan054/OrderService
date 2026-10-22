@@ -3677,6 +3677,22 @@
       box.textContent = message || "";
     }
 
+    // One Idempotency-Key per checkout ATTEMPT, not per click: a double-click, or a retry after a lost response, must
+    // send the same key so the server returns the order it already made instead of placing (and stocking out) another.
+    // Kept per identical cart/payment choice for this tab; cleared once an order is actually placed.
+    function checkoutKeyFor(signature) {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem("checkoutAttempt") || "null");
+        if (saved && saved.signature === signature && saved.key) return saved.key;
+      } catch (e) { /* storage blocked: falls through to a fresh key */ }
+      const key = crypto.randomUUID();
+      try { sessionStorage.setItem("checkoutAttempt", JSON.stringify({ signature, key })); } catch (e) { /* per-click key then */ }
+      return key;
+    }
+    function clearCheckoutKey() {
+      try { sessionStorage.removeItem("checkoutAttempt"); } catch (e) { /* nothing stored */ }
+    }
+
     async function placeOrder() {
       setCheckoutError(null);
       setCheckoutStatus("");
@@ -3739,7 +3755,7 @@
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "Idempotency-Key": crypto.randomUUID()
+            "Idempotency-Key": checkoutKeyFor(JSON.stringify([cartPayload, method, payerPhno]))
           },
           body: JSON.stringify(cartPayload)
         });
@@ -3750,6 +3766,7 @@
         }
 
         const order = await response.json();
+        clearCheckoutKey();
         cart = [];
         renderCart();
         document.getElementById("payerPin").value = "";
