@@ -223,7 +223,43 @@ public class OrderService {
         return placeOrder(cart, null, null, null, null, null, new SubscriptionTerms(subscriptionId, discountPercent));
     }
 
+    // Checkout attempts currently being processed, by customer + Idempotency-Key.
+    private final java.util.Set<String> checkoutsInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Places an order at most once per (customer, Idempotency-Key). The key used to protect only the PAYMENT: a retry
+     * after a lost response was not charged twice, but it still created a second order and took the stock twice. Now
+     * the key is stored on the order, so a retry gets the order that attempt already created, and a second request
+     * arriving while the first is still running is refused (409) instead of racing it. A failed attempt leaves no
+     * order behind (it is rolled back), so retrying the same key after a failure simply tries again. Without a key
+     * every call is a new order, as before.
+     */
     private Cart placeOrder(Cart cart, String authorization, String idempotencyKey, Long payerPhno, String payerPin,
+                            String payerUpiId, SubscriptionTerms subscription)
+    {
+        String key = idempotencyKey == null ? null : idempotencyKey.trim();
+        if (key == null || key.isEmpty() || key.length() > 64) {
+            return placeOrderNow(cart, authorization, idempotencyKey, payerPhno, payerPin, payerUpiId, subscription);
+        }
+        long phno = cart.getCustomerPhno();
+        String flightKey = phno + ":" + key;
+        if (!checkoutsInFlight.add(flightKey)) {
+            throw new org.springframework.web.server.ResponseStatusException(HttpStatus.CONFLICT,
+                    "This order is already being placed - please wait a moment and check your orders");
+        }
+        try {
+            java.util.Optional<Cart> already = orderRepository.findFirstByCustomerPhnoAndIdempotencyKey(phno, key);
+            if (already.isPresent()) {
+                return already.get();
+            }
+            cart.setIdempotencyKey(key);
+            return placeOrderNow(cart, authorization, key, payerPhno, payerPin, payerUpiId, subscription);
+        } finally {
+            checkoutsInFlight.remove(flightKey);
+        }
+    }
+
+    private Cart placeOrderNow(Cart cart, String authorization, String idempotencyKey, Long payerPhno, String payerPin,
                             String payerUpiId, SubscriptionTerms subscription)
     {
         validatePhno(cart.getCustomerPhno());

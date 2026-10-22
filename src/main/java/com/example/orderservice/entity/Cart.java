@@ -30,6 +30,10 @@ public class Cart {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long orderId;
+    // The checkout Idempotency-Key this order was placed with (see OrderService.placeOrder). Never read from or sent to clients.
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(length = 64)
+    private String idempotencyKey;
     private String customerName;
     private long customerPhno;
     @OneToMany(cascade = CascadeType.ALL)

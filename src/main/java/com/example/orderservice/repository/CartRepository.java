@@ -9,6 +9,7 @@ import java.util.List;
 @Repository
 public interface CartRepository extends JpaRepository<Cart, Long> {
     public List<Cart> findBycustomerPhno(long phno);
+    java.util.Optional<Cart> findFirstByCustomerPhnoAndIdempotencyKey(long phno, String idempotencyKey);
     List<Cart> findByStatus(com.example.orderservice.entity.OrderStatus status);
     // invoiceDate in [from, to) - the GST report
     List<Cart> findByInvoiceDateGreaterThanEqualAndInvoiceDateLessThan(java.time.Instant from, java.time.Instant to);

@@ -334,6 +334,88 @@ class OrderServiceTest {
         assertEquals(null, atSave.get(0)[2]);
     }
 
+    // ---------- checkout Idempotency-Key ----------
+
+    private Cart cashOrder() {
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+        return cart;
+    }
+
+    @Test
+    void retryingACheckoutWithTheSameKeyReturnsTheExistingOrderAndTouchesNothing() {
+        Cart existing = cart(CUSTOMER, item(1, 1));
+        existing.setOrderId(77L);
+        when(orderRepository.findFirstByCustomerPhnoAndIdempotencyKey(CUSTOMER, "key-1")).thenReturn(Optional.of(existing));
+
+        Cart result = service.order(cashOrder(), AUTH, "key-1");
+
+        assertEquals(77L, result.getOrderId());
+        verify(orderRepository, never()).save(any());
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void aFirstCheckoutWithAKeyStoresItOnTheOrder() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 45.0, 5));
+        when(orderRepository.findFirstByCustomerPhnoAndIdempotencyKey(CUSTOMER, "key-2")).thenReturn(Optional.empty());
+        when(orderRepository.save(any())).thenAnswer(inv -> {
+            Cart c = inv.getArgument(0);
+            if (c.getOrderId() == null) {
+                c.setOrderId(5L);
+            }
+            return c;
+        });
+
+        Cart result = service.order(cashOrder(), AUTH, "  key-2 ");
+
+        assertEquals("key-2", result.getIdempotencyKey());
+    }
+
+    @Test
+    void aCheckoutWithoutAKeyIsNeverLookedUp() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 45.0, 5));
+        when(orderRepository.save(any())).thenAnswer(inv -> {
+            Cart c = inv.getArgument(0);
+            if (c.getOrderId() == null) {
+                c.setOrderId(6L);
+            }
+            return c;
+        });
+
+        Cart result = service.order(cashOrder(), AUTH, null);
+
+        assertEquals(null, result.getIdempotencyKey());
+        verify(orderRepository, never()).findFirstByCustomerPhnoAndIdempotencyKey(anyLong(), any());
+    }
+
+    @Test
+    void aSecondRequestWithTheSameKeyWhileTheFirstIsStillRunningIsRefused() throws Exception {
+        java.util.concurrent.CountDownLatch inside = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        when(orderRepository.findFirstByCustomerPhnoAndIdempotencyKey(CUSTOMER, "slow")).thenAnswer(inv -> {
+            inside.countDown();
+            release.await(5, java.util.concurrent.TimeUnit.SECONDS);
+            return Optional.of(cart(CUSTOMER, item(1, 1)));
+        });
+        java.util.concurrent.ExecutorService pool = java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            var first = pool.submit(() -> service.order(cashOrder(), AUTH, "slow"));
+            assertTrue(inside.await(5, java.util.concurrent.TimeUnit.SECONDS));
+
+            var ex = assertThrows(org.springframework.web.server.ResponseStatusException.class,
+                    () -> service.order(cashOrder(), AUTH, "slow"));
+            assertEquals(409, ex.getStatusCode().value());
+
+            release.countDown();
+            first.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            release.countDown();
+            pool.shutdownNow();
+        }
+    }
+
     // A declined payment (insufficient funds, expired session, ...) must leave no order and no stock touched -
     // the whole point of charging BEFORE saving the cart or decrementing stock.
     @Test
