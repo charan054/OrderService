@@ -1,20 +1,27 @@
-    const BASE_URL = "http://localhost:8083/cart";
+    const BASE_URL = "/cart";
     let products = [];
     let selectedItems = [];
 
     const serviceKeyInput = document.getElementById("serviceKey");
     const buyerAuthorizationInput = document.getElementById("buyerAuthorization");
-    serviceKeyInput.value = localStorage.getItem("cartServiceKey") || "";
-    buyerAuthorizationInput.value = localStorage.getItem("cartBuyerAuthorization") || "";
-    serviceKeyInput.addEventListener("input", () => {
-      localStorage.setItem("cartServiceKey", serviceKeyInput.value);
-    });
-    buyerAuthorizationInput.addEventListener("input", () => {
-      localStorage.setItem("cartBuyerAuthorization", buyerAuthorizationInput.value);
-    });
+    // The shared Service Key and the buyer token are secrets: keep them for this tab only (sessionStorage), never in
+    // localStorage where they would outlive the session and be readable by anything else that runs on this origin.
+    function readSecret(name) {
+      try {
+        localStorage.removeItem(name); // older versions stored it here
+        return sessionStorage.getItem(name) || "";
+      } catch (e) { return ""; }
+    }
+    function saveSecret(name, value) {
+      try { sessionStorage.setItem(name, value); } catch (e) { /* works for this page view only */ }
+    }
+    serviceKeyInput.value = readSecret("cartServiceKey");
+    buyerAuthorizationInput.value = readSecret("cartBuyerAuthorization");
+    serviceKeyInput.addEventListener("input", () => saveSecret("cartServiceKey", serviceKeyInput.value));
+    buyerAuthorizationInput.addEventListener("input", () => saveSecret("cartBuyerAuthorization", buyerAuthorizationInput.value));
 
     // ---------- admin sign-in (named accounts) ----------
-    const ADMIN_ORIGIN = "http://localhost:8083";
+    const ADMIN_ORIGIN = "";
     const adminUsernameInput = document.getElementById("adminUsername");
     const adminPasswordInput = document.getElementById("adminPassword");
     let adminToken = null;
@@ -25,7 +32,8 @@
     const nativeFetch = window.fetch.bind(window);
     window.fetch = (input, init = {}) => {
       const url = typeof input === "string" ? input : input.url;
-      if (!adminToken || !url.startsWith(ADMIN_ORIGIN)) return nativeFetch(input, init);
+      const sameOrigin = url.startsWith("/") && !url.startsWith("//") || url.startsWith(window.location.origin + "/");
+      if (!adminToken || !sameOrigin) return nativeFetch(input, init);
       const headers = new Headers(init.headers || {});
       headers.delete("X-Service-Key");
       headers.set("X-Admin-Token", adminToken);
@@ -105,7 +113,7 @@
         return;
       }
       if (namedLoginRequired) {
-        try { localStorage.removeItem("cartServiceKey"); } catch (e) { /* nothing stored */ }
+        try { sessionStorage.removeItem("cartServiceKey"); } catch (e) { /* nothing stored */ }
         serviceKeyInput.value = "";
         serviceKeyInput.disabled = true;
         serviceKeyInput.placeholder = "Not accepted in the browser - sign in with your admin account above";
@@ -476,7 +484,7 @@
     }
 
     // ---------- price-match requests ----------
-    const PM_URL = "http://localhost:8083/pricematch";
+    const PM_URL = "/pricematch";
     let priceMatches = [];
 
     function renderPriceMatches() {
@@ -533,7 +541,7 @@
     }
 
     // ---------- customer questions ----------
-    const QA_URL = "http://localhost:8083/questions";
+    const QA_URL = "/questions";
     let pendingQuestions = [];
 
     function renderQuestionsTable() {
@@ -591,7 +599,7 @@
     }
 
     // ---------- support requests ----------
-    const SUPPORT_URL = "http://localhost:8083/support/admin/tickets";
+    const SUPPORT_URL = "/support/admin/tickets";
 
     async function loadSupportQueue() {
       const serviceKey = requireServiceKey();
@@ -665,7 +673,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
       const query = phno ? `phno=${encodeURIComponent(phno)}` : `email=${encodeURIComponent(email)}`;
-      const c = await apiCall(`http://localhost:8083/customer/admin/lookup?${query}`, { headers: { "X-Service-Key": serviceKey } });
+      const c = await apiCall(`/customer/admin/lookup?${query}`, { headers: { "X-Service-Key": serviceKey } });
       const money = v => "₹" + Number(v).toFixed(2);
       const statuses = Object.entries(c.ordersByStatus).map(([s, n]) => `${escapeHtml(s)}: ${n}`).join(" &middot; ") || "none";
       document.getElementById("lookupResult").innerHTML = `
@@ -685,7 +693,7 @@
     async function loadCodPanel(phno) {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const cod = await apiCall(`http://localhost:8083/customer/admin/cod?phno=${encodeURIComponent(phno)}`, { headers: { "X-Service-Key": serviceKey } });
+      const cod = await apiCall(`/customer/admin/cod?phno=${encodeURIComponent(phno)}`, { headers: { "X-Service-Key": serviceKey } });
       const panel = document.getElementById("codPanel");
       if (!cod || !panel) return;
       const state = cod.available
@@ -709,7 +717,7 @@
         note = prompt("Reason for this override (optional, shown to admins only):", "");
         if (note === null) return;
       }
-      await apiCall(`http://localhost:8083/customer/admin/cod?phno=${encodeURIComponent(phno)}&mode=${mode}${note ? "&note=" + encodeURIComponent(note) : ""}`,
+      await apiCall(`/customer/admin/cod?phno=${encodeURIComponent(phno)}&mode=${mode}${note ? "&note=" + encodeURIComponent(note) : ""}`,
         { method: "PUT", headers: { "X-Service-Key": serviceKey } });
       showStatus("Cash-on-delivery setting saved.", "success");
       await loadCodPanel(phno);
@@ -827,7 +835,7 @@
       if (!serviceKey) return;
       const filter = document.getElementById("auditFilter").value.trim();
       const actor = document.getElementById("auditActor").value.trim();
-      const rows = await apiCall(`http://localhost:8083/audit/recent?limit=200${filter ? "&pathContains=" + encodeURIComponent(filter) : ""}${actor ? "&actor=" + encodeURIComponent(actor) : ""}`,
+      const rows = await apiCall(`/audit/recent?limit=200${filter ? "&pathContains=" + encodeURIComponent(filter) : ""}${actor ? "&actor=" + encodeURIComponent(actor) : ""}`,
         { headers: { "X-Service-Key": serviceKey } });
       const wrap = document.getElementById("auditTableWrap");
       wrap.innerHTML = rows.length
@@ -842,7 +850,7 @@
     async function loadFeedbackSummary() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const s = await apiCall(`http://localhost:8083/feedback/summary`, { headers: { "X-Service-Key": serviceKey } });
+      const s = await apiCall(`/feedback/summary`, { headers: { "X-Service-Key": serviceKey } });
       const stars = n => "★".repeat(n) + "☆".repeat(5 - n);
       const counts = Object.entries(s.ratingCounts).reverse().map(([n, c]) => `${stars(Number(n))} ${c}`).join(" &middot; ");
       document.getElementById("feedbackWrap").innerHTML = s.totalFeedback === 0 ? "<p>No feedback yet.</p>" : `
@@ -859,7 +867,7 @@
     async function loadCouponReport() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const report = await apiCall("http://localhost:8083/coupons/report", { headers: { "X-Service-Key": serviceKey } });
+      const report = await apiCall("/coupons/report", { headers: { "X-Service-Key": serviceKey } });
       if (!report || !Array.isArray(report.rows)) return;
       const money = n => "&#8377;" + Number(n).toFixed(2);
       document.getElementById("couponReportWrap").innerHTML = report.rows.length
@@ -877,7 +885,7 @@
     async function loadRefundFailures() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const rows = await apiCall("http://localhost:8083/refundfailures", { headers: { "X-Service-Key": serviceKey } });
+      const rows = await apiCall("/refundfailures", { headers: { "X-Service-Key": serviceKey } });
       if (!Array.isArray(rows)) return;
       document.getElementById("refundFailuresWrap").innerHTML = rows.length
         ? `<table class="orders-table"><thead><tr><th>When</th><th>Order</th><th>Customer</th><th>What</th><th>Amount</th><th>Why</th><th></th></tr></thead><tbody>${rows.map(r => `
@@ -893,7 +901,7 @@
       if (!confirm("Pay this refund back to the customer now? It is sent once, even if you press the button again.")) return;
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const done = await apiCall(`http://localhost:8083/refundfailures/${id}/retry`, {
+      const done = await apiCall(`/refundfailures/${id}/retry`, {
         method: "POST",
         headers: { "X-Service-Key": serviceKey }
       });
@@ -906,7 +914,7 @@
       if (!note || !note.trim()) return;
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      await apiCall(`http://localhost:8083/refundfailures/${id}/resolve?note=${encodeURIComponent(note.trim())}`, {
+      await apiCall(`/refundfailures/${id}/resolve?note=${encodeURIComponent(note.trim())}`, {
         method: "POST",
         headers: { "X-Service-Key": serviceKey }
       });
@@ -916,7 +924,7 @@
     async function loadReturnRequests() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const rows = await apiCall("http://localhost:8083/cart/returns/pending", { headers: { "X-Service-Key": serviceKey } });
+      const rows = await apiCall("/cart/returns/pending", { headers: { "X-Service-Key": serviceKey } });
       if (!Array.isArray(rows)) return;
       document.getElementById("returnRequestsWrap").innerHTML = rows.length
         ? `<table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Reason</th><th></th></tr></thead><tbody>${rows.map(r => `
@@ -930,7 +938,7 @@
     async function loadReturnPickups() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const rows = await apiCall("http://localhost:8083/cart/returns/pickups", { headers: { "X-Service-Key": serviceKey } });
+      const rows = await apiCall("/cart/returns/pickups", { headers: { "X-Service-Key": serviceKey } });
       if (!Array.isArray(rows)) return;
       document.getElementById("returnPickupsWrap").innerHTML = rows.length
         ? `<table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Total</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(r => `
@@ -940,7 +948,7 @@
               ? `<button onclick="stepReturnPickup(${r.orderId}, 'pickedup')">Mark picked up</button>`
               : `<button onclick="stepReturnPickup(${r.orderId}, 'received')">Mark received &amp; refund</button>`}</td></tr>`).join("")}</tbody></table>`
         : `<p>No returns on their way back.</p>`;
-      const items = await apiCall("http://localhost:8083/cart/returns/item-pickups", { headers: { "X-Service-Key": serviceKey } });
+      const items = await apiCall("/cart/returns/item-pickups", { headers: { "X-Service-Key": serviceKey } });
       document.getElementById("itemPickupsWrap").innerHTML = Array.isArray(items) && items.length
         ? `<p><strong>Single items</strong></p><table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Item</th><th>Qty</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${items.map(r => `
             <tr><td>#${r.orderId}</td><td>${r.customerPhno}</td><td>#${r.productId}</td><td>${r.quantity}</td>
@@ -954,7 +962,7 @@
     async function loadExchanges() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const rows = await apiCall("http://localhost:8083/cart/exchanges/open", { headers: { "X-Service-Key": serviceKey } });
+      const rows = await apiCall("/cart/exchanges/open", { headers: { "X-Service-Key": serviceKey } });
       document.getElementById("exchangesWrap").innerHTML = Array.isArray(rows) && rows.length
         ? `<table class="orders-table"><thead><tr><th>Order</th><th>Customer</th><th>Item</th><th>Qty</th><th>Swap for</th><th>Price diff</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>${rows.map(r => `
             <tr><td>#${r.orderId}</td><td>${r.customerPhno}</td><td>#${r.productId}</td><td>${r.quantity}</td><td>#${r.replacementProductId}</td><td>${r.priceDifference ? (r.priceDifference > 0 ? "+" : "") + Number(r.priceDifference).toFixed(2) : "-"}</td>
@@ -973,7 +981,7 @@
       if (!confirm(`Mark ${lastSlipIds.length} order(s) as packed? They will leave the pick list.`)) return;
       const params = new URLSearchParams();
       lastSlipIds.forEach(id => params.append("orderIds", id));
-      const data = await apiCall(`http://localhost:8083/cart/packed?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      const data = await apiCall(`/cart/packed?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
       if (data) { showStatus(`${data.marked} order(s) marked as packed.`, "success"); document.getElementById("psMarkPacked").disabled = true; }
     }
 
@@ -985,7 +993,7 @@
       const params = new URLSearchParams({ packedOnly: "true" });
       const carrier = document.getElementById("psCarrier").value.trim();
       if (carrier) params.set("carrier", carrier);
-      const data = await apiCall(`http://localhost:8083/cart/bulk/ship?${params}`, {
+      const data = await apiCall(`/cart/bulk/ship?${params}`, {
         method: "POST", headers: { "X-Service-Key": serviceKey, "Content-Type": "application/json" }, body: JSON.stringify(lastSlipIds) });
       if (!data) return;
       const skipped = (data.results || []).filter(r => !r.success).map(r => `#${r.orderId}: ${r.message}`);
@@ -1003,7 +1011,7 @@
       const params = new URLSearchParams();
       if (ids.length) ids.forEach(id => params.append("orderIds", id)); else params.set("status", document.getElementById("psStatus").value);
       if (document.getElementById("psIncludePacked").checked) params.set("includePacked", "true");
-      const data = await apiCall(`http://localhost:8083/cart/packing-slips?${params}`, { headers: { "X-Service-Key": serviceKey } });
+      const data = await apiCall(`/cart/packing-slips?${params}`, { headers: { "X-Service-Key": serviceKey } });
       if (!data || !Array.isArray(data.slips)) return;
       lastSlipIds = data.slips.map(s => s.orderId);
       document.getElementById("psMarkPacked").disabled = !lastSlipIds.length;
@@ -1041,7 +1049,7 @@
     async function showDeliveryAttempts() {
       const id = dfOrderId(); const serviceKey = requireServiceKey();
       if (!id || !serviceKey) return;
-      const rows = await apiCall(`http://localhost:8083/cart/${id}/delivery-attempts`, { headers: { "X-Service-Key": serviceKey } });
+      const rows = await apiCall(`/cart/${id}/delivery-attempts`, { headers: { "X-Service-Key": serviceKey } });
       document.getElementById("dfWrap").innerHTML = Array.isArray(rows) && rows.length
         ? `<table class="orders-table"><thead><tr><th>Attempt</th><th>Reason</th><th>Note</th><th>When</th></tr></thead><tbody>${rows.map(a => `
             <tr><td>${a.attemptNo}</td><td>${escapeHtml(a.reason)}</td><td style="white-space:normal;">${escapeHtml(a.note || "")}</td><td>${escapeHtml(String(a.createdAt))}</td></tr>`).join("")}</tbody></table>`
@@ -1052,7 +1060,7 @@
       const id = dfOrderId(); const serviceKey = requireServiceKey();
       if (!id || !serviceKey) return;
       const params = new URLSearchParams({ reason: document.getElementById("dfReason").value, note: document.getElementById("dfNote").value });
-      const data = await apiCall(`http://localhost:8083/cart/${id}/delivery-failed?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      const data = await apiCall(`/cart/${id}/delivery-failed?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
       if (data && data.giveUpAdvised) showStatus(`Attempt ${data.attemptsSoFar} of ${data.maxAttempts} failed - time to send it back to stock.`, "error");
       await showDeliveryAttempts();
     }
@@ -1064,21 +1072,21 @@
       const reason = document.getElementById("dfNote").value.trim();
       if (!date || !reason) { showStatus("Pick the new expected date and write the reason in the note box.", "error"); return; }
       const params = new URLSearchParams({ expectedDate: date, reason });
-      await apiCall(`http://localhost:8083/cart/${id}/delay?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      await apiCall(`/cart/${id}/delay?${params}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
     }
 
     async function returnUndelivered() {
       const id = dfOrderId(); const serviceKey = requireServiceKey();
       if (!id || !serviceKey) return;
       if (!confirm(`Cancel order #${id}, put it back in stock and refund it?`)) return;
-      await apiCall(`http://localhost:8083/cart/${id}/delivery-failed/return-to-stock`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      await apiCall(`/cart/${id}/delivery-failed/return-to-stock`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
     }
 
     async function stepExchange(id, step) {
       if (step === "received" && !confirm("Original item is back? It goes back into stock now.")) return;
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      await apiCall(`http://localhost:8083/cart/exchanges/${id}/${step}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      await apiCall(`/cart/exchanges/${id}/${step}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
       await loadExchanges();
     }
 
@@ -1086,7 +1094,7 @@
       if (step === "received" && !confirm("Item is back? This returns those units and pays the refund now.")) return;
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      await apiCall(`http://localhost:8083/cart/returns/item-pickups/${id}/${step}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      await apiCall(`/cart/returns/item-pickups/${id}/${step}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
       await loadReturnPickups();
     }
 
@@ -1094,7 +1102,7 @@
       if (step === "received" && !confirm("Goods are back? This returns the order and pays the refund now.")) return;
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      await apiCall(`http://localhost:8083/cart/${orderId}/return/${step}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
+      await apiCall(`/cart/${orderId}/return/${step}`, { method: "POST", headers: { "X-Service-Key": serviceKey } });
       await loadReturnPickups();
     }
 
@@ -1107,7 +1115,7 @@
         if (note === null) return;
         query = "?note=" + encodeURIComponent(note.trim());
       }
-      await apiCall(`http://localhost:8083/cart/${orderId}/return/${approve ? "approve" : "reject"}${query}`, {
+      await apiCall(`/cart/${orderId}/return/${approve ? "approve" : "reject"}${query}`, {
         method: "POST",
         headers: { "X-Service-Key": serviceKey }
       });
@@ -1115,7 +1123,7 @@
     }
 
     // ---------- internal order notes ----------
-    const NOTES_URL = "http://localhost:8083/ordernotes";
+    const NOTES_URL = "/ordernotes";
 
     async function loadOrderNotes() {
       const orderId = document.getElementById("noteOrderId").value.trim();
@@ -1554,7 +1562,7 @@
       }).join("");
     }
 
-    const BUNDLES_URL = "http://localhost:8083/bundles";
+    const BUNDLES_URL = "/bundles";
 
     async function createBundle() {
       const name = document.getElementById("bundleName").value.trim();
@@ -1694,7 +1702,7 @@
     }
 
     // ---------- gift cards ----------
-    const GIFT_CARDS_URL = "http://localhost:8083/giftcards";
+    const GIFT_CARDS_URL = "/giftcards";
 
     async function mintGiftCards() {
       const serviceKey = requireServiceKey();
@@ -1756,7 +1764,7 @@
     async function loadGstReport() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const r = await apiCall(`http://localhost:8083/gst/report?${gstQuery()}`, { headers: { "X-Service-Key": serviceKey } });
+      const r = await apiCall(`/gst/report?${gstQuery()}`, { headers: { "X-Service-Key": serviceKey } });
       const money = n => "₹" + Number(n).toFixed(2);
       document.getElementById("gstSummary").innerHTML =
         `<div><b>${r.invoices}</b><span>invoices</span></div><div><b>${r.creditNotes}</b><span>credit notes</span></div>`
@@ -1775,7 +1783,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
       try {
-        const response = await fetch(`http://localhost:8083/gst/report/export?${gstQuery()}`, { headers: { "X-Service-Key": serviceKey } });
+        const response = await fetch(`/gst/report/export?${gstQuery()}`, { headers: { "X-Service-Key": serviceKey } });
         if (!response.ok) throw new Error((await response.text()) || `HTTP Error: ${response.status}`);
         const blob = await response.blob();
         const link = document.createElement("a");
@@ -1795,7 +1803,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
       try {
-        const response = await fetch(`http://localhost:8083/gst/report/pdf?${gstQuery()}`, { headers: { "X-Service-Key": serviceKey } });
+        const response = await fetch(`/gst/report/pdf?${gstQuery()}`, { headers: { "X-Service-Key": serviceKey } });
         if (!response.ok) throw new Error((await response.text()) || `HTTP Error: ${response.status}`);
         const blob = await response.blob();
         const link = document.createElement("a");
@@ -1949,7 +1957,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
 
-      const data = await apiCall(`http://localhost:8083/wishlist/add?phno=${encodeURIComponent(phno)}&productId=${encodeURIComponent(productId)}`, {
+      const data = await apiCall(`/wishlist/add?phno=${encodeURIComponent(phno)}&productId=${encodeURIComponent(productId)}`, {
         method: "POST",
         headers: { "X-Service-Key": serviceKey }
       });
@@ -1962,7 +1970,7 @@
       const phno = document.getElementById("wishlistViewPhno").value;
       if (!phno) return showStatus("Please enter customer phone number.", "error");
 
-      const data = await apiCall(`http://localhost:8083/wishlist/byphno?phno=${encodeURIComponent(phno)}`);
+      const data = await apiCall(`/wishlist/byphno?phno=${encodeURIComponent(phno)}`);
       showStatus("Wishlist loaded successfully. Result opened in new tab.", "success");
       openResultTab("Wishlist", data);
     }
@@ -1975,7 +1983,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
 
-      const data = await apiCall(`http://localhost:8083/wishlist/remove?phno=${encodeURIComponent(phno)}&productId=${encodeURIComponent(productId)}`, {
+      const data = await apiCall(`/wishlist/remove?phno=${encodeURIComponent(phno)}&productId=${encodeURIComponent(productId)}`, {
         method: "DELETE",
         headers: { "X-Service-Key": serviceKey }
       });
@@ -1988,7 +1996,7 @@
       const phno = document.getElementById("profilePhno").value;
       if (!phno) return showStatus("Please enter customer phone number.", "error");
 
-      const data = await apiCall(`http://localhost:8083/customer/profile?phno=${encodeURIComponent(phno)}`);
+      const data = await apiCall(`/customer/profile?phno=${encodeURIComponent(phno)}`);
 
       showStatus("Customer profile loaded. Result opened in new tab.", "success");
       openResultTab("Customer Profile", data);
@@ -2010,7 +2018,7 @@
       const phno = document.getElementById("priceDropsPhno").value;
       if (!phno) return showStatus("Please enter customer phone number.", "error");
 
-      const data = await apiCall(`http://localhost:8083/wishlist/pricedrops?phno=${encodeURIComponent(phno)}`);
+      const data = await apiCall(`/wishlist/pricedrops?phno=${encodeURIComponent(phno)}`);
 
       showStatus("Price drop check complete. Result opened in new tab.", "success");
       openResultTab("Wishlist Price Drops", data);
@@ -2021,8 +2029,8 @@
       if (!phno) return showStatus("Please enter customer phone number.", "error");
 
       const [balance, history] = await Promise.all([
-        apiCall(`http://localhost:8083/loyalty/byphno?phno=${encodeURIComponent(phno)}`),
-        apiCall(`http://localhost:8083/loyalty/history?phno=${encodeURIComponent(phno)}`)
+        apiCall(`/loyalty/byphno?phno=${encodeURIComponent(phno)}`),
+        apiCall(`/loyalty/history?phno=${encodeURIComponent(phno)}`)
       ]);
 
       showStatus("Loyalty points loaded. Result opened in new tab.", "success");
@@ -2035,7 +2043,7 @@
       if (!phno || !email) return showStatus("Please enter the phone number and the new email.", "error");
       if (!requireServiceKey()) return;
 
-      await apiCall(`http://localhost:8083/customer/admin/email?phno=${encodeURIComponent(phno)}&email=${encodeURIComponent(email)}`, {
+      await apiCall(`/customer/admin/email?phno=${encodeURIComponent(phno)}&email=${encodeURIComponent(email)}`, {
         method: "PUT"
       });
       showStatus("Sign-in email rebound. Existing sessions for that number were signed out.", "success");
@@ -2050,7 +2058,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
 
-      const data = await apiCall(`http://localhost:8083/loyalty/adjust`, {
+      const data = await apiCall(`/loyalty/adjust`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2079,7 +2087,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
 
-      const data = await apiCall(`http://localhost:8083/coupons/add`, {
+      const data = await apiCall(`/coupons/add`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2102,7 +2110,7 @@
 
     // After a coupon is saved: products that would sell below cost at this percent off (only those with a cost price set).
     async function warnIfCouponSellsBelowCost(percent, serviceKey) {
-      const check = await apiCall(`http://localhost:8083/coupons/margincheck?discountPercent=${encodeURIComponent(percent)}`,
+      const check = await apiCall(`/coupons/margincheck?discountPercent=${encodeURIComponent(percent)}`,
         { headers: { "X-Service-Key": serviceKey } });
       if (!check) return;
       if (!check.atLoss.length) {
@@ -2120,7 +2128,7 @@
       if (!phno) return showStatus("Please enter the customer's phone number.", "error");
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const data = await apiCall(`http://localhost:8083/storecredit/byphno?phno=${encodeURIComponent(phno)}`, { headers: { "X-Service-Key": serviceKey } });
+      const data = await apiCall(`/storecredit/byphno?phno=${encodeURIComponent(phno)}`, { headers: { "X-Service-Key": serviceKey } });
       if (!data) return;
       showStatus(`Store credit balance: ₹${Number(data.balance).toFixed(2)}. History opened in new tab.`, "success");
       openResultTab("Store Credit", data);
@@ -2133,7 +2141,7 @@
       if (!phno || !amount || !note) return showStatus("Phone number, amount and a note are all required.", "error");
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const data = await apiCall(`http://localhost:8083/storecredit/adjust?phno=${encodeURIComponent(phno)}&amount=${encodeURIComponent(amount)}&note=${encodeURIComponent(note)}`,
+      const data = await apiCall(`/storecredit/adjust?phno=${encodeURIComponent(phno)}&amount=${encodeURIComponent(amount)}&note=${encodeURIComponent(note)}`,
         { method: "POST", headers: { "X-Service-Key": serviceKey } });
       if (!data) return;
       showStatus(`Store credit is now ₹${Number(data.balance).toFixed(2)}.`, "success");
@@ -2149,7 +2157,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
 
-      const data = await apiCall(`http://localhost:8083/coupons/bulk`, {
+      const data = await apiCall(`/coupons/bulk`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
         body: JSON.stringify({
@@ -2168,7 +2176,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
       const id = document.getElementById("faqId").value.trim();
-      const data = await apiCall(`http://localhost:8083/faq/save`, {
+      const data = await apiCall(`/faq/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
         body: JSON.stringify({ id: id ? Number(id) : null, sortOrder: Number(document.getElementById("faqOrder").value || 0),
@@ -2179,7 +2187,7 @@
     }
 
     async function listFaq() {
-      const data = await apiCall(`http://localhost:8083/faq`, {});
+      const data = await apiCall(`/faq`, {});
       openResultTab("FAQ Entries", data);
     }
 
@@ -2189,7 +2197,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
       if (!confirm(`Delete FAQ entry ${id}?`)) return;
-      await apiCall(`http://localhost:8083/faq/${encodeURIComponent(id)}`, {
+      await apiCall(`/faq/${encodeURIComponent(id)}`, {
         method: "DELETE",
         headers: { "X-Service-Key": serviceKey }
       });
@@ -2202,7 +2210,7 @@
       if (!pincode || !deliveryDays) return showStatus("Please enter a pincode and delivery days.", "error");
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const data = await apiCall(`http://localhost:8083/pincodes/add`, {
+      const data = await apiCall(`/pincodes/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Service-Key": serviceKey },
         body: JSON.stringify({ pincode, deliveryDays: Number(deliveryDays),
@@ -2218,7 +2226,7 @@
       if (!csv.trim()) return showStatus("Paste some pincode rows first.", "error");
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const data = await apiCall(`http://localhost:8083/pincodes/import`, {
+      const data = await apiCall(`/pincodes/import`, {
         method: "POST",
         headers: { "Content-Type": "text/plain", "X-Service-Key": serviceKey },
         body: csv
@@ -2230,7 +2238,7 @@
     async function listPincodes() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      const data = await apiCall(`http://localhost:8083/pincodes/all`, { headers: { "X-Service-Key": serviceKey } });
+      const data = await apiCall(`/pincodes/all`, { headers: { "X-Service-Key": serviceKey } });
       openResultTab("Serviceable Pincodes", data);
     }
 
@@ -2239,7 +2247,7 @@
       if (!pincode) return showStatus("Please enter the pincode to remove.", "error");
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
-      await apiCall(`http://localhost:8083/pincodes/remove?pincode=${encodeURIComponent(pincode)}`, {
+      await apiCall(`/pincodes/remove?pincode=${encodeURIComponent(pincode)}`, {
         method: "DELETE",
         headers: { "X-Service-Key": serviceKey }
       });
@@ -2260,7 +2268,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
 
-      const data = await apiCall(`http://localhost:8083/addresses/add`, {
+      const data = await apiCall(`/addresses/add`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -2286,7 +2294,7 @@
       const phno = document.getElementById("viewAddrPhno").value;
       if (!phno) return showStatus("Please enter a customer phone number.", "error");
 
-      const data = await apiCall(`http://localhost:8083/addresses/byphno?phno=${encodeURIComponent(phno)}`);
+      const data = await apiCall(`/addresses/byphno?phno=${encodeURIComponent(phno)}`);
 
       showStatus("Addresses loaded. Result opened in new tab.", "success");
       openResultTab("View Addresses", data);
@@ -2300,7 +2308,7 @@
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
 
-      await apiCall(`http://localhost:8083/addresses/remove?phno=${encodeURIComponent(phno)}&addressId=${encodeURIComponent(addressId)}`, {
+      await apiCall(`/addresses/remove?phno=${encodeURIComponent(phno)}&addressId=${encodeURIComponent(addressId)}`, {
         method: "DELETE",
         headers: { "X-Service-Key": serviceKey }
       });
