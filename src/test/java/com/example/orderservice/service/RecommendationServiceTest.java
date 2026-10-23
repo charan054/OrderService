@@ -74,6 +74,21 @@ class RecommendationServiceTest {
     }
 
     @Test
+    void theOrdersAreReadOnceAndSharedBetweenCustomersForAWhile() {
+        when(orders.findAll()).thenReturn(List.of(order(ME, OrderStatus.DELIVERED, 1), order(OTHER, OrderStatus.DELIVERED, 1, 2)));
+        catalog(1, 2);
+
+        service.forCustomer(ME, 10);
+        service.forCustomer(OTHER, 10);
+        service.forCustomer(ME, 10);
+
+        org.mockito.Mockito.verify(orders, org.mockito.Mockito.times(1)).findAll();
+        service.invalidate();
+        service.forCustomer(ME, 10);
+        org.mockito.Mockito.verify(orders, org.mockito.Mockito.times(2)).findAll();
+    }
+
+    @Test
     void ranksProductsBoughtTogetherWithMyPurchasesFirstThenPopularOnesAndSkipsWhatIOwn() {
         // I bought 1. Others paired 1 with 2 (twice) and 3 (once); 4 is popular but never paired with 1.
         when(orders.findAll()).thenReturn(List.of(
