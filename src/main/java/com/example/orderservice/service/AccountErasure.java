@@ -13,7 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
  * The database half of "delete my account", all in ONE transaction so a failure part-way leaves everything as it was.
  * <ul>
  *   <li>Erased: sign-in (email binding, referral code, sessions, codes), saved addresses, wishlist and its share link,
- *   back-in-stock alerts, saved cart, subscriptions, support requests and their messages, loyalty and store-credit
+ *   back-in-stock alerts, browser notification subscriptions, saved cart, subscriptions, support requests and their messages, loyalty and store-credit
  *   accounts with their history, referrals, per-coupon redemption counts and any cash-on-delivery override.</li>
  *   <li>Kept but anonymised: orders (name becomes a placeholder, phone number 0, and the UPI id and free-text notes are
  *   cleared) because invoices and tax reports need them; the address an order shipped to is reduced to its state, which
@@ -77,6 +77,7 @@ public class AccountErasure {
         run("delete from CouponRedemption r where r.customerPhno = :p", phno);
         run("delete from CodOverride o where o.phno = :p", phno);
 
+        run("delete from PushSubscription s where s.customerPhno = :p", phno);
         run("delete from CustomerSession s where s.phno = :p", phno);
         run("delete from CustomerLoginCode c where c.phno = :p", phno);
         run("delete from AccountDeletionCode c where c.phno = :p", phno);
