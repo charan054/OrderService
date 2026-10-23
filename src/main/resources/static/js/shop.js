@@ -1297,8 +1297,30 @@
       if (!state.supported) { box.innerHTML = ""; return; }
       if (state.denied) { box.innerHTML = `<p class="meta">Notifications are blocked for this site in your browser settings.</p>`; return; }
       box.innerHTML = state.subscribed
-        ? `<p class="meta">Browser notifications are on for this device. <button class="link-button" onclick="turnPushOff()">Turn off</button></p>`
+        ? `<p class="meta">Browser notifications are on for this device. <button class="link-button" onclick="turnPushOff()">Turn off</button></p><div id="pushPrefs" class="meta"></div>`
         : `<p class="meta">Get a notification when an order ships or is out for delivery. <button class="link-button" onclick="turnPushOn()">Turn on</button></p>`;
+      if (state.subscribed) renderPushPrefs();
+    }
+
+    // Which kinds of notification to send: a checkbox each, saved as soon as it is ticked (the server keeps the list of the ones switched off).
+    async function renderPushPrefs() {
+      const box = document.getElementById("pushPrefs");
+      if (!box) return;
+      const response = await authFetch(`${BASE_URL}/cart/push/prefs?phno=${encodeURIComponent(customerPhno)}`);
+      if (!response.ok) { box.innerHTML = ""; return; }
+      const options = await response.json();
+      box.innerHTML = options.map(o => `<label style="display:inline-block; margin-right:14px;"><input type="checkbox" data-push-kind="${escapeHtml(o.key)}" ${o.on ? "checked" : ""} onchange="savePushPrefs()"> ${escapeHtml(o.label)}</label>`).join("");
+    }
+
+    async function savePushPrefs() {
+      const off = [...document.querySelectorAll("#pushPrefs input[data-push-kind]")].filter(i => !i.checked).map(i => i.dataset.pushKind);
+      const response = await authFetch(`${BASE_URL}/cart/push/prefs`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: customerPhno, off })
+      });
+      if (!response.ok) alert("Couldn't save that right now.");
+      renderPushPrefs();
     }
 
     async function turnPushOn() {

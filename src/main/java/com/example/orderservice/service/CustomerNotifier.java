@@ -159,7 +159,7 @@ public class CustomerNotifier {
         notification.setSentAt(clock.instant());
         notification.setEmailed(false);
         NotificationLog saved = notifications.save(notification);
-        if (push != null) {
+        if (push != null && !PushKind.isMuted(accounts.findById(order.getCustomerPhno()).map(CustomerAccount::getPushMuted).orElse(null), status)) {
             push.notifyCustomer(order.getCustomerPhno(), subject, "Tap to see the details of order #" + order.getOrderId() + ".", "/shop.html");
         }
         if (!hasEmail) {
