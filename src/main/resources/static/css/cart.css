@@ -378,3 +378,6 @@
           #navResults button:hover, #navResults button.active { background: #2e1f5e; }
         }
     
+
+/* Used by the admin dashboard to show the authenticator-code box only when an account with two-step sign-in needs it */
+.hidden { display: none !important; }
