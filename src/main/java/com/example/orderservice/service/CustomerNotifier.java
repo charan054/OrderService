@@ -33,6 +33,13 @@ public class CustomerNotifier {
     private final MailService mailService;
     private final Clock clock;
     private final Executor mailExecutor;
+    // Browser notifications ride on the same events as the emails; optional so the notifier works (and is tested) without it.
+    private CustomerPushService push;
+
+    @Autowired(required = false)
+    void setPush(CustomerPushService push) {
+        this.push = push;
+    }
 
     @Autowired
     public CustomerNotifier(CustomerAccountRepository accounts, NotificationLogRepository notifications,
@@ -152,6 +159,9 @@ public class CustomerNotifier {
         notification.setSentAt(clock.instant());
         notification.setEmailed(false);
         NotificationLog saved = notifications.save(notification);
+        if (push != null) {
+            push.notifyCustomer(order.getCustomerPhno(), subject, "Tap to see the details of order #" + order.getOrderId() + ".", "/shop.html");
+        }
         if (!hasEmail) {
             log.info("Customer notification for order {} ({}): recorded only, no verified email on file", order.getOrderId(), status);
             return saved;

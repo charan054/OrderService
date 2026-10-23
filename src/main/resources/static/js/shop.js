@@ -1259,7 +1259,7 @@
       const bar = allNotifications.length
         ? `<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:10px;">${chips}
             ${unread ? `<button class="link-button" onclick="markAllNotificationsRead()">Mark all as read</button>` : ""}</div>` : "";
-      view.innerHTML = bar + (shown.length ? shown.map(n => `
+      view.innerHTML = `<div id="pushToggle"></div>` + bar + (shown.length ? shown.map(n => `
         <div class="order-row" style="${read.has(n.id) ? "" : "border-left:3px solid var(--accent, #2563eb);"}">
           <div>
             <strong>${read.has(n.id) ? "" : "&#9679; "}Order #${n.orderId} - ${escapeHtml(n.eventType)}</strong>
@@ -1269,6 +1269,66 @@
             ${read.has(n.id) ? "" : `<button class="link-button" onclick="markNotificationRead(${n.id})">Mark read</button>`}</div>
         </div>
       `).join("") : `<p style="color:var(--muted);">${allNotifications.length ? "Nothing matches this filter." : "No notifications yet."}</p>`);
+      renderPushToggle();
+    }
+
+    // ---------- browser notifications (Web Push) ----------
+    function urlBase64ToUint8Array(base64) {
+      const padded = (base64 + "=".repeat((4 - base64.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/");
+      const raw = atob(padded);
+      return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+    }
+
+    async function pushState() {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return { supported: false };
+      const keyResponse = await fetch(`${BASE_URL}/cart/push/key`);
+      const key = keyResponse.ok ? await keyResponse.json() : { enabled: false };
+      if (!key.enabled) return { supported: false };
+      const registration = await navigator.serviceWorker.ready;
+      const existing = await registration.pushManager.getSubscription();
+      return { supported: true, publicKey: key.publicKey, registration, subscribed: !!existing, denied: Notification.permission === "denied" };
+    }
+
+    async function renderPushToggle() {
+      const box = document.getElementById("pushToggle");
+      if (!box) return;
+      let state;
+      try { state = await pushState(); } catch (e) { state = { supported: false }; }
+      if (!state.supported) { box.innerHTML = ""; return; }
+      if (state.denied) { box.innerHTML = `<p class="meta">Notifications are blocked for this site in your browser settings.</p>`; return; }
+      box.innerHTML = state.subscribed
+        ? `<p class="meta">Browser notifications are on for this device. <button class="link-button" onclick="turnPushOff()">Turn off</button></p>`
+        : `<p class="meta">Get a notification when an order ships or is out for delivery. <button class="link-button" onclick="turnPushOn()">Turn on</button></p>`;
+    }
+
+    async function turnPushOn() {
+      const state = await pushState();
+      if (!state.supported) return;
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") { renderPushToggle(); return; }
+      const subscription = await state.registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(state.publicKey)
+      });
+      const json = subscription.toJSON();
+      const response = await authFetch(`${BASE_URL}/cart/push/subscribe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: customerPhno, endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth })
+      });
+      if (!response.ok) { await subscription.unsubscribe(); alert("Couldn't turn notifications on right now."); }
+      renderPushToggle();
+    }
+
+    async function turnPushOff() {
+      const state = await pushState();
+      if (!state.supported) return;
+      const subscription = await state.registration.pushManager.getSubscription();
+      if (subscription) {
+        await authFetch(`${BASE_URL}/cart/push/subscribe?phno=${encodeURIComponent(customerPhno)}&endpoint=${encodeURIComponent(subscription.endpoint)}`, { method: "DELETE" });
+        await subscription.unsubscribe();
+      }
+      renderPushToggle();
     }
 
     async function loadNotificationsView() {

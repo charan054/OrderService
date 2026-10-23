@@ -121,6 +121,15 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void pushKeyIsPublicButSubscribingNeedsALoginAndNewKeysNeedsTheServiceKey() throws Exception {
+        mockMvc.perform(get("/cart/push/key")).andExpect(status().isOk());
+        mockMvc.perform(post("/cart/push/subscribe").contentType("application/json")
+                .content("{\"phno\":9876543210,\"endpoint\":\"https://x.example.com/a\",\"p256dh\":\"k\",\"auth\":\"a\"}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(get("/cart/push/new-keys")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void searchIsPublic() throws Exception {
         when(productClient.search(any(), any(), anyInt(), anyInt())).thenReturn(new ProductSearchResult(List.of()));
         mockMvc.perform(get("/cart/search").param("name", "mug")).andExpect(status().isOk());
