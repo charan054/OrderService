@@ -208,7 +208,7 @@ public class OrderService {
     }
 
     /** What makes an order a subscription delivery: which subscription it belongs to and the percent taken off. */
-    private record SubscriptionTerms(long subscriptionId, double discountPercent) {
+    private record SubscriptionTerms(long subscriptionId, double discountPercent, Long mandateId) {
     }
 
     /**
@@ -220,7 +220,20 @@ public class OrderService {
         if (cart.getPaymentMethod() != PaymentMethod.CASH) {
             throw new ProductException("Subscription orders are cash on delivery");
         }
-        return placeOrder(cart, null, null, null, null, null, new SubscriptionTerms(subscriptionId, discountPercent));
+        return placeOrder(cart, null, null, null, null, null, new SubscriptionTerms(subscriptionId, discountPercent, null));
+    }
+
+    /**
+     * A subscription delivery paid from the customer's PhonePe account through their mandate (see AutopayMandateService): the
+     * charge happens before the order exists, exactly like a PIN checkout, and is refunded the same way if the order cannot be
+     * completed. runKey identifies this occasion (subscription + due time): repeating it returns the same order and never
+     * charges twice.
+     */
+    public Cart placeSubscriptionOrder(Cart cart, long subscriptionId, double discountPercent, long mandateId, String runKey) {
+        if (cart.getPaymentMethod() != PaymentMethod.PHONEPE) {
+            throw new ProductException("A subscription with auto-pay is paid through PhonePe");
+        }
+        return placeOrder(cart, null, runKey, null, null, null, new SubscriptionTerms(subscriptionId, discountPercent, mandateId));
     }
 
     // Checkout attempts currently being processed, by customer + Idempotency-Key.
@@ -361,11 +374,18 @@ public class OrderService {
             // payment (insufficient funds, expired session, locked account, bank down, ...) nothing here should
             // exist either.
             try {
-                buyerToken = resolveBuyerToken(authorization, payerPhno, payerPin);
-                // Recorded before the charge is sent, so a crash or timeout cannot lose track of the money (see PaymentAttemptService).
-                attempt = attemptBegin(cart.getCustomerPhno(), finalPrice, idempotencyKey);
-                payment = charge(buyerToken, finalPrice, idempotencyKey);
-                attemptCharged(attempt, payment.transactionId());
+                if (subscription != null && subscription.mandateId() != null) {
+                    // No buyer session or PIN: the customer allowed this in advance, within the mandate's limits.
+                    attempt = attemptBegin(cart.getCustomerPhno(), finalPrice, idempotencyKey);
+                    payment = chargeMandate(subscription.mandateId(), finalPrice, idempotencyKey, "Subscription #" + subscription.subscriptionId());
+                    attemptCharged(attempt, payment.transactionId());
+                } else {
+                    buyerToken = resolveBuyerToken(authorization, payerPhno, payerPin);
+                    // Recorded before the charge is sent, so a crash or timeout cannot lose track of the money (see PaymentAttemptService).
+                    attempt = attemptBegin(cart.getCustomerPhno(), finalPrice, idempotencyKey);
+                    payment = charge(buyerToken, finalPrice, idempotencyKey);
+                    attemptCharged(attempt, payment.transactionId());
+                }
             } catch (RuntimeException e) {
                 // A clear refusal (4xx: insufficient funds, wrong PIN, ...) means nothing was charged. Anything else (timeout,
                 // 5xx) leaves the attempt STARTED so it is flagged if it never resolves.
@@ -448,7 +468,12 @@ public class OrderService {
         }
         if (payment != null) {
             try {
-                refund(buyerToken, payment.transactionId(), null, "place-rollback-" + payment.transactionId());
+                if (buyerToken == null) {
+                    // paid through a mandate: there is no buyer session, so the shop pays it back with its own key
+                    merchantRefund(payment.transactionId(), null, "place-rollback-" + payment.transactionId());
+                } else {
+                    refund(buyerToken, payment.transactionId(), null, "place-rollback-" + payment.transactionId());
+                }
                 attemptRolledBack(attempt, orderId, true);
             } catch (RuntimeException ex) {
                 log.error("Rollback of order {}: buyer was charged {} (payment {}) and the refund FAILED - refund by hand: {}",
@@ -2436,6 +2461,24 @@ public class OrderService {
             HttpStatus status = HttpStatus.resolve(e.status());
             throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
         }
+    }
+
+    // Charges a customer's PhonePe mandate. Like charge(), a 200 alone is not proof the money moved (a retried key can return a
+    // payment that is not COMPLETED), so the status is checked too.
+    private PaymentResponse chargeMandate(long mandateId, double price, String idempotencyKey, String note) {
+        BigDecimal amount = BigDecimal.valueOf(price).setScale(2, RoundingMode.HALF_UP);
+        PaymentResponse payment;
+        try {
+            payment = phonepeClient.chargeMandate(serviceApiKey, mandateId, new com.example.orderservice.dto.MandateDtos.ChargeRequest(amount, idempotencyKey, note));
+        } catch (FeignException e) {
+            HttpStatus status = HttpStatus.resolve(e.status());
+            throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
+        }
+        if (!COMPLETED.equals(payment.status())) {
+            throw new PaymentException(HttpStatus.BAD_GATEWAY,
+                    "Payment status is " + payment.status() + ", not completed. Reference: " + payment.transactionId());
+        }
+        return payment;
     }
 
     private PaymentResponse charge(String authorization, double price, String idempotencyKey) {

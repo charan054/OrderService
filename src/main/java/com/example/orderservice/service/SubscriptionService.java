@@ -51,6 +51,12 @@ public class SubscriptionService {
     private final ShippingAddressRepository addresses;
     private final Clock clock;
     private final double discountPercent;
+    private AutopayMandateService mandates;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setMandates(AutopayMandateService mandates) {
+        this.mandates = mandates;
+    }
 
     public SubscriptionService(SubscriptionRepository subscriptions, OrderService orderService, ProductClient productClient,
                                ShippingAddressRepository addresses, Clock clock,
@@ -69,6 +75,18 @@ public class SubscriptionService {
 
     public Subscription create(long phno, String customerName, int productId, int quantity, int intervalDays,
                                Long shippingAddressId, Boolean startNow) {
+        return create(phno, customerName, productId, quantity, intervalDays, shippingAddressId, startNow, null);
+    }
+
+    // mandateId: pay each delivery through that PhonePe mandate (must be this customer's, active and not ended) instead of cash.
+    public Subscription create(long phno, String customerName, int productId, int quantity, int intervalDays,
+                               Long shippingAddressId, Boolean startNow, Long mandateId) {
+        if (mandateId != null) {
+            if (mandates == null) {
+                throw new ProductException("PhonePe auto-pay is not available right now");
+            }
+            mandates.requireUsable(mandateId, phno);
+        }
         if (quantity < 1 || quantity > MAX_QUANTITY) {
             throw new ProductException("Quantity must be between 1 and " + MAX_QUANTITY);
         }
@@ -102,6 +120,7 @@ public class SubscriptionService {
         s.setIntervalDays(intervalDays);
         s.setShippingAddressId(shippingAddressId);
         s.setDiscountPercent(discountPercent);
+        s.setMandateId(mandateId);
         s.setStatus(Subscription.ACTIVE);
         s.setNextRunAt(startNow == null || startNow ? now : now.plus(Duration.ofDays(intervalDays)));
         s.setCreatedAt(now);
@@ -176,10 +195,16 @@ public class SubscriptionService {
         int placed = 0, failed = 0, paused = 0;
         for (Subscription s : subscriptions.findByStatusAndNextRunAtLessThanEqualOrderByIdAsc(Subscription.ACTIVE, now)) {
             // Claim it first: if the process dies mid-order, or a second run overlaps, it is not ordered twice.
+            Instant dueAt = s.getNextRunAt();
             s.setNextRunAt(now.plus(Duration.ofDays(s.getIntervalDays())));
             subscriptions.save(s);
             try {
-                Cart order = orderService.placeSubscriptionOrder(newOrder(s), s.getId(), s.getDiscountPercent());
+                // A mandate delivery is charged to the customer's PhonePe account; the key (subscription + the occasion it fell due)
+                // makes a repeated run of the SAME occasion return the same order and charge, never a second one.
+                Cart order = s.getMandateId() == null
+                        ? orderService.placeSubscriptionOrder(newOrder(s), s.getId(), s.getDiscountPercent())
+                        : orderService.placeSubscriptionOrder(newOrder(s), s.getId(), s.getDiscountPercent(), s.getMandateId(),
+                                "sub-" + s.getId() + "-" + (dueAt == null ? now : dueAt).getEpochSecond());
                 s.setLastOrderId(order.getOrderId());
                 s.setOrdersPlaced(s.getOrdersPlaced() + 1);
                 s.setConsecutiveFailures(0);
@@ -207,7 +232,7 @@ public class SubscriptionService {
         Cart cart = new Cart();
         cart.setCustomerPhno(s.getCustomerPhno());
         cart.setCustomerName(s.getCustomerName());
-        cart.setPaymentMethod(PaymentMethod.CASH);
+        cart.setPaymentMethod(s.getMandateId() == null ? PaymentMethod.CASH : PaymentMethod.PHONEPE);
         cart.setShippingAddressId(s.getShippingAddressId());
         cart.setDeliveryNote("Subscription #" + s.getId());
         OrderItem item = new OrderItem();

@@ -43,6 +43,9 @@ public class Subscription {
     // When the next order is due; the scheduler places it once this has passed.
     private Instant nextRunAt;
     private Long lastOrderId;
+    // When set, each delivery is paid from the customer's PhonePe account through this mandate (see MandateService) instead of
+    // cash on delivery. A revoked, ended or over-limit mandate makes that order fail like any other failure (three pause it).
+    private Long mandateId;
     private int ordersPlaced;
     // Orders that could not be placed in a row (out of stock, cash on delivery refused, ...). Three pause the subscription.
     private int consecutiveFailures;

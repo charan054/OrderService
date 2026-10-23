@@ -129,6 +129,15 @@ class OrderControllerSecurityTest {
         mockMvc.perform(get("/cart/push/new-keys")).andExpect(status().isUnauthorized());
     }
 
+
+    @Test
+    void autoPayMandatesNeedALoginAndOnlyForTheCustomersOwnNumber() throws Exception {
+        mockMvc.perform(get("/cart/mandates").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/cart/mandates").contentType("application/json")
+                .content("{\"phno\":9876543210,\"pin\":\"1234\",\"perChargeLimit\":100,\"monthlyLimit\":200,\"validDays\":30}"))
+                .andExpect(status().isUnauthorized());
+        mockMvc.perform(delete("/cart/mandates/5").param("phno", "9876543210")).andExpect(status().isUnauthorized());
+    }
     @Test
     void searchIsPublic() throws Exception {
         when(productClient.search(any(), any(), anyInt(), anyInt())).thenReturn(new ProductSearchResult(List.of()));
