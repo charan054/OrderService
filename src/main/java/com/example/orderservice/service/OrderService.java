@@ -355,14 +355,23 @@ public class OrderService {
         boolean nothingToCharge = finalPrice < 0.005;
         PaymentResponse payment = null;
         String buyerToken = null;
+        com.example.orderservice.entity.PaymentAttempt attempt = null;
         if (cart.getPaymentMethod() != PaymentMethod.CASH && !nothingToCharge) {
             // Charge the buyer BEFORE creating the order or touching stock: if PhonepayService refuses the
             // payment (insufficient funds, expired session, locked account, bank down, ...) nothing here should
             // exist either.
             try {
                 buyerToken = resolveBuyerToken(authorization, payerPhno, payerPin);
+                // Recorded before the charge is sent, so a crash or timeout cannot lose track of the money (see PaymentAttemptService).
+                attempt = attemptBegin(cart.getCustomerPhno(), finalPrice, idempotencyKey);
                 payment = charge(buyerToken, finalPrice, idempotencyKey);
+                attemptCharged(attempt, payment.transactionId());
             } catch (RuntimeException e) {
+                // A clear refusal (4xx: insufficient funds, wrong PIN, ...) means nothing was charged. Anything else (timeout,
+                // 5xx) leaves the attempt STARTED so it is flagged if it never resolves.
+                if (e instanceof PaymentException pe && pe.getStatus().is4xxClientError()) {
+                    attemptDeclined(attempt);
+                }
                 if (creditTx != null) {
                     storeCreditService.credit(cart.getCustomerPhno(), creditUsed, StoreCreditTransaction.Type.REVERSED,
                             null, "Payment failed - store credit returned");
@@ -390,7 +399,7 @@ public class OrderService {
                 reserved.add(orderItem);
             }
         } catch (RuntimeException e) {
-            rollBackFailedPlacement(saved, reserved, payment, buyerToken, creditTx != null ? creditUsed : 0, finalPrice);
+            rollBackFailedPlacement(saved, reserved, payment, buyerToken, creditTx != null ? creditUsed : 0, finalPrice, attempt);
             throw e;
         }
         // After the stock is secured, so a rolled-back order never uses up a coupon redemption.
@@ -398,6 +407,7 @@ public class OrderService {
         releaseWaitlistHolds(saved);
         invoiceNumberService.assign(saved);
         Cart result = orderRepository.save(saved);
+        attemptCompleted(attempt, result.getOrderId());
         storeCreditService.linkOrder(creditTx, result.getOrderId());
         recordTracking(result.getOrderId(), OrderStatus.PLACED);
         redeemLoyaltyPoints(result.getCustomerPhno(), result.getPointsRedeemed(), result.getOrderId());
@@ -427,7 +437,7 @@ public class OrderService {
 
     // Best effort, each step on its own: whatever can't be undone is logged for a human rather than hiding the original error.
     private void rollBackFailedPlacement(Cart order, List<OrderItem> reserved, PaymentResponse payment, String buyerToken,
-                                         double creditUsed, double charged) {
+                                         double creditUsed, double charged, com.example.orderservice.entity.PaymentAttempt attempt) {
         long orderId = order.getOrderId();
         for (OrderItem item : reserved) {
             try {
@@ -439,9 +449,11 @@ public class OrderService {
         if (payment != null) {
             try {
                 refund(buyerToken, payment.transactionId(), null, "place-rollback-" + payment.transactionId());
+                attemptRolledBack(attempt, orderId, true);
             } catch (RuntimeException ex) {
                 log.error("Rollback of order {}: buyer was charged {} (payment {}) and the refund FAILED - refund by hand: {}",
                         orderId, charged, payment.transactionId(), ex.getMessage());
+                attemptRolledBack(attempt, orderId, false);
                 refundFailureService.record(orderId, order.getCustomerPhno(), "PHONEPE_REFUND", charged,
                         payment.transactionId(), "Checkout failed after the charge; automatic refund failed: " + ex.getMessage());
             }
@@ -634,6 +646,34 @@ public class OrderService {
 
     public ClusterLocks.Handle lockOrder(long orderId) {
         return clusterLocks.lock("order-" + orderId);
+    }
+
+    // The payment trail (PaymentAttemptService). Optional so the service still works, unrecorded, where it is not wired.
+    private PaymentAttemptService paymentAttempts;
+
+    @Autowired(required = false)
+    void setPaymentAttempts(PaymentAttemptService paymentAttempts) {
+        this.paymentAttempts = paymentAttempts;
+    }
+
+    private com.example.orderservice.entity.PaymentAttempt attemptBegin(long phno, double amount, String key) {
+        return paymentAttempts == null ? null : paymentAttempts.begin(phno, amount, key);
+    }
+
+    private void attemptCharged(com.example.orderservice.entity.PaymentAttempt a, long transactionId) {
+        if (paymentAttempts != null) paymentAttempts.charged(a, transactionId);
+    }
+
+    private void attemptDeclined(com.example.orderservice.entity.PaymentAttempt a) {
+        if (paymentAttempts != null) paymentAttempts.declined(a);
+    }
+
+    private void attemptCompleted(com.example.orderservice.entity.PaymentAttempt a, long orderId) {
+        if (paymentAttempts != null) paymentAttempts.completed(a, orderId);
+    }
+
+    private void attemptRolledBack(com.example.orderservice.entity.PaymentAttempt a, long orderId, boolean refunded) {
+        if (paymentAttempts != null) paymentAttempts.rolledBack(a, orderId, refunded);
     }
 
     public Cart checkPendingPayment(long orderId) {

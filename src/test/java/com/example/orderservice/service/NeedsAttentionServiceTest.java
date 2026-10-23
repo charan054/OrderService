@@ -45,6 +45,7 @@ class NeedsAttentionServiceTest {
     private CodCollectionService codCollection;
     private PackingSlipService packing;
     private com.example.orderservice.repository.PriceMatchRequestRepository priceMatches;
+    private PaymentAttemptService paymentAttempts;
 
     @BeforeEach
     void setUp() {
@@ -57,10 +58,13 @@ class NeedsAttentionServiceTest {
         codCollection = mock(CodCollectionService.class);
         packing = mock(PackingSlipService.class);
         priceMatches = mock(com.example.orderservice.repository.PriceMatchRequestRepository.class);
+        paymentAttempts = mock(PaymentAttemptService.class);
+        when(paymentAttempts.chargedWithoutOrder()).thenReturn(List.of());
+        when(paymentAttempts.outcomeUnknown()).thenReturn(List.of());
         when(packing.status(org.mockito.ArgumentMatchers.anyInt())).thenReturn(new PackingSlipService.PackingStatus(0, 0, 24, List.of()));
         when(codCollection.overdueOrderIds()).thenReturn(List.of());
         service = new NeedsAttentionService(tickets, questions, carts, notifications, refundFailures, orderService,
-                Clock.fixed(NOW, ZoneOffset.UTC), codCollection, packing, priceMatches);
+                Clock.fixed(NOW, ZoneOffset.UTC), codCollection, packing, priceMatches, paymentAttempts);
         when(refundFailures.findByResolvedAtIsNullOrderByIdAsc()).thenReturn(List.of());
         when(carts.findByStatusAndPaymentDeadlineBeforeOrderByPaymentDeadlineAsc(any(), any())).thenReturn(List.of());
         when(notifications.findByEmailedFalseAndSentAtAfterOrderBySentAtDesc(any())).thenReturn(List.of());
@@ -91,7 +95,7 @@ class NeedsAttentionServiceTest {
         assertEquals(0, result.total());
         assertEquals(NOW, result.generatedAt());
         assertEquals(List.of("supportTickets", "unansweredQuestions", "flaggedReviews", "lowStock", "stuckPayments",
-                "failedNotifications", "failedRefunds", "codOverdue", "unpacked", "priceMatches"), result.items().stream().map(NeedsAttention.Item::key).toList());
+                "failedNotifications", "failedRefunds", "codOverdue", "unpacked", "chargedNoOrder", "paymentUnknown", "priceMatches"), result.items().stream().map(NeedsAttention.Item::key).toList());
         assertTrue(result.items().stream().allMatch(i -> i.count() == 0 && !i.unavailable()));
     }
 
