@@ -11,4 +11,6 @@ public interface DeliveryAttemptRepository extends JpaRepository<DeliveryAttempt
     List<DeliveryAttempt> findByOrderIdOrderByAttemptNoAsc(long orderId);
 
     long countByOrderId(long orderId);
+
+    List<DeliveryAttempt> findByCreatedAtGreaterThanEqual(java.time.Instant since);
 }

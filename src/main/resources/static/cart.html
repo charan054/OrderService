@@ -1014,6 +1014,25 @@
             </div>
             <div id="codReportWrap" class="orders-table-wrap"></div>
         </div>
+        <div class="card wide" id="card-deliveryproblems">
+            <div class="card-header">
+                <div class="icon">&#128666;</div>
+                <div class="title-wrap">
+                    <h2>Delivery Problems By Pincode</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>For orders shipped in the chosen period: how many had a failed delivery attempt or were marked delayed, area by area, worst first. Use it to decide where to change carrier or delivery slots. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <select id="deliveryProblemDays">
+                    <option value="30">Last 30 days</option>
+                    <option value="90" selected>Last 90 days</option>
+                    <option value="365">Last 365 days</option>
+                </select>
+                <button onclick="loadDeliveryProblems()">Show Report</button>
+            </div>
+            <div id="deliveryProblemsWrap" class="orders-table-wrap"></div>
+        </div>
         <div class="card wide">
             <div class="card-header">
                 <div class="icon">&#128197;</div>
