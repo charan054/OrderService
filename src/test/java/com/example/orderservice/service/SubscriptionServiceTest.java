@@ -161,6 +161,54 @@ class SubscriptionServiceTest {
         assertThrows(OrderNotFoundException.class, () -> service.pause(1, PHNO + 1));
     }
 
+    // ---------- PhonePe auto-pay (mandate) ----------
+
+    @Test
+    void createWithAMandateChecksItBelongsToTheCustomerAndStoresIt() {
+        productExists();
+        when(subscriptions.countByCustomerPhnoAndStatusIn(anyLong(), anyCollection())).thenReturn(0L);
+        when(subscriptions.save(any(Subscription.class))).thenAnswer(inv -> inv.getArgument(0));
+        AutopayMandateService mandates = org.mockito.Mockito.mock(AutopayMandateService.class);
+        service.setMandates(mandates);
+
+        Subscription s = service.create(PHNO, "Asha", 1, 2, 30, null, null, 55L);
+
+        verify(mandates).requireUsable(55L, PHNO);
+        assertEquals(55L, s.getMandateId());
+    }
+
+    @Test
+    void createWithAMandateIsRefusedWhenTheMandateIsNotUsable() {
+        AutopayMandateService mandates = org.mockito.Mockito.mock(AutopayMandateService.class);
+        org.mockito.Mockito.doThrow(new ProductException("That auto-pay permission has been revoked or has ended"))
+                .when(mandates).requireUsable(55L, PHNO);
+        service.setMandates(mandates);
+
+        assertThrows(ProductException.class, () -> service.create(PHNO, "Asha", 1, 2, 30, null, null, 55L));
+        verify(subscriptions, org.mockito.Mockito.never()).save(any(Subscription.class));
+    }
+
+    @Test
+    void aDueMandateSubscriptionIsOrderedThroughPhonePeWithAKeyForThatOccasion() {
+        Subscription s = saved(4, "ACTIVE", NOW.minus(Duration.ofMinutes(5)));
+        s.setMandateId(55L);
+        when(subscriptions.findByStatusAndNextRunAtLessThanEqualOrderByIdAsc("ACTIVE", NOW)).thenReturn(List.of(s));
+        Cart placed = new Cart();
+        placed.setOrderId(78L);
+        when(orderService.placeSubscriptionOrder(any(Cart.class), anyLong(), anyDouble(), anyLong(), any())).thenReturn(placed);
+        long dueEpoch = NOW.minus(Duration.ofMinutes(5)).getEpochSecond();
+
+        var result = service.runDue();
+
+        assertEquals(1, result.placed());
+        ArgumentCaptor<Cart> cart = ArgumentCaptor.forClass(Cart.class);
+        verify(orderService).placeSubscriptionOrder(cart.capture(), org.mockito.ArgumentMatchers.eq(4L),
+                org.mockito.ArgumentMatchers.eq(5.0), org.mockito.ArgumentMatchers.eq(55L),
+                org.mockito.ArgumentMatchers.eq("sub-4-" + dueEpoch));
+        assertEquals(PaymentMethod.PHONEPE, cart.getValue().getPaymentMethod());
+        assertEquals(78L, s.getLastOrderId());
+    }
+
     // ---------- runDue ----------
 
     @Test

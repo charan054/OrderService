@@ -36,7 +36,7 @@ public class SubscriptionController {
     public Subscription create(@RequestBody SubscriptionRequest request) {
         CustomerAccess.requireSelfOrService(request.phno());
         return service.create(request.phno(), request.customerName(), request.productId(), request.quantity(),
-                request.intervalDays(), request.shippingAddressId(), request.startNow());
+                request.intervalDays(), request.shippingAddressId(), request.startNow(), request.mandateId());
     }
 
     @GetMapping("/mine")

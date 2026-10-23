@@ -642,6 +642,84 @@ class OrderServiceTest {
         verifyNoInteractions(phonepeClient);
     }
 
+    // ---------- subscription orders paid through a PhonePe mandate ----------
+
+    private com.example.orderservice.dto.PaymentResponse mandatePayment(long txn, String status) {
+        return new com.example.orderservice.dto.PaymentResponse(txn, "Payment", "DEBIT", CUSTOMER, null,
+                java.math.BigDecimal.valueOf(380.0), status, Instant.now(), null);
+    }
+
+    private Cart mandateCart() {
+        Cart cart = cart(CUSTOMER, item(1, 2));
+        cart.setPaymentMethod(PaymentMethod.PHONEPE);
+        return cart;
+    }
+
+    @Test
+    void aMandateSubscriptionOrderIsChargedThroughTheMandateWithNoPinAndIsPaid() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 200.0, 10));
+        when(phonepeClient.chargeMandate(eq(SERVICE_KEY), eq(55L), any())).thenReturn(mandatePayment(9001L, "COMPLETED"));
+
+        Cart result = service.placeSubscriptionOrder(mandateCart(), 7L, 5.0, 55L, "sub-7-1000");
+
+        org.mockito.ArgumentCaptor<com.example.orderservice.dto.MandateDtos.ChargeRequest> charge =
+                org.mockito.ArgumentCaptor.forClass(com.example.orderservice.dto.MandateDtos.ChargeRequest.class);
+        verify(phonepeClient).chargeMandate(eq(SERVICE_KEY), eq(55L), charge.capture());
+        assertEquals(0, java.math.BigDecimal.valueOf(380.0).compareTo(charge.getValue().amount()));
+        assertEquals("sub-7-1000", charge.getValue().idempotencyKey());
+        assertEquals(9001L, result.getPaymentTransactionId());
+        assertTrue(result.isPaid());
+        assertEquals(7L, result.getSubscriptionId());
+        verify(phonepeClient, never()).login(any());
+        verify(phonepeClient, never()).makePayment(any(), any());
+        verify(codRiskService, never()).assertCashAllowed(anyLong(), anyDouble());
+    }
+
+    @Test
+    void aMandateTheCustomerHasRevokedOrOverrunMakesTheOrderFailBeforeAnythingIsCreated() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 200.0, 10));
+        when(phonepeClient.chargeMandate(any(), anyLong(), any())).thenThrow(declinedBy("charge", 400, "This mandate has been revoked"));
+
+        com.example.orderservice.exception.PaymentException e = assertThrows(com.example.orderservice.exception.PaymentException.class,
+                () -> service.placeSubscriptionOrder(mandateCart(), 7L, 5.0, 55L, "sub-7-1000"));
+
+        assertTrue(e.getMessage().contains("revoked"));
+        verify(orderRepository, never()).save(any());
+        verify(productClient, never()).updateProductStock(any(), anyInt(), anyInt());
+    }
+
+    @Test
+    void ifTheStockCannotBeTakenAfterAMandateChargeTheShopPaysItBackWithItsOwnKey() {
+        stubCartSaveAssignsAnId();
+        when(productClient.getProductById(1)).thenReturn(product(1, 200.0, 10));
+        when(phonepeClient.chargeMandate(any(), anyLong(), any())).thenReturn(mandatePayment(9001L, "COMPLETED"));
+        when(productClient.updateProductStock(any(), anyInt(), anyInt())).thenThrow(declinedBy("stock", 400, "Insufficient stock"));
+
+        assertThrows(RuntimeException.class, () -> service.placeSubscriptionOrder(mandateCart(), 7L, 5.0, 55L, "sub-7-1000"));
+
+        verify(phonepeClient).merchantRefund(eq(SERVICE_KEY), eq(9001L), any());
+    }
+
+    @Test
+    void aMandateOrderThatIsNotPaidThroughPhonePeIsRefused() {
+        Cart cart = cart(CUSTOMER, item(1, 1));
+        cart.setPaymentMethod(PaymentMethod.CASH);
+
+        assertThrows(ProductException.class, () -> service.placeSubscriptionOrder(cart, 7L, 5.0, 55L, "sub-7-1000"));
+        verifyNoInteractions(phonepeClient);
+    }
+
+    @Test
+    void aMandateChargeThatComesBackNotCompletedIsNotTreatedAsPaid() {
+        when(productClient.getProductById(1)).thenReturn(product(1, 200.0, 10));
+        when(phonepeClient.chargeMandate(any(), anyLong(), any())).thenReturn(mandatePayment(9001L, "NEEDS_RECONCILIATION"));
+
+        assertThrows(com.example.orderservice.exception.PaymentException.class,
+                () -> service.placeSubscriptionOrder(mandateCart(), 7L, 5.0, 55L, "sub-7-1000"));
+        verify(orderRepository, never()).save(any());
+    }
+
     @Test
     void aSmallCashOrderPaysTheDeliveryFeeAndABigOneDoesNot() {
         ReflectionTestUtils.setField(service, "shippingFee", 40.0);

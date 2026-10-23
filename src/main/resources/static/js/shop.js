@@ -1613,6 +1613,8 @@
         ${orderFilterBarHtml(historyPage)}
         ${ordersHtml}
         ${supportTickets.length ? `<h3 style="margin:20px 0 10px;">Support requests</h3>${supportTickets.map(supportTicketHtml).join("")}` : ""}
+        <h3 style="margin:20px 0 10px;">PhonePe auto-pay</h3>
+        <div id="autopayBox"></div>
         <h3 style="margin:20px 0 10px;">Subscriptions</h3>
         ${mySubscriptions.length ? mySubscriptions.map(subscriptionRowHtml).join("") : `<p style="color:var(--muted);">No subscriptions - open a product and choose "Subscribe &amp; save" to get it delivered regularly at a discount.</p>`}
         <h3 style="margin:20px 0 10px;">My alerts</h3>
@@ -1638,6 +1640,7 @@
         </div>
       `;
       loadSpendingInsights();
+      loadAutopayBox();
     }
 
     let myExchanges = [];
@@ -2735,6 +2738,66 @@
       loadAccountView();
     }
 
+    // ---------- PhonePe auto-pay (mandates) ----------
+    // A mandate is your permission, given once with your PhonePe PIN and kept inside limits you choose, for subscription
+    // deliveries to be charged to your PhonePe account without asking each time. Revoke it any time.
+    async function loadMandates() {
+      const response = await authFetch(`${BASE_URL}/cart/mandates?phno=${encodeURIComponent(customerPhno)}`);
+      return response.ok ? await response.json() : [];
+    }
+
+    function mandateRowHtml(m) {
+      const active = m.status === "ACTIVE" && new Date(m.validUntil) > new Date();
+      return `<div class="subscription-row">
+        <strong>Up to ₹${m.perChargeLimit} per charge, ₹${m.monthlyLimit} per month</strong>
+        <span class="meta">${active ? "ACTIVE" : escapeHtml(m.status === "ACTIVE" ? "ENDED" : m.status)} &middot; until ${new Date(m.validUntil).toLocaleDateString()}
+          &middot; used ₹${m.chargedThisMonth} this month</span>
+        ${active ? `<div><button class="secondary" style="width:auto;" onclick="revokeMandate(${m.id})">Revoke</button></div>` : ""}</div>`;
+    }
+
+    async function loadAutopayBox() {
+      const box = document.getElementById("autopayBox");
+      if (!box) return;
+      let mandates = [];
+      try { mandates = await loadMandates(); } catch (e) { /* shown empty */ }
+      box.innerHTML = `
+        <p style="font-size:13px; color:var(--muted); margin:-4px 0 10px;">Allow Charan Mart to charge your PhonePe account for subscription deliveries, only within the limits you set. You can revoke it at any time.</p>
+        ${mandates.length ? mandates.map(mandateRowHtml).join("") : ""}
+        <div class="subscription-row">
+          <strong>Allow auto-pay</strong>
+          <input type="number" id="mandatePerCharge" min="1" placeholder="Most for one charge, ₹" />
+          <input type="number" id="mandateMonthly" min="1" placeholder="Most per month, ₹" />
+          <select id="mandateDays" aria-label="How long"><option value="30">for 30 days</option><option value="90">for 90 days</option><option value="180">for 180 days</option><option value="365">for 1 year</option></select>
+          <input type="password" id="mandatePin" placeholder="PhonePe PIN" autocomplete="off" />
+          <button class="secondary" style="width:auto;" onclick="createMandate()">Allow auto-pay</button>
+          <div id="mandateMessage" class="meta"></div>
+        </div>`;
+    }
+
+    async function createMandate() {
+      const message = document.getElementById("mandateMessage");
+      const perChargeLimit = Number(document.getElementById("mandatePerCharge").value);
+      const monthlyLimit = Number(document.getElementById("mandateMonthly").value);
+      if (!(perChargeLimit > 0) || !(monthlyLimit > 0)) { message.textContent = "Enter both limits."; return; }
+      message.textContent = "Setting up...";
+      const response = await authFetch(`${BASE_URL}/cart/mandates`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: customerPhno, pin: document.getElementById("mandatePin").value, perChargeLimit, monthlyLimit,
+          validDays: Number(document.getElementById("mandateDays").value) })
+      });
+      document.getElementById("mandatePin").value = "";
+      if (!response.ok) { message.textContent = (await response.text()) || "Couldn't set up auto-pay right now."; return; }
+      loadAutopayBox();
+    }
+
+    async function revokeMandate(id) {
+      if (!await askConfirm("Revoke this auto-pay permission? Subscriptions using it will stop being charged and fail until you pick another way to pay.")) return;
+      const response = await authFetch(`${BASE_URL}/cart/mandates/${id}?phno=${encodeURIComponent(customerPhno)}`, { method: "DELETE" });
+      if (!response.ok) { alert((await response.text()) || "Couldn't revoke it right now."); return; }
+      loadAutopayBox();
+    }
+
     // ---------- subscribe & save ----------
     let subscriptionTerms = null;
 
@@ -2750,9 +2813,16 @@
       if (!product || product.productStock <= 0) { box.innerHTML = ""; return; }
       const terms = await loadSubscriptionTerms();
       if (!(terms.discountPercent > 0)) { box.innerHTML = ""; return; }
+      // Pay each delivery on delivery (cash), or from PhonePe through an auto-pay permission the customer has set up.
+      let autopay = [];
+      try { autopay = (await loadMandates()).filter(m => m.status === "ACTIVE" && new Date(m.validUntil) > new Date()); } catch (e) { /* cash only */ }
+      const payOptions = `<option value="">Cash on delivery</option>` + autopay.map(m =>
+        `<option value="${m.id}">PhonePe auto-pay (up to ₹${m.perChargeLimit} per charge)</option>`).join("");
       box.innerHTML = `
         <strong>Subscribe &amp; save ${terms.discountPercent}%</strong>
-        <span class="meta"> &middot; cash on delivery, skip or cancel any time</span><br>
+        <span class="meta"> &middot; skip or cancel any time</span><br>
+        <label class="meta" for="subPay">Pay with</label>
+        <select id="subPay">${payOptions}</select><br>
         <input type="number" id="subQuantity" value="1" min="1" max="${terms.maxQuantity}" aria-label="Quantity" />
         every
         <select id="subInterval">${terms.intervalDays.map(d => `<option value="${d}"${d === 30 ? " selected" : ""}>${d} days</option>`).join("")}</select><br>
@@ -2775,7 +2845,8 @@
           quantity: Number(document.getElementById("subQuantity").value) || 1,
           intervalDays: Number(document.getElementById("subInterval").value),
           shippingAddressId: address ? address.id : null,
-          startNow: document.getElementById("subStartNow").checked
+          startNow: document.getElementById("subStartNow").checked,
+          mandateId: document.getElementById("subPay").value ? Number(document.getElementById("subPay").value) : null
         })
       });
       message.textContent = response.ok
@@ -2795,7 +2866,7 @@
         <button class="secondary" style="width:auto;" onclick="subscriptionAction(${s.id}, 'cancel')">Cancel</button>`;
       return `<div class="subscription-row">
         <strong>${s.quantity} &times; ${escapeHtml(name)}</strong>
-        <span class="meta">every ${s.intervalDays} days &middot; ${s.discountPercent}% off &middot; ${escapeHtml(s.status)}${next} &middot; ${s.ordersPlaced} order(s) so far</span>
+        <span class="meta">every ${s.intervalDays} days &middot; ${s.discountPercent}% off &middot; ${s.mandateId ? "PhonePe auto-pay" : "cash on delivery"} &middot; ${escapeHtml(s.status)}${next} &middot; ${s.ordersPlaced} order(s) so far</span>
         ${s.lastError && s.status !== "CANCELLED" ? `<div class="error-text">Last problem: ${escapeHtml(s.lastError)}</div>` : ""}
         <div>${buttons}</div></div>`;
     }

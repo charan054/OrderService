@@ -1,6 +1,7 @@
 package com.example.orderservice.client;
 
 import com.example.orderservice.dto.CreateUpiCollectRequest;
+import com.example.orderservice.dto.MandateDtos;
 import com.example.orderservice.dto.PaymentRequest;
 import com.example.orderservice.dto.PaymentResponse;
 import com.example.orderservice.dto.PhonepeForgotPinRequest;
@@ -10,11 +11,15 @@ import com.example.orderservice.dto.PhonepeResetPinRequest;
 import com.example.orderservice.dto.RefundRequest;
 import com.example.orderservice.dto.UpiCollectRequestResponse;
 import org.springframework.cloud.openfeign.FeignClient;
+
+import java.util.List;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
+import org.springframework.web.bind.annotation.RequestParam;
 
 // Charges (and refunds) the buyer for an order through PhonepayService, using the buyer's OWN session token
 // (the same one they'd use to call PhonepayService directly) - never a phone number we supply ourselves.
@@ -34,6 +39,25 @@ public interface PhonepeClient {
     @PostMapping("/phonepe/merchant/transactions/{transactionId}/refund")
     PaymentResponse merchantRefund(@RequestHeader("X-Service-Key") String serviceKey,
                                    @PathVariable long transactionId, @RequestBody RefundRequest request);
+
+    // ---- payment mandates (a customer's standing permission to charge their account within limits) ----
+    // Set up with the customer's own session (the storefront exchanges phone + PIN for one first, like checkout does).
+    @PostMapping("/phonepe/mandates")
+    MandateDtos.View createMandate(@RequestHeader("Authorization") String authorization, @RequestBody MandateDtos.CreateRequest request);
+
+    @GetMapping("/phonepe/merchant/mandates/{id}")
+    MandateDtos.View getMandate(@RequestHeader("X-Service-Key") String serviceKey, @PathVariable("id") long id);
+
+    @GetMapping("/phonepe/merchant/mandates")
+    List<MandateDtos.View> listMandates(@RequestHeader("X-Service-Key") String serviceKey, @RequestParam("payerPhno") long payerPhno);
+
+    @DeleteMapping("/phonepe/merchant/mandates/{id}")
+    MandateDtos.View revokeMandate(@RequestHeader("X-Service-Key") String serviceKey, @PathVariable("id") long id,
+                                   @RequestParam("payerPhno") long payerPhno);
+
+    @PostMapping("/phonepe/merchant/mandates/{id}/charge")
+    PaymentResponse chargeMandate(@RequestHeader("X-Service-Key") String serviceKey, @PathVariable("id") long id,
+                                  @RequestBody MandateDtos.ChargeRequest request);
 
     // Lets a checkout that only has the buyer's phone+PIN (the storefront flow) obtain the same session token a
     // buyer who already had one would supply directly - PhonepayService's own credential check, nothing verified
