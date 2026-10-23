@@ -50,12 +50,14 @@ public class NeedsAttentionService {
     private final CodCollectionService codCollection;
     private final PackingSlipService packing;
     private final PriceMatchRequestRepository priceMatches;
+    private final PaymentAttemptService paymentAttempts;
 
     public NeedsAttentionService(SupportTicketRepository tickets, ProductQuestionRepository questions,
                                  CartRepository carts, NotificationLogRepository notifications,
                                  RefundFailureRepository refundFailures, OrderService orderService, Clock clock,
                                  CodCollectionService codCollection, PackingSlipService packing,
-                                 PriceMatchRequestRepository priceMatches) {
+                                 PriceMatchRequestRepository priceMatches, PaymentAttemptService paymentAttempts) {
+        this.paymentAttempts = paymentAttempts;
         this.priceMatches = priceMatches;
         this.packing = packing;
         this.tickets = tickets;
@@ -114,6 +116,18 @@ public class NeedsAttentionService {
                 "Placed more than " + PACK_STALE_HOURS + " hours ago and not ticked off as packed (" + pack.unpacked()
                         + " unpacked in all, " + pack.packedWaiting() + " packed and waiting to ship) - print the packing slips.",
                 pack.staleUnpacked().stream().limit(MAX_ORDER_IDS).toList()));
+
+        List<com.example.orderservice.entity.PaymentAttempt> noOrder = paymentAttempts.chargedWithoutOrder();
+        items.add(new Item("chargedNoOrder", "Customers charged but no order was created", noOrder.size(), false, false,
+                "The checkout failed after PhonePe took the money and the order step never finished. Refund by hand (payment ids: "
+                        + noOrder.stream().limit(MAX_ORDER_IDS).map(a -> "#" + a.getPaymentTransactionId()).toList()
+                        + "), then POST /cart/payment-attempts/{id}/resolve?note=... (GET /cart/payment-attempts/attention lists them).", List.of()));
+
+        List<com.example.orderservice.entity.PaymentAttempt> unknown = paymentAttempts.outcomeUnknown();
+        items.add(new Item("paymentUnknown", "Payments whose outcome is unknown", unknown.size(), false, false,
+                "The charge was sent to PhonePe but no answer was recorded (timeout or crash). Check whether the buyer was debited (customers: "
+                        + unknown.stream().limit(MAX_ORDER_IDS).map(a -> "xxxxxx" + String.valueOf(a.getCustomerPhno()).substring(6)).toList()
+                        + "), refund if so, then resolve it the same way.", List.of()));
 
         long matches = priceMatches.countByStatus(PriceMatchRequest.Status.OPEN);
         items.add(new Item("priceMatches", "Price-match requests waiting for a decision", (int) matches, false, false,
