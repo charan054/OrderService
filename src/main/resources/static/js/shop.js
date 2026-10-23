@@ -2491,6 +2491,37 @@
       }
     }
 
+    // "Delivers by Fri, 30 Oct" for the product being viewed, from the pincode list the admin maintains (days per pincode).
+    // The pincode is remembered in this browser only. Informational: the real check happens again at checkout.
+    function rememberedPincode() {
+      try { return localStorage.getItem("shopPincode") || ""; } catch (e) { return ""; }
+    }
+
+    function deliveryDateText(days) {
+      const d = new Date();
+      d.setDate(d.getDate() + days);
+      return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+    }
+
+    async function checkDeliveryEstimate() {
+      const input = document.getElementById("deliveryPincode");
+      const out = document.getElementById("deliveryEstimateResult");
+      const pincode = input.value.trim();
+      if (!/^[0-9]{6}$/.test(pincode)) { out.textContent = "Enter a 6-digit pincode."; return; }
+      try { localStorage.setItem("shopPincode", pincode); } catch (e) { /* not remembered */ }
+      out.textContent = "Checking...";
+      try {
+        const r = await fetch(`${BASE_URL}/pincodes/check?pincode=${encodeURIComponent(pincode)}`);
+        if (!r.ok) { out.textContent = "Couldn't check that pincode right now."; return; }
+        const d = await r.json();
+        if (!d.serviceable) out.textContent = `Sorry, we don't deliver to ${pincode} yet.`;
+        else if (d.deliveryDays) out.textContent = `Delivers by ${deliveryDateText(d.deliveryDays)} (about ${d.deliveryDays} day${d.deliveryDays === 1 ? "" : "s"})${d.city ? " to " + d.city : ""}.`;
+        else out.textContent = "We deliver to this pincode.";
+      } catch (e) {
+        out.textContent = "Couldn't check that pincode right now.";
+      }
+    }
+
     async function openProductModal(productId) {
       recordRecentlyViewed(productId);
       modalProductId = productId;
@@ -2504,6 +2535,9 @@
       document.getElementById("questionText").value = "";
       document.getElementById("questionMessage").classList.add("hidden");
       document.getElementById("productModal").classList.remove("hidden");
+      document.getElementById("deliveryPincode").value = rememberedPincode();
+      document.getElementById("deliveryEstimateResult").textContent = "";
+      if (/^[0-9]{6}$/.test(rememberedPincode())) checkDeliveryEstimate();
 
       const rating = ratingsByProductId.get(productId);
       document.getElementById("modalRatingSummary").innerHTML = rating && rating.reviewCount > 0
