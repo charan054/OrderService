@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 
 import java.util.List;
 
-@FeignClient(name="ProductService",url="http://localhost:8082")
+@FeignClient(name="ProductService",url="${product.service.url:http://localhost:8082}")
 public interface ProductClient {
     @GetMapping("/product/all")
     List<Product> findAll();
