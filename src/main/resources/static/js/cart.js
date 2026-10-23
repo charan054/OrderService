@@ -923,6 +923,33 @@
     }
 
     // ---------- refunds to settle ----------
+    async function loadPaymentAttempts() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const rows = await apiCall("/cart/payment-attempts/attention", { headers: { "X-Service-Key": serviceKey } });
+      if (!Array.isArray(rows)) return;
+      document.getElementById("paymentAttemptsWrap").innerHTML = rows.length
+        ? `<table class="orders-table"><thead><tr><th>Started</th><th>Customer</th><th>Amount</th><th>State</th><th>PhonePe payment</th><th>Order</th><th></th></tr></thead><tbody>${rows.map(r => `
+            <tr><td>${new Date(r.createdAt).toLocaleString()}</td><td>${escapeHtml(String(r.customerPhno))}</td><td>&#8377;${Number(r.amount).toFixed(2)}</td>
+            <td>${escapeHtml(r.status === "CHARGED" ? "Money taken, no order" : "No answer from PhonePe")}</td>
+            <td>${r.paymentTransactionId ? "#" + r.paymentTransactionId : "unknown"}</td><td>${r.orderId ? "#" + r.orderId : "-"}</td>
+            <td><button onclick="resolvePaymentAttempt(${r.id})">Resolve</button></td></tr>`).join("")}</tbody></table>`
+        : `<p>Nothing to check - every charge has an order or a refund.</p>`;
+      showStatus(`${rows.length} payment(s) to check.`, "success");
+    }
+
+    async function resolvePaymentAttempt(id) {
+      const note = prompt("How was it settled? (for example: refunded by hand, or confirmed the customer was never debited)");
+      if (!note || !note.trim()) return;
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      await apiCall(`/cart/payment-attempts/${id}/resolve?note=${encodeURIComponent(note.trim())}`, {
+        method: "POST",
+        headers: { "X-Service-Key": serviceKey }
+      });
+      await loadPaymentAttempts();
+    }
+
     async function loadRefundFailures() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
@@ -1315,6 +1342,8 @@
       lowStock: { card: "card-lowstock", open: () => getLowStockReport() },
       stuckPayments: { card: "card-orders", open: () => { document.getElementById("ordersStatus").value = "PENDING_PAYMENT"; return loadOrdersTable(); } },
       unpacked: { card: "card-packingslips", open: () => {} },
+      chargedNoOrder: { card: "card-paymentattempts", open: () => loadPaymentAttempts() },
+      paymentUnknown: { card: "card-paymentattempts", open: () => loadPaymentAttempts() },
       failedRefunds: { card: "card-refundfailures", open: () => loadRefundFailures() },
       failedNotifications: { card: "card-notifications", open: (item) => {
         if (item.orderIds && item.orderIds.length) { document.getElementById("notificationsOrderId").value = item.orderIds[0]; return viewNotifications(); }
