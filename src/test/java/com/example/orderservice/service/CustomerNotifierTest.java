@@ -70,6 +70,22 @@ class CustomerNotifierTest {
     }
 
     @Test
+    void aMutedKindOfOrderUpdateIsNotPushedButTheOthersAre() {
+        CustomerPushService push = org.mockito.Mockito.mock(CustomerPushService.class);
+        notifier.setPush(push);
+        CustomerAccount account = new CustomerAccount();
+        account.setPhno(PHNO);
+        account.setPushMuted("delivery");
+        when(accounts.findById(PHNO)).thenReturn(Optional.of(account));
+
+        notifier.notifyStatusChange(order(PaymentMethod.CASH, false), OrderStatus.SHIPPED);
+        org.mockito.Mockito.verify(push, org.mockito.Mockito.never()).notifyCustomer(org.mockito.ArgumentMatchers.anyLong(), any(), any(), any());
+
+        notifier.notifyStatusChange(order(PaymentMethod.CASH, false), OrderStatus.CANCELLED);
+        org.mockito.Mockito.verify(push).notifyCustomer(org.mockito.ArgumentMatchers.eq(PHNO), any(), any(), any());
+    }
+
+    @Test
     void aSettledRefundForAFailedCheckoutIsEmailedWithoutAnOrderRow() {
         verifiedEmail("asha@example.com");
         when(mailService.send(eq("asha@example.com"), contains("order #42"), contains("refunded to your PhonePe account")))
