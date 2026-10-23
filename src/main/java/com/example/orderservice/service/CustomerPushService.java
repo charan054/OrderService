@@ -26,6 +26,9 @@ import java.util.concurrent.Executors;
 public class CustomerPushService {
     private static final Logger log = LoggerFactory.getLogger(CustomerPushService.class);
     static final int MAX_SUBSCRIPTIONS_PER_CUSTOMER = 10;
+    // Chrome/Edge/Brave (FCM), Firefox, Safari and Windows push services.
+    private static final List<String> ALLOWED_PUSH_HOSTS = List.of("fcm.googleapis.com", "push.services.mozilla.com",
+            "push.apple.com", "notify.windows.com");
 
     private final PushSubscriptionRepository subscriptions;
     private final Clock clock;
@@ -66,6 +69,34 @@ public class CustomerPushService {
         }
     }
 
+    /**
+     * The server posts to the endpoint a browser hands over, so only the real browser push services are accepted - anything
+     * else (an internal address, an arbitrary website) would let a customer aim this server at it.
+     */
+    static boolean isPushServiceEndpoint(String endpoint) {
+        if (endpoint == null) {
+            return false;
+        }
+        java.net.URI uri;
+        try {
+            uri = new java.net.URI(endpoint);
+        } catch (java.net.URISyntaxException e) {
+            return false;
+        }
+        String host = uri.getHost();
+        if (!"https".equalsIgnoreCase(uri.getScheme()) || host == null || uri.getUserInfo() != null
+                || (uri.getPort() != -1 && uri.getPort() != 443)) {
+            return false;
+        }
+        String h = host.toLowerCase(java.util.Locale.ROOT);
+        for (String allowed : ALLOWED_PUSH_HOSTS) {
+            if (h.equals(allowed) || h.endsWith("." + allowed)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public boolean isEnabled() {
         return sender != null && !publicKey.isBlank();
     }
@@ -80,7 +111,7 @@ public class CustomerPushService {
         if (!isEnabled()) {
             throw new ProductException("Browser notifications are not set up on this shop yet");
         }
-        if (endpoint == null || !endpoint.startsWith("https://") || endpoint.length() > 500
+        if (!isPushServiceEndpoint(endpoint) || endpoint.length() > 500
                 || p256dh == null || p256dh.isBlank() || p256dh.length() > 200 || auth == null || auth.isBlank() || auth.length() > 100) {
             throw new ProductException("That browser subscription is not valid");
         }
