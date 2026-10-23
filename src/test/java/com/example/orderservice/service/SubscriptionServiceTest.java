@@ -209,6 +209,44 @@ class SubscriptionServiceTest {
         assertEquals(78L, s.getLastOrderId());
     }
 
+    @Test
+    void aMandateChargeOfUnknownOutcomeIsRetriedWithTheSamePaymentKey() {
+        Subscription s = saved(4, "ACTIVE", NOW.minus(Duration.ofMinutes(5)));
+        s.setMandateId(55L);
+        when(subscriptions.findByStatusAndNextRunAtLessThanEqualOrderByIdAsc("ACTIVE", NOW)).thenReturn(List.of(s));
+        String key = "sub-4-" + NOW.minus(Duration.ofMinutes(5)).getEpochSecond();
+        when(orderService.placeSubscriptionOrder(any(Cart.class), anyLong(), anyDouble(), anyLong(), any()))
+                .thenThrow(new com.example.orderservice.exception.PaymentException(org.springframework.http.HttpStatus.GATEWAY_TIMEOUT, "timeout"));
+
+        service.runDue();
+
+        assertEquals(key, s.getPendingChargeKey());
+
+        // a day later, due again: the retry must carry the very same key
+        s.setNextRunAt(NOW.minus(Duration.ofMinutes(1)));
+        Cart placed = new Cart();
+        placed.setOrderId(90L);
+        when(orderService.placeSubscriptionOrder(any(Cart.class), anyLong(), anyDouble(), anyLong(), any())).thenReturn(placed);
+        service.runDue();
+
+        verify(orderService, org.mockito.Mockito.times(2)).placeSubscriptionOrder(any(Cart.class), anyLong(), anyDouble(), anyLong(),
+                org.mockito.ArgumentMatchers.eq(key));
+        assertEquals(null, s.getPendingChargeKey());
+    }
+
+    @Test
+    void aClearlyDeclinedMandateChargeDoesNotKeepItsKey() {
+        Subscription s = saved(4, "ACTIVE", NOW.minus(Duration.ofMinutes(5)));
+        s.setMandateId(55L);
+        when(subscriptions.findByStatusAndNextRunAtLessThanEqualOrderByIdAsc("ACTIVE", NOW)).thenReturn(List.of(s));
+        when(orderService.placeSubscriptionOrder(any(Cart.class), anyLong(), anyDouble(), anyLong(), any()))
+                .thenThrow(new com.example.orderservice.exception.PaymentException(org.springframework.http.HttpStatus.PAYMENT_REQUIRED, "declined"));
+
+        service.runDue();
+
+        assertEquals(null, s.getPendingChargeKey());
+    }
+
     // ---------- runDue ----------
 
     @Test

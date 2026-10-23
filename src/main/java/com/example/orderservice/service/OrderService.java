@@ -2474,6 +2474,11 @@ public class OrderService {
             HttpStatus status = HttpStatus.resolve(e.status());
             throw new PaymentException(status != null ? status : HttpStatus.BAD_GATEWAY, e.contentUTF8());
         }
+        if ("FAILED".equals(payment.status())) {
+            // PhonePe recorded a clean refusal (nothing was taken): 4xx so the caller knows no money is in doubt.
+            throw new PaymentException(HttpStatus.PAYMENT_REQUIRED,
+                    "The payment was declined. Reference: " + payment.transactionId());
+        }
         if (!COMPLETED.equals(payment.status())) {
             throw new PaymentException(HttpStatus.BAD_GATEWAY,
                     "Payment status is " + payment.status() + ", not completed. Reference: " + payment.transactionId());

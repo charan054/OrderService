@@ -46,6 +46,10 @@ public class Subscription {
     // When set, each delivery is paid from the customer's PhonePe account through this mandate (see MandateService) instead of
     // cash on delivery. A revoked, ended or over-limit mandate makes that order fail like any other failure (three pause it).
     private Long mandateId;
+    // The payment key of a mandate charge whose outcome is not known (timeout, bank down). The retry reuses it so PhonePe answers
+    // with that same payment instead of charging again; cleared once the charge is known to have been refused or the order is placed.
+    @Column(length = 80)
+    private String pendingChargeKey;
     private int ordersPlaced;
     // Orders that could not be placed in a row (out of stock, cash on delivery refused, ...). Three pause the subscription.
     private int consecutiveFailures;

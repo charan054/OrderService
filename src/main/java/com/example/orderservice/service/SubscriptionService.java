@@ -1,5 +1,6 @@
 package com.example.orderservice.service;
 
+import com.example.orderservice.exception.PaymentException;
 import com.example.orderservice.client.ProductClient;
 import com.example.orderservice.dto.Product;
 import com.example.orderservice.entity.Cart;
@@ -197,6 +198,11 @@ public class SubscriptionService {
             // Claim it first: if the process dies mid-order, or a second run overlaps, it is not ordered twice.
             Instant dueAt = s.getNextRunAt();
             s.setNextRunAt(now.plus(Duration.ofDays(s.getIntervalDays())));
+            // A retry after a charge of unknown outcome keeps that charge's key (see Subscription.pendingChargeKey).
+            String chargeKey = s.getMandateId() == null ? null
+                    : s.getPendingChargeKey() != null ? s.getPendingChargeKey()
+                    : "sub-" + s.getId() + "-" + (dueAt == null ? now : dueAt).getEpochSecond();
+            s.setPendingChargeKey(chargeKey);
             subscriptions.save(s);
             try {
                 // A mandate delivery is charged to the customer's PhonePe account; the key (subscription + the occasion it fell due)
@@ -204,7 +210,8 @@ public class SubscriptionService {
                 Cart order = s.getMandateId() == null
                         ? orderService.placeSubscriptionOrder(newOrder(s), s.getId(), s.getDiscountPercent())
                         : orderService.placeSubscriptionOrder(newOrder(s), s.getId(), s.getDiscountPercent(), s.getMandateId(),
-                                "sub-" + s.getId() + "-" + (dueAt == null ? now : dueAt).getEpochSecond());
+                                chargeKey);
+                s.setPendingChargeKey(null);
                 s.setLastOrderId(order.getOrderId());
                 s.setOrdersPlaced(s.getOrdersPlaced() + 1);
                 s.setConsecutiveFailures(0);
@@ -213,6 +220,11 @@ public class SubscriptionService {
                 placed++;
             } catch (RuntimeException e) {
                 failed++;
+                // Only an outcome we cannot be sure of keeps the key: a clear refusal (4xx) moved no money and a failure after a
+                // successful charge was refunded, so the next try must be a fresh payment.
+                if (!(e instanceof PaymentException pe && !pe.getStatus().is4xxClientError() && chargeKey != null)) {
+                    s.setPendingChargeKey(null);
+                }
                 log.warn("Subscription {} could not place its order: {}", s.getId(), e.getMessage());
                 s.setConsecutiveFailures(s.getConsecutiveFailures() + 1);
                 s.setLastError(clip(e.getMessage()));
