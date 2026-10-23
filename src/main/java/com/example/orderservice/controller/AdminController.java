@@ -56,7 +56,7 @@ public class AdminController {
     @PostMapping("/login")
     public AdminLoginResponse login(@RequestBody AdminLoginRequest request, HttpServletRequest http) {
         loginRateLimiter.checkAdminLogin(http.getRemoteAddr(), request.username());
-        return adminAuthService.login(request.username(), request.password(), http.getRemoteAddr());
+        return adminAuthService.login(request.username(), request.password(), http.getRemoteAddr(), request.code());
     }
 
     // Public: the dashboard asks before sign-in whether the shared service key is still accepted from a browser.
@@ -95,6 +95,43 @@ public class AdminController {
             throw new AdminAuthException(HttpStatus.BAD_REQUEST, "The service key has no password. Sign in as a named admin.");
         }
         adminAuthService.changeOwnPassword(admin.username(), change.currentPassword(), change.newPassword());
+    }
+
+    // ---- two-step sign-in (authenticator app) for the signed-in admin's own account ----
+    public record CodeRequest(String code) {
+    }
+
+    public record DisableTwoStepRequest(String password, String code) {
+    }
+
+    private static String namedAdmin(Authentication authentication) {
+        if (!(authentication.getPrincipal() instanceof AdminPrincipal admin)) {
+            throw new AdminAuthException(HttpStatus.BAD_REQUEST, "The service key has no account. Sign in as a named admin.");
+        }
+        return admin.username();
+    }
+
+    @PostMapping("/me/2fa/setup")
+    public AdminAuthService.TotpSetup startTwoStep(Authentication authentication) {
+        return adminAuthService.startTotpSetup(namedAdmin(authentication));
+    }
+
+    @PostMapping("/me/2fa/enable")
+    public java.util.Map<String, Object> enableTwoStep(@RequestBody CodeRequest request, Authentication authentication) {
+        return java.util.Map.of("recoveryCodes", adminAuthService.enableTotp(namedAdmin(authentication), request.code()));
+    }
+
+    @PostMapping("/me/2fa/disable")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void disableTwoStep(@RequestBody DisableTwoStepRequest request, Authentication authentication) {
+        adminAuthService.disableTotp(namedAdmin(authentication), request.password(), request.code());
+    }
+
+    // Owner (or the service key): a colleague lost their phone - clear their two-step sign-in so they can set it up again.
+    @PostMapping("/accounts/{username}/reset-2fa")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void resetTwoStep(@PathVariable String username) {
+        adminAuthService.resetTotp(username);
     }
 
     @GetMapping("/accounts")

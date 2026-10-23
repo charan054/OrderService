@@ -24,6 +24,7 @@
     const ADMIN_ORIGIN = "";
     const adminUsernameInput = document.getElementById("adminUsername");
     const adminPasswordInput = document.getElementById("adminPassword");
+    const adminCodeInput = document.getElementById("adminCode");
     let adminToken = null;
     try { adminToken = sessionStorage.getItem("cartAdminToken"); } catch (e) { /* storage blocked: sign in each visit */ }
 
@@ -63,21 +64,61 @@
         const response = await nativeFetch(`${ADMIN_ORIGIN}/admin/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password })
+          body: JSON.stringify({ username, password, code: adminCodeInput.value.trim() || undefined })
         });
         if (!response.ok) {
-          showStatus((await response.text()) || "Sign-in failed.", "error");
+          const problem = (await response.text()) || "Sign-in failed.";
+          // The password was right but this account has two-step on: ask for the code from the authenticator app.
+          if (response.status === 401 && /authenticator/i.test(problem)) {
+            adminCodeInput.classList.remove("hidden");
+            adminCodeInput.focus();
+          }
+          showStatus(problem, "error");
           return;
         }
         const login = await response.json();
         adminToken = login.token;
         try { sessionStorage.setItem("cartAdminToken", adminToken); } catch (e) { /* works for this page view only */ }
         adminPasswordInput.value = "";
+        adminCodeInput.value = "";
+        adminCodeInput.classList.add("hidden");
         renderAdminIdentity(login);
         showStatus(`Signed in as ${login.username} (${login.role}).`, "success");
       } catch (error) {
         showStatus("Sign-in failed: " + error.message, "error");
       }
+    }
+
+    // ---------- two-step sign-in (authenticator app) ----------
+    async function twoStepSetup() {
+      if (!adminToken) return showStatus("Sign in with your own admin account first.", "error");
+      const start = await window.fetch(`${ADMIN_ORIGIN}/admin/me/2fa/setup`, { method: "POST" });
+      if (!start.ok) return showStatus((await start.text()) || "Could not start the setup.", "error");
+      const setup = await start.json();
+      const code = prompt(`Add this key to your authenticator app (Google Authenticator, Authy, ...):\n\n${setup.secret}\n\nThen type the 6-digit code it shows:`);
+      if (!code) return showStatus("Two-step setup not finished - nothing changed.", "");
+      const enable = await window.fetch(`${ADMIN_ORIGIN}/admin/me/2fa/enable`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code: code.trim() })
+      });
+      if (!enable.ok) return showStatus((await enable.text()) || "That code was not right.", "error");
+      const done = await enable.json();
+      alert("Two-step sign-in is ON.\n\nSave these recovery codes somewhere safe. Each works once if you lose your phone, and they are not shown again:\n\n"
+        + done.recoveryCodes.join("\n"));
+      showStatus("Two-step sign-in is on for your account.", "success");
+    }
+
+    async function twoStepDisable() {
+      if (!adminToken) return showStatus("Sign in with your own admin account first.", "error");
+      const password = prompt("To turn two-step off, type your password:");
+      if (!password) return;
+      const code = prompt("And a current authenticator code (or a recovery code):");
+      if (!code) return;
+      const r = await window.fetch(`${ADMIN_ORIGIN}/admin/me/2fa/disable`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ password, code: code.trim() })
+      });
+      if (!r.ok) return showStatus((await r.text()) || "Could not turn it off.", "error");
+      forgetAdminSession();
+      showStatus("Two-step sign-in is off. Please sign in again.", "success");
     }
 
     async function adminSignOut() {

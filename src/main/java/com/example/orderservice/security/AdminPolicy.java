@@ -38,6 +38,9 @@ public final class AdminPolicy {
             rule(GET, "/admin/me", AdminRole.SUPPORT),
             rule(GET, "/admin/config", AdminRole.SUPPORT),
             rule(PUT, "/admin/me/password", AdminRole.SUPPORT),
+            rule(POST, "/admin/me/2fa/setup", AdminRole.SUPPORT),
+            rule(POST, "/admin/me/2fa/enable", AdminRole.SUPPORT),
+            rule(POST, "/admin/me/2fa/disable", AdminRole.SUPPORT),
 
             // ---- Owner only: accounts, the audit trail, and handing out money-like balances ----
             rule(ANY, "/admin/**", AdminRole.OWNER),
