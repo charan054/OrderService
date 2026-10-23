@@ -3210,6 +3210,8 @@
           <div class="cart-line"><span>Status</span><span>${escapeHtml(order.status)}</span></div>
           ${order.carrier || order.trackingNumber ? `<div class="cart-line"><span>Shipment</span><span>${order.carrier ? escapeHtml(order.carrier) : ""}${order.carrier && order.trackingNumber ? ", " : ""}${order.trackingNumber ? "tracking " + escapeHtml(order.trackingNumber) : ""}</span></div>` : ""}
           ${order.status === "SHIPPED" && order.expectedDeliveryDate ? `<div class="cart-line"><span>Expected by</span><span>${escapeHtml(order.expectedDeliveryDate)}</span></div>` : ""}
+          ${order.trackingUrl ? `<div class="cart-line"><span>Track with carrier</span><span><a href="${escapeHtml(order.trackingUrl)}" target="_blank" rel="noopener noreferrer">Open the carrier's tracking page</a></span></div>` : ""}
+          ${order.outForDeliveryAt ? `<div class="cart-line"><span>Out for delivery</span><span>${new Date(order.outForDeliveryAt).toLocaleString()} - arriving today</span></div>` : ""}
           ${order.timeline.map(e => `<div class="cart-line"><span>${escapeHtml(e.status)}</span><span>${new Date(e.timestamp).toLocaleString()}</span></div>`).join("")}`;
       } catch (e) {
         body.innerHTML = `<p>Couldn't load this order right now. Please try again.</p>`;

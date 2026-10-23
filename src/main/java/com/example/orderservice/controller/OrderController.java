@@ -256,6 +256,11 @@ public class OrderController {
                           @RequestParam(required = false) String trackingNumber){
         return orderService.ship(orderId, carrier, trackingNumber);
     }
+    // Service key (default rule): the parcel is out for delivery today - emails the customer once.
+    @PostMapping("/{orderId}/out-for-delivery")
+    public Cart outForDelivery(@PathVariable long orderId) {
+        return orderService.markOutForDelivery(orderId);
+    }
     // Service key (default rule): fix the carrier/tracking number of an already-shipped order.
     @PutMapping("/{orderId}/shipment")
     public Cart updateShipment(@PathVariable long orderId,

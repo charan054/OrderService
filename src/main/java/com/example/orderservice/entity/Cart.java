@@ -148,6 +148,8 @@ public class Cart {
     private String carrier;
     @Column(length = 60)
     private String trackingNumber;
+    // When ops marked the parcel out for delivery today (SHIPPED orders only; null = not yet). System-set.
+    private Instant outForDeliveryAt;
     @Column(length = 200)
     private String cancelNote;
     // Set only for a PHONEPE order placed via a UPI collect request (see OrderService.order()'s payerUpiId
