@@ -20,8 +20,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * "Picked for you": products to suggest to one customer, from real order data (same in-memory pass over the orders
- * that frequently-bought-together uses, at this system's scale).
+ * "Picked for you": products to suggest to one customer, from real order data (one in-memory pass over the orders, shared
+ * between customers for five minutes).
  * <ol>
  *   <li>BOUGHT_WITH - products that appeared in the same order as something this customer already bought, ranked by
  *       how many orders paired them.</li>
@@ -48,23 +48,15 @@ public class RecommendationService {
         validatePhno(phno);
         int wanted = limit == null || limit <= 0 ? DEFAULT_LIMIT : Math.min(limit, MAX_LIMIT);
 
+        Snapshot snapshot = snapshot();
         Set<Integer> owned = new HashSet<>();
-        List<List<Integer>> keptOrders = new ArrayList<>();
-        Map<Integer, Integer> unitsSold = new HashMap<>();
-        for (Cart order : orders.findAll()) {
-            if (order.getStatus() == OrderStatus.CANCELLED || order.getStatus() == OrderStatus.PENDING_PAYMENT
-                    || order.getOrderItems() == null) {
-                continue;
-            }
-            List<Integer> ids = order.getOrderItems().stream().map(OrderItem::getProductId).distinct().toList();
-            keptOrders.add(ids);
-            for (OrderItem item : order.getOrderItems()) {
-                unitsSold.merge(item.getProductId(), Math.max(1, item.getProductQuantity()), Integer::sum);
-            }
-            if (order.getCustomerPhno() == phno) {
-                owned.addAll(ids);
+        for (KeptOrder order : snapshot.orders()) {
+            if (order.phno() == phno) {
+                owned.addAll(order.productIds());
             }
         }
+        List<List<Integer>> keptOrders = snapshot.orders().stream().map(KeptOrder::productIds).toList();
+        Map<Integer, Integer> unitsSold = snapshot.unitsSold();
 
         // Orders that contain something the customer owns, scored per other product they contain.
         Map<Integer, Integer> pairedCount = new HashMap<>();
@@ -108,6 +100,44 @@ public class RecommendationService {
                     product.getProductPrice(), product.getProductImageUrl(), candidate.getValue()));
         }
         return result;
+    }
+
+    // Reading every order is the expensive part and the same for every customer, so it is shared for a short while.
+    static final long SNAPSHOT_TTL_MILLIS = 5 * 60 * 1000L;
+
+    record KeptOrder(long phno, List<Integer> productIds) {
+    }
+
+    record Snapshot(List<KeptOrder> orders, Map<Integer, Integer> unitsSold, long takenAt) {
+    }
+
+    private volatile Snapshot cached;
+
+    void invalidate() {
+        cached = null;
+    }
+
+    private Snapshot snapshot() {
+        Snapshot current = cached;
+        long now = System.currentTimeMillis();
+        if (current != null && now - current.takenAt() < SNAPSHOT_TTL_MILLIS) {
+            return current;
+        }
+        List<KeptOrder> kept = new ArrayList<>();
+        Map<Integer, Integer> unitsSold = new HashMap<>();
+        for (Cart order : orders.findAll()) {
+            if (order.getStatus() == OrderStatus.CANCELLED || order.getStatus() == OrderStatus.PENDING_PAYMENT
+                    || order.getOrderItems() == null) {
+                continue;
+            }
+            kept.add(new KeptOrder(order.getCustomerPhno(), order.getOrderItems().stream().map(OrderItem::getProductId).distinct().toList()));
+            for (OrderItem item : order.getOrderItems()) {
+                unitsSold.merge(item.getProductId(), Math.max(1, item.getProductQuantity()), Integer::sum);
+            }
+        }
+        Snapshot fresh = new Snapshot(List.copyOf(kept), Map.copyOf(unitsSold), now);
+        cached = fresh;
+        return fresh;
     }
 
     private static void validatePhno(long phno) {
