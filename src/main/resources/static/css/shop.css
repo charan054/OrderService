@@ -774,3 +774,6 @@
 .delivery-estimate { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
 .delivery-estimate input { width: 7rem; }
 .delivery-estimate .meta { flex-basis: 100%; }
+
+/* Language picker in the top bar (see js/i18n.js) */
+.lang-select { width: auto; margin: 0 6px 0 0; padding: 4px 6px; }
