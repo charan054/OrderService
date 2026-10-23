@@ -2659,7 +2659,13 @@ public class OrderService {
     // One rating-summary lookup per id, same N-calls-in-a-loop shape getFrequentlyBoughtTogether() already uses
     // for this catalog's scale - a product whose lookup fails (removed from the catalog, ProductService briefly
     // unreachable) is skipped rather than failing the whole batch, same reasoning as getPriceDropAlerts().
+    // Public endpoint and one ProductService call per id, so the list is capped (the storefront asks 50 at a time).
+    static final int MAX_RATING_IDS = 50;
+
     public List<ProductRatingSummary> getRatingSummaries(List<Integer> productIds) {
+        if (productIds.size() > MAX_RATING_IDS) {
+            throw new ProductException("Ask for at most " + MAX_RATING_IDS + " products' ratings at a time");
+        }
         return productIds.stream()
                 .map(id -> {
                     try {
