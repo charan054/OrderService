@@ -2,6 +2,7 @@ package com.example.orderservice.service;
 
 import com.example.orderservice.dto.SharedOrderStatus;
 import com.example.orderservice.entity.Cart;
+import com.example.orderservice.entity.OrderStatus;
 import com.example.orderservice.entity.OrderShareLink;
 import com.example.orderservice.entity.TrackingEvent;
 import com.example.orderservice.exception.OrderNotFoundException;
@@ -92,6 +93,7 @@ public class OrderShareService {
                 .toList();
         return new SharedOrderStatus(order.getOrderId(), String.valueOf(order.getStatus()), steps, order.getCarrier(),
                 order.getTrackingNumber(), order.getExpectedDeliveryDate() == null ? null : order.getExpectedDeliveryDate().toString(),
-                link.getExpiresAt());
+                link.getExpiresAt(), TrackingUrls.forShipment(order.getCarrier(), order.getTrackingNumber()),
+                order.getStatus() == OrderStatus.SHIPPED ? order.getOutForDeliveryAt() : null);
     }
 }

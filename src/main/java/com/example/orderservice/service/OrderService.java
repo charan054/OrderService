@@ -503,6 +503,7 @@ public class OrderService {
         cart.setOrderId(null);
         cart.setRefundedAmount(0);
         cart.setStoreCreditRefunded(0);
+        cart.setOutForDeliveryAt(null);
         cart.setInvoiceNumber(null);
         cart.setInvoiceDate(null);
         cart.setReturnReason(null);
@@ -2066,6 +2067,28 @@ public class OrderService {
         customerNotifier.notifyStatusChange(result, OrderStatus.SHIPPED);
         sendNotification("Order shipped. OrderId: " + result.getOrderId());
         return result;
+    }
+
+    // Ops marks a shipped parcel as out for delivery today: stamped once (calling again changes nothing and sends no second
+    // email), and the customer is emailed. Only a SHIPPED order can be out for delivery.
+    public Cart markOutForDelivery(long orderId) {
+        try (var ignoredLock = lockOrder(orderId)) {
+            Cart cart = orderRepository.findById(orderId)
+                    .orElseThrow(() -> new OrderNotFoundException("Order not found"));
+            if (cart.getStatus() != OrderStatus.SHIPPED) {
+                throw new ProductException("Only a shipped order can be marked out for delivery");
+            }
+            if (cart.getOutForDeliveryAt() != null) {
+                return cart;
+            }
+            cart.setOutForDeliveryAt(Instant.now());
+            Cart saved = orderRepository.save(cart);
+            notifyOrderUpdate(saved, "Order #" + saved.getOrderId() + " is out for delivery",
+                    "Good news - your order #" + saved.getOrderId() + " is out for delivery today."
+                            + (saved.getCarrier() == null || saved.getCarrier().isBlank() ? "" : "\nCarrier: " + saved.getCarrier())
+                            + (saved.getTrackingNumber() == null || saved.getTrackingNumber().isBlank() ? "" : "\nTracking number: " + saved.getTrackingNumber()));
+            return saved;
+        }
     }
 
     // Corrects the carrier/tracking number of an order that is already SHIPPED (a typo, or a re-booked courier).

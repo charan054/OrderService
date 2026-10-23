@@ -2053,6 +2053,41 @@ class OrderServiceTest {
         assertEquals(42L, captor.getValue().getOrderId());
     }
 
+    // ---------- out for delivery ----------
+
+    @Test
+    void outForDeliveryStampsAShippedOrderOnceAndEmailsTheCustomer() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        cart.setStatus(OrderStatus.SHIPPED);
+        cart.setCarrier("Delhivery");
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+        when(orderRepository.save(cart)).thenReturn(cart);
+
+        Cart first = service.markOutForDelivery(42L);
+        Cart again = service.markOutForDelivery(42L);
+
+        org.junit.jupiter.api.Assertions.assertNotNull(first.getOutForDeliveryAt());
+        assertEquals(first.getOutForDeliveryAt(), again.getOutForDeliveryAt());
+        verify(orderRepository, times(1)).save(cart);
+        verify(customerNotifier, times(1)).notifyOrderUpdate(eq(cart), contains("out for delivery"), contains("Delhivery"));
+    }
+
+    @Test
+    void outForDeliveryNeedsAShippedOrder() {
+        Cart cart = placedOrder(42L, 100000L, item(1, 1));
+        when(orderRepository.findById(42L)).thenReturn(Optional.of(cart));
+
+        assertThrows(ProductException.class, () -> service.markOutForDelivery(42L));
+        verify(orderRepository, never()).save(any());
+    }
+
+    @Test
+    void outForDeliveryThrowsWhenTheOrderDoesNotExist() {
+        when(orderRepository.findById(42L)).thenReturn(Optional.empty());
+
+        assertThrows(OrderNotFoundException.class, () -> service.markOutForDelivery(42L));
+    }
+
     @Test
     void deliverThrowsWhenTheOrderDoesNotExist() {
         when(orderRepository.findById(42L)).thenReturn(Optional.empty());
