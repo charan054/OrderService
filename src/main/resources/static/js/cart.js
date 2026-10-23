@@ -1386,6 +1386,22 @@
       await target.open(item);
     }
 
+    async function loadDeliveryProblems() {
+      const serviceKey = requireServiceKey();
+      if (!serviceKey) return;
+      const days = document.getElementById("deliveryProblemDays").value;
+      const r = await apiCall(`${BASE_URL}/analytics/delivery-problems?days=${encodeURIComponent(days)}`, { headers: { "X-Service-Key": serviceKey } });
+      if (!r || !Array.isArray(r.areas)) return;
+      const reasons = m => Object.entries(m || {}).map(([k, v]) => escapeHtml(k.toLowerCase().replace(/_/g, " ")) + " x" + v).join(", ") || "-";
+      document.getElementById("deliveryProblemsWrap").innerHTML = r.areas.length
+        ? `<p>${r.shipped} order(s) shipped, ${r.problemOrders} with a failed attempt or a delay.</p>
+           <table class="orders-table"><thead><tr><th>Pincode</th><th>City</th><th>Shipped</th><th>Failed orders</th><th>Failed attempts</th><th>Delayed</th><th>Problem rate</th><th>Reasons</th></tr></thead><tbody>${r.areas.map(a => `
+            <tr><td>${escapeHtml(a.pincode)}</td><td>${escapeHtml(a.city || "")}</td><td>${a.shipped}</td><td>${a.failedOrders}</td><td>${a.failedAttempts}</td>
+            <td>${a.delayedOrders}</td><td>${a.problemPercent}%</td><td style="white-space:normal;">${reasons(a.reasons)}</td></tr>`).join("")}</tbody></table>`
+        : `<p>No orders shipped in the last ${r.days} days.</p>`;
+      showStatus("Delivery problem report loaded.", "success");
+    }
+
     async function loadToday() {
       const serviceKey = requireServiceKey();
       if (!serviceKey) return;
