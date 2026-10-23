@@ -1532,7 +1532,7 @@ class OrderServiceTest {
         List<WishlistPriceAlert> alerts = service.getPriceDropAlerts(CUSTOMER);
 
         assertTrue(alerts.isEmpty());
-        verifyNoInteractions(productClient);
+        org.mockito.Mockito.verifyNoInteractions(productClient);
     }
 
     @Test
@@ -2986,6 +2986,14 @@ class OrderServiceTest {
     // ---------- getRatingSummaries ----------
 
     @Test
+    void getRatingSummariesRefusesMoreIdsThanTheCap() {
+        List<Integer> ids = java.util.stream.IntStream.rangeClosed(1, OrderService.MAX_RATING_IDS + 1).boxed().toList();
+
+        org.junit.jupiter.api.Assertions.assertThrows(ProductException.class, () -> service.getRatingSummaries(ids));
+        org.mockito.Mockito.verifyNoInteractions(productClient);
+    }
+
+    @Test
     void getRatingSummariesSkipsAProductWhoseLookupFails() {
         when(productClient.getRatingSummary(1)).thenReturn(new ProductRatingSummary(1, 4.5, 10));
         when(productClient.getRatingSummary(2)).thenThrow(declinedBy("rating-summary", 404, "Product not found"));
@@ -3149,7 +3157,7 @@ class OrderServiceTest {
         when(orderRepository.findCoPurchasedProducts(eq(1), any())).thenReturn(List.of());
 
         assertTrue(service.getFrequentlyBoughtTogether(1, null).isEmpty());
-        verifyNoInteractions(productClient);
+        org.mockito.Mockito.verifyNoInteractions(productClient);
     }
 
     @Test
