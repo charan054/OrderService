@@ -49,6 +49,9 @@ public class AdminAuthService {
     static final int MAX_PASSWORD_BYTES = 72;
     private static final Pattern USERNAME = Pattern.compile("^[a-z0-9][a-z0-9._-]{2,31}$");
     private static final String INVALID_LOGIN = "Invalid username or password.";
+    static final String TOTP_REQUIRED = "Enter the 6-digit code from your authenticator app (or a recovery code).";
+    private static final String WRONG_CODE = "That code is not right. Try the current code, or use a recovery code.";
+    public static final int RECOVERY_CODE_COUNT = 8;
     // The audit log's name for the shared service key - no account may take it.
     private static final String SERVICE_KEY_ACTOR = "service-key";
     private static final Duration LOGIN_HISTORY_KEPT = Duration.ofDays(90);
@@ -85,6 +88,12 @@ public class AdminAuthService {
     // though the method ends by throwing the 401.
     @Transactional(noRollbackFor = AdminAuthException.class)
     public AdminLoginResponse login(String username, String password, String remoteAddr) {
+        return login(username, password, remoteAddr, null);
+    }
+
+    // totpCode: the authenticator code (or a recovery code) for an account with two-step sign-in on; ignored otherwise.
+    @Transactional(noRollbackFor = AdminAuthException.class)
+    public AdminLoginResponse login(String username, String password, String remoteAddr, String totpCode) {
         Optional<AdminAccount> found = accounts.findByUsername(normalize(username));
         // Always hash once, against the real hash or the dummy, so timing doesn't reveal which usernames exist. An
         // over-long password is never a match (it can't have been set, see requireStrongPassword).
@@ -104,6 +113,19 @@ public class AdminAuthService {
             throw new AdminAuthException(HttpStatus.UNAUTHORIZED, INVALID_LOGIN);
         }
         AdminAccount account = found.get();
+        if (account.isTotpEnabled() && totp != null) {
+            if (totpCode == null || totpCode.isBlank()) {
+                // the password was right; this asks for the second step, it is not a failed guess
+                throw new AdminAuthException(HttpStatus.UNAUTHORIZED, TOTP_REQUIRED);
+            }
+            if (!acceptSecondStep(account, totpCode.trim(), now)) {
+                account.setFailedLogins(account.getFailedLogins() + 1);
+                account.setLastFailedLoginAt(now);
+                accounts.save(account);
+                recordLogin(now, username, false, "WRONG_TOTP", remoteAddr);
+                throw new AdminAuthException(HttpStatus.UNAUTHORIZED, WRONG_CODE);
+            }
+        }
         recordLogin(now, username, true, "OK", remoteAddr);
         sessions.deleteByExpiresAtBefore(now);
         account.setFailedLogins(0);
@@ -267,6 +289,136 @@ public class AdminAuthService {
             throw new AdminAuthException(HttpStatus.FORBIDDEN, "Your current password is not right.");
         }
         resetPassword(username, newPassword);
+    }
+
+    // ---------- two-step sign-in (authenticator app) ----------
+
+    // Optional wiring: without it two-step sign-in is simply not offered (and never demanded).
+    private TotpService totp;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    void setTotp(TotpService totp) {
+        this.totp = totp;
+    }
+
+    public record TotpSetup(String secret, String otpauthUri) {
+    }
+
+    private TotpService requireTotp() {
+        if (totp == null) {
+            throw new AdminAuthException(HttpStatus.SERVICE_UNAVAILABLE, "Two-step sign-in is not available.");
+        }
+        return totp;
+    }
+
+    /** Step 1: a fresh secret (not active yet) to add to an authenticator app. Starting again replaces an unfinished setup. */
+    @Transactional
+    public TotpSetup startTotpSetup(String username) {
+        AdminAccount account = require(username);
+        if (account.isTotpEnabled()) {
+            throw new AdminAuthException(HttpStatus.CONFLICT, "Two-step sign-in is already on. Turn it off first to set it up again.");
+        }
+        String secret = requireTotp().newSecret();
+        account.setTotpSecretEnc(totp.encrypt(secret));
+        accounts.save(account);
+        return new TotpSetup(secret, totp.otpauthUri(account.getUsername(), secret, "Charan Mart admin"));
+    }
+
+    /** Step 2: a correct code proves the app is set up; it switches two-step on and returns the one-time recovery codes (shown once). */
+    @Transactional(noRollbackFor = AdminAuthException.class)
+    public List<String> enableTotp(String username, String code) {
+        AdminAccount account = require(username);
+        if (account.isTotpEnabled() || account.getTotpSecretEnc() == null) {
+            throw new AdminAuthException(HttpStatus.CONFLICT, "Start the setup first.");
+        }
+        long step = requireTotp().matchingStep(totp.decrypt(account.getTotpSecretEnc()), code == null ? "" : code.trim(), clock.instant());
+        if (step < 0) {
+            throw new AdminAuthException(HttpStatus.BAD_REQUEST, "That code is not right. Check your authenticator app and try again.");
+        }
+        account.setTotpEnabled(true);
+        account.setLastTotpStep(step);
+        List<String> recovery = newRecoveryCodes(account);
+        accounts.save(account);
+        return recovery;
+    }
+
+    /** Turning it off takes the password AND a current code (or recovery code), so a stolen session alone cannot do it. */
+    @Transactional(noRollbackFor = AdminAuthException.class)
+    public void disableTotp(String username, String password, String code) {
+        AdminAccount account = require(username);
+        if (!account.isTotpEnabled()) {
+            return;
+        }
+        if (!fitsBcrypt(password) || !encoder.matches(password, account.getPasswordHash())) {
+            throw new AdminAuthException(HttpStatus.FORBIDDEN, "Your password is not right.");
+        }
+        if (!acceptSecondStep(account, code == null ? "" : code.trim(), clock.instant())) {
+            throw new AdminAuthException(HttpStatus.FORBIDDEN, WRONG_CODE);
+        }
+        clearTotp(account);
+        accounts.save(account);
+        sessions.deleteByAdminId(account.getId());
+    }
+
+    /** An owner clears someone's two-step sign-in (lost phone, no recovery codes left); their sessions end. */
+    @Transactional
+    public void resetTotp(String username) {
+        AdminAccount account = require(username);
+        clearTotp(account);
+        accounts.save(account);
+        sessions.deleteByAdminId(account.getId());
+    }
+
+    private static void clearTotp(AdminAccount account) {
+        account.setTotpEnabled(false);
+        account.setTotpSecretEnc(null);
+        account.setLastTotpStep(0);
+        account.setRecoveryCodeHashes(null);
+    }
+
+    /** A current authenticator code (each only once) or an unused recovery code (which is then used up). */
+    private boolean acceptSecondStep(AdminAccount account, String code, Instant now) {
+        if (code.matches("[0-9]{6}")) {
+            long step = totp.matchingStep(totp.decrypt(account.getTotpSecretEnc()), code, now);
+            if (step > account.getLastTotpStep()) {
+                account.setLastTotpStep(step);
+                accounts.save(account);
+                return true;
+            }
+            return false;
+        }
+        String wanted = hash(normalizeRecovery(code));
+        String stored = account.getRecoveryCodeHashes();
+        if (stored == null || stored.isBlank()) {
+            return false;
+        }
+        List<String> remaining = new java.util.ArrayList<>(List.of(stored.split(",")));
+        if (remaining.remove(wanted)) {
+            account.setRecoveryCodeHashes(String.join(",", remaining));
+            accounts.save(account);
+            return true;
+        }
+        return false;
+    }
+
+    private List<String> newRecoveryCodes(AdminAccount account) {
+        List<String> shown = new java.util.ArrayList<>();
+        List<String> hashes = new java.util.ArrayList<>();
+        String alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+        for (int i = 0; i < RECOVERY_CODE_COUNT; i++) {
+            StringBuilder code = new StringBuilder();
+            for (int c = 0; c < 10; c++) {
+                code.append(alphabet.charAt(random.nextInt(alphabet.length())));
+            }
+            shown.add(code.substring(0, 5) + "-" + code.substring(5));
+            hashes.add(hash(code.toString()));
+        }
+        account.setRecoveryCodeHashes(String.join(",", hashes));
+        return shown;
+    }
+
+    private static String normalizeRecovery(String code) {
+        return code.replace("-", "").replace(" ", "").toUpperCase(Locale.ROOT);
     }
 
     private void requireAnotherActiveOwner() {

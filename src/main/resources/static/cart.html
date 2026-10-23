@@ -27,9 +27,12 @@
             <p id="adminIdentity">Not signed in. Sign in with your own admin account (what you can do depends on your role), or use the shared Service Key below.</p>
             <input type="text" id="adminUsername" placeholder="Username" autocomplete="username" />
             <input type="password" id="adminPassword" placeholder="Password" autocomplete="current-password" />
+            <input type="text" id="adminCode" class="hidden" inputmode="numeric" maxlength="12" placeholder="Authenticator code or recovery code" autocomplete="one-time-code" />
             <div class="orders-actions">
                 <button onclick="adminSignIn()">Sign In</button>
                 <button onclick="adminSignOut()">Sign Out</button>
+                <button onclick="twoStepSetup()">Set up two-step</button>
+                <button onclick="twoStepDisable()">Turn off two-step</button>
             </div>
         </div>
         <div class="card wide">

@@ -39,4 +39,13 @@ public class AdminAccount {
     // so an owner can see an account being guessed at. Reset by a successful sign-in.
     private int failedLogins;
     private Instant lastFailedLoginAt;
+    // Two-step sign-in (authenticator app). The secret is stored encrypted (TotpService); it only counts once totpEnabled is true,
+    // so a half-finished setup never locks anyone out. lastTotpStep stops a code being used twice; recoveryCodeHashes are the
+    // SHA-256 of the unused one-time recovery codes, comma separated.
+    @Column(length = 200)
+    private String totpSecretEnc;
+    private boolean totpEnabled;
+    private long lastTotpStep;
+    @Column(length = 600)
+    private String recoveryCodeHashes;
 }
