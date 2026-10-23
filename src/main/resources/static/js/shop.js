@@ -884,6 +884,13 @@
 
       const response = await authFetch(`${BASE_URL}/cart/search?${query.toString()}`);
       products = response.ok ? await response.json() : [];
+      const note = document.getElementById("searchNote");
+      if (response.ok && response.headers.get("X-Search-Corrected") === "true") {
+        note.textContent = `No exact match for "${name}" - showing close matches.`;
+        note.classList.remove("hidden");
+      } else {
+        note.classList.add("hidden");
+      }
       catalogLoaded = true;
       currentPage = 1;
       renderProducts();

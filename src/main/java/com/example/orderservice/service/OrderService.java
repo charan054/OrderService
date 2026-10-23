@@ -2599,6 +2599,16 @@ public class OrderService {
         return found;
     }
 
+    /** Products whose name is close to the term despite typos; used only when the plain search found nothing. */
+    public List<Product> searchProductsFuzzy(String name, String category) {
+        if (name == null || name.isBlank()) {
+            return List.of();
+        }
+        return searchProducts(null, category).stream()
+                .filter(p -> FuzzyMatch.matches(name, p.getProductName()))
+                .toList();
+    }
+
     private static String blankToNull(String value) {
         return (value == null || value.isBlank()) ? null : value;
     }
