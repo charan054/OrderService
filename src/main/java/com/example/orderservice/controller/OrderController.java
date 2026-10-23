@@ -370,8 +370,18 @@ public class OrderController {
     // filter, proxied to ProductService's own public /product/search (see ProductClient.search).
     @GetMapping("/search")
     public List<Product> search(@RequestParam(required = false) String name,
-                                 @RequestParam(required = false) String category){
+                                 @RequestParam(required = false) String category,
+                                 jakarta.servlet.http.HttpServletResponse response){
         List<Product> found = orderService.searchProducts(name, category);
+        // Nothing matched as typed: try again forgiving typos ("shampo", "cetafil"). The storefront reads this header to say
+        // "showing close matches" instead of presenting them as exact results.
+        if (found.isEmpty()) {
+            List<Product> close = orderService.searchProductsFuzzy(name, category);
+            if (!close.isEmpty()) {
+                response.setHeader("X-Search-Corrected", "true");
+                return close;
+            }
+        }
         // Only a name search with no category filter says "the catalog lacks this"; a category pick can be empty for other reasons.
         if (found.isEmpty() && (category == null || category.isBlank())) {
             missedSearchService.record(name);

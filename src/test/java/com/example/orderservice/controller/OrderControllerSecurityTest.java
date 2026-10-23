@@ -127,6 +127,32 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void aTypoedSearchStillFindsTheProductAndSaysSo() throws Exception {
+        Product shampoo = new Product();
+        shampoo.setProductId(1);
+        shampoo.setProductName("Dove Shampoo");
+        when(productClient.search("shampo", null, 0, 200)).thenReturn(new ProductSearchResult(List.of()));
+        when(productClient.search(null, null, 0, 200)).thenReturn(new ProductSearchResult(List.of(shampoo)));
+
+        mockMvc.perform(get("/cart/search").param("name", "shampo"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().string("X-Search-Corrected", "true"))
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath("$[0].productName").value("Dove Shampoo"));
+    }
+
+    @Test
+    void anExactSearchIsNotMarkedCorrected() throws Exception {
+        Product shampoo = new Product();
+        shampoo.setProductId(1);
+        shampoo.setProductName("Dove Shampoo");
+        when(productClient.search("shampoo", null, 0, 200)).thenReturn(new ProductSearchResult(List.of(shampoo)));
+
+        mockMvc.perform(get("/cart/search").param("name", "shampoo"))
+                .andExpect(status().isOk())
+                .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header().doesNotExist("X-Search-Corrected"));
+    }
+
+    @Test
     void ratingsIsPublic() throws Exception {
         when(productClient.getRatingSummary(1)).thenReturn(new ProductRatingSummary(1, 4.5, 3));
         mockMvc.perform(get("/cart/ratings").param("productIds", "1")).andExpect(status().isOk());

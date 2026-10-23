@@ -79,6 +79,7 @@
                 <div class="search-row">
                     <input type="text" id="searchName" aria-label="Search products" placeholder="Search products (press / )" oninput="onSearchChange()" list="searchSuggestions" autocomplete="off" />
                     <datalist id="searchSuggestions"></datalist>
+                    <div id="searchNote" class="meta hidden" role="status"></div>
                     <select id="searchCategory" aria-label="Filter by category" onchange="onSearchChange()" disabled>
                         <option value="">Loading categories...</option>
                     </select>

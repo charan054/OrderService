@@ -2855,6 +2855,18 @@ class OrderServiceTest {
         assertEquals(1, result.size());
     }
 
+    @Test
+    void searchProductsFuzzyFindsProductsDespiteATypo() {
+        Product shampoo = product(1, 99.0, 10);
+        shampoo.setProductName("Dove Shampoo");
+        Product jelly = product(2, 20.0, 10);
+        jelly.setProductName("Fruit Jelly");
+        when(productClient.search(null, null, 0, 200)).thenReturn(new ProductSearchResult(List.of(shampoo, jelly)));
+
+        assertEquals(List.of(1), service.searchProductsFuzzy("shampo", null).stream().map(Product::getProductId).toList());
+        assertTrue(service.searchProductsFuzzy("  ", null).isEmpty());
+    }
+
     // The storefront used to silently stop at the first 200 products - every page must now be fetched.
     @Test
     void searchProductsWalksEveryPageUntilTheLastOne() {
