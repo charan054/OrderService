@@ -769,3 +769,8 @@
         .insight-track { height: 8px; border-radius: 999px; background: var(--border); overflow: hidden; }
         .insight-track span { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #7c3aed, #f97316); }
         .insight-qty { font-weight: 700; }
+
+/* "Delivery to [pincode] [Check]" on the product details modal */
+.delivery-estimate { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 8px 0; }
+.delivery-estimate input { width: 7rem; }
+.delivery-estimate .meta { flex-basis: 100%; }
