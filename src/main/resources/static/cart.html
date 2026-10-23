@@ -67,6 +67,23 @@
     </section>
 
     <section class="grid">
+        <div class="card wide" id="card-paymentattempts">
+            <div class="card-header">
+                <div class="icon">&#128270;</div>
+                <div class="title-wrap">
+                    <h2>Payments To Check</h2>
+                    <span class="method">GET</span>
+                </div>
+            </div>
+            <p>Charges that may have taken a customer's money with no order to show for it: money taken but the order never finished, or a charge sent to PhonePe with no answer recorded. Check the customer's PhonePe history, refund by hand if they were debited, then mark it resolved with a note. Requires the Service Key above.</p>
+            <div class="orders-actions">
+                <button onclick="loadPaymentAttempts()">Refresh</button>
+            </div>
+            <div id="paymentAttemptsWrap"></div>
+        </div>
+    </section>
+
+    <section class="grid">
         <div class="card wide" id="card-refundfailures">
             <div class="card-header">
                 <div class="icon">&#128176;</div>
