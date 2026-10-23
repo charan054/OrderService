@@ -29,7 +29,7 @@ import static org.mockito.Mockito.when;
 
 class CustomerPushServiceTest {
     private static final long PHNO = 9876543210L;
-    private static final String ENDPOINT = "https://push.example.com/send/abc";
+    private static final String ENDPOINT = "https://fcm.googleapis.com/fcm/send/abc";
 
     private static final class DirectExecutor extends AbstractExecutorService {
         @Override public void execute(Runnable command) { command.run(); }
@@ -116,6 +116,17 @@ class CustomerPushServiceTest {
         verify(repo).save(any(PushSubscription.class));
         assertThrows(ProductException.class, () -> service.subscribe(PHNO, "http://insecure.example.com/x", "p", "a"));
         assertThrows(ProductException.class, () -> service.subscribe(PHNO, ENDPOINT, " ", "a"));
+    }
+
+    @Test
+    void onlyRealBrowserPushServicesAreAcceptedAsEndpoints() {
+        org.junit.jupiter.api.Assertions.assertTrue(CustomerPushService.isPushServiceEndpoint("https://fcm.googleapis.com/fcm/send/x"));
+        org.junit.jupiter.api.Assertions.assertTrue(CustomerPushService.isPushServiceEndpoint("https://updates.push.services.mozilla.com/wpush/v2/x"));
+        for (String bad : new String[]{"https://localhost/x", "https://127.0.0.1/x", "https://169.254.169.254/latest", "https://internal.example.com/x",
+                "https://fcm.googleapis.com.evil.com/x", "https://evil.com/fcm.googleapis.com", "https://user@fcm.googleapis.com/x",
+                "https://fcm.googleapis.com:8443/x", "http://fcm.googleapis.com/x", "not a url", ""}) {
+            org.junit.jupiter.api.Assertions.assertFalse(CustomerPushService.isPushServiceEndpoint(bad), bad);
+        }
     }
 
     @Test
