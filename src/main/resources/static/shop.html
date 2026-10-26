@@ -284,5 +284,24 @@
 
 <script src="/js/shop.js"></script>
 <script src="/js/i18n.js"></script>
+<script src="/js/chat-widget.js"></script>
+<script>
+  ChatWidget.init({
+    title: "Help chat",
+    welcome: "Hi! I can check your orders, refunds, payments and loyalty points.",
+    suggestions: ["Where is my order?", "Cancel an order", "Refund status", "Payment problem", "My loyalty points"],
+    ready: () => !!customerToken && !!customerPhno,
+    notReady: "Please sign in first and I can look at your orders.",
+    ask: async text => {
+      const response = await authFetch(`${BASE_URL}/chat/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phno: customerPhno, message: text })
+      });
+      if (!response.ok) throw new Error((await response.text()) || "HTTP " + response.status);
+      return response.json();
+    }
+  });
+</script>
 </body>
 </html>

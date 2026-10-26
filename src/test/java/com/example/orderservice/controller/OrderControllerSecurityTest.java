@@ -130,6 +130,12 @@ class OrderControllerSecurityTest {
     }
 
     @Test
+    void theHelpChatNeedsALogin() throws Exception {
+        mockMvc.perform(post("/chat/ask").contentType("application/json").content("{\"phno\":9876543210,\"message\":\"hi\"}"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void pushPreferencesNeedALogin() throws Exception {
         mockMvc.perform(get("/cart/push/prefs").param("phno", "9876543210")).andExpect(status().isUnauthorized());
         mockMvc.perform(put("/cart/push/prefs").contentType("application/json").content("{\"phno\":9876543210,\"off\":[\"delivery\"]}"))
