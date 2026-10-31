@@ -65,7 +65,9 @@ class AdminPolicyTest {
         for (String[] call : new String[][]{
                 {"GET", "/admin/accounts"}, {"POST", "/admin/accounts"}, {"PUT", "/admin/accounts/asha/role"},
                 {"PUT", "/admin/accounts/asha/password"}, {"GET", "/admin/anything-new"}, {"GET", "/audit/recent"},
-                {"POST", "/storecredit/adjust"}, {"POST", "/loyalty/adjust"}, {"PUT", "/customer/admin/email"}}) {
+                {"POST", "/storecredit/adjust"}, {"POST", "/loyalty/adjust"}, {"PUT", "/customer/admin/email"},
+                {"POST", "/webhooks"}, {"GET", "/webhooks"}, {"PUT", "/webhooks/3/active"}, {"GET", "/webhooks/3/deliveries"},
+                {"DELETE", "/webhooks/3"}}) {
             assertThat(required(call[0], call[1])).as(call[0] + " " + call[1]).isEqualTo(AdminRole.OWNER);
         }
     }

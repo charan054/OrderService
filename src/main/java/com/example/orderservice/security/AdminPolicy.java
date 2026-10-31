@@ -45,6 +45,9 @@ public final class AdminPolicy {
             // ---- Owner only: accounts, the audit trail, and handing out money-like balances ----
             rule(ANY, "/admin/**", AdminRole.OWNER),
             rule(ANY, "/audit/**", AdminRole.OWNER),
+            // Webhooks point this system's order events at outside URLs, so only an owner may manage them.
+            rule(ANY, "/webhooks", AdminRole.OWNER),
+            rule(ANY, "/webhooks/**", AdminRole.OWNER),
             rule(POST, "/storecredit/adjust", AdminRole.OWNER),
             // Gift cards: a manager may redeem one for a customer; minting, listing and voiding are owner-only.
             rule(POST, "/giftcards/redeem", AdminRole.MANAGER),

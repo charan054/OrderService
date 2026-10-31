@@ -2262,6 +2262,9 @@ public class OrderService {
             event.setStatus(status);
             event.setTimestamp(Instant.now());
             trackingEventRepository.save(event);
+            if (eventPublisher != null) {
+                eventPublisher.publishEvent(new OrderStatusChangedEvent(orderId, status, event.getTimestamp()));
+            }
         } catch (RuntimeException e) {
             log.error("Failed to record tracking event for order {}: {}", orderId, e.getMessage());
         }
